@@ -848,13 +848,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	// --- Shaderのコンパイル ---
 	Microsoft::WRL::ComPtr <IDxcBlob> vertexShaderBlob = CompileShader(
-		L"Object3D.VS.hlsl", // シェーダーのファイルパス
+		L"resources/shaders/Object3D.VS.hlsl", // シェーダーのファイルパス
 		L"vs_6_0", // プロファイル
 		dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), logstream);
 	assert(vertexShaderBlob != nullptr);
 
 	Microsoft::WRL::ComPtr < IDxcBlob> pixelShaderBlob = CompileShader(
-		L"Object3D.PS.hlsl", // シェーダーのファイルパス
+		L"resources/shaders/Object3D.PS.hlsl", // シェーダーのファイルパス
 		L"ps_6_0", // プロファイル
 		dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), logstream);
 	assert(pixelShaderBlob != nullptr);
