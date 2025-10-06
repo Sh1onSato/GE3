@@ -1,0 +1,2 @@
+﻿  BCDirectCompute.cpp
+C:\Users\s0hi4\Desktop\kamataFile\GE3\externals\DirectXTex\BCDirectCompute.cpp(25,18): error C1083: include ファイルを開けません。'BC7Encode_EncodeBlockCS.inc':No such file or directory

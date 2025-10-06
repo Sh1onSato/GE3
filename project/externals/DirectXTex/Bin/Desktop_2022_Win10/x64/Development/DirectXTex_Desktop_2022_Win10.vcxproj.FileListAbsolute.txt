@@ -1,0 +1,2 @@
+C:\Users\s0hi4\Desktop\kamataFile\GE3\externals\DirectXTex\Bin\Desktop_2022_Win10\x64\Development\DirectXTex.lib
+C:\Users\s0hi4\Desktop\kamataFile\GE3\project\externals\DirectXTex\Bin\Desktop_2022_Win10\x64\Development\DirectXTex.lib
