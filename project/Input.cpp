@@ -5,10 +5,11 @@
 #pragma comment(lib, "dxguid.lib")
 
 
-void Input::Initialize(HWND hwnd){
-	this->hwnd = hwnd; // メンバ変数に保存
+void Input::Initialize(WinApp* winApp){
+	this->winApp = winApp;
+	// DirectInputの初期化
 	hr = DirectInput8Create(
-		GetModuleHandle(nullptr),
+		winApp->GetHinstance(),
 		DIRECTINPUT_VERSION,
 		IID_IDirectInput8,
 		reinterpret_cast<void**>(directInput_.GetAddressOf()),
@@ -26,7 +27,7 @@ void Input::Initialize(HWND hwnd){
 	hr = keyboard->SetDataFormat(&c_dfDIKeyboard);
 	assert(SUCCEEDED(hr));
 	// 協調レベルの設定
-	hr = keyboard->SetCooperativeLevel(hwnd,
+	hr = keyboard->SetCooperativeLevel(winApp->GetHwnd(),
 		DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY
 	);
 	assert(SUCCEEDED(hr));

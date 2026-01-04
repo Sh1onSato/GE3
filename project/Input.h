@@ -1,6 +1,7 @@
 #pragma once
 #include <Windows.h>
 #include <wrl.h> // ComPtr を使用するために必要
+#include"WinApp.h"
 
 #define  DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
@@ -14,7 +15,7 @@ using namespace Microsoft::WRL;
 class Input {
 public:
     // 初期化処理
-    void Initialize(HWND hwnd);
+    void Initialize(WinApp* winApp);
     // 更新処理
     void Update();
 
@@ -35,12 +36,13 @@ public:
 
 private:
     HRESULT hr;
-    HWND hwnd;
 
     ComPtr<IDirectInputDevice8> keyboard; // キーボードデバイス
     BYTE key[256] = {};
 	BYTE keyPre[256] = {};
     
     ComPtr<IDirectInput8> directInput_;
+    WinApp* winApp = nullptr;
+
 };
 
