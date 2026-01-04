@@ -1,28 +1,46 @@
 #pragma once
 #include <Windows.h>
-#include <dinput.h>
 #include <wrl.h> // ComPtr を使用するために必要
+
+#define  DIRECTINPUT_VERSION 0x0800
+#include <dinput.h>
 
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
 
+// ComPtr を簡単に使うために名前空間をusing
+using namespace Microsoft::WRL;
+
 class Input {
 public:
-    // コンストラクタ
-    Input();
-    // デストラクタ
-    ~Input();
-
     // 初期化処理
-    void Initialize();
+    void Initialize(HWND hwnd);
     // 更新処理
     void Update();
 
+   /// <summary>
+   /// キーの押下をチェック
+   /// </summary>
+   /// <param name="keyNumber">キー番号 ( DIK_0 等 )</param>
+   /// <returns>押されていればtrue</returns>
+    bool PushKey(BYTE keyNumber);
+
+    /// <summary>
+	/// キーのトリガーをチェック
+	/// </summary>
+	/// <param name="keyNumber">キー番号 ( DIK_0 等 )</param>
+	/// <returns>押された瞬間ならtrue</returns>
+	bool TriggerKey(BYTE keyNumber);
+
+
 private:
-    Microsoft::WRL::ComPtr<IDirectInput8> directInput_; // DirectInputオブジェクト
-    Microsoft::WRL::ComPtr<IDirectInputDevice8> keyboard_; // キーボードデバイス
     HRESULT hr;
-    BYTE keyState_[256];     // 現在のキー状態
-    BYTE preKeyState_[256];  // 1フレーム前のキー状態
+    HWND hwnd;
+
+    ComPtr<IDirectInputDevice8> keyboard; // キーボードデバイス
+    BYTE key[256] = {};
+	BYTE keyPre[256] = {};
+    
+    ComPtr<IDirectInput8> directInput_;
 };
 

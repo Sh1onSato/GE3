@@ -1,4 +1,4 @@
-﻿#include<Windows.h>
+#include<Windows.h>
 #include<cstdint>
 #include<string>
 #include<format>
@@ -24,6 +24,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 #include<fstream>
 #include<sstream>
 #include<wrl.h> // ComPtr を使用するために必要
+#include"Input.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -498,6 +499,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	SetUnhandledExceptionFilter(ExportDump);
 
 	Calculation calculation;
+	Input* input = nullptr;
+	input = new Input();
+
 
 	std::filesystem::create_directories("logs");
 	//　現在時刻を取得（UTC時刻）
@@ -533,7 +537,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	RECT wrc = { 0,0,KclientWidth,KclientHeight };
 
 	//ウィンドウサイズの生成
-	HWND hand = CreateWindow(
+	HWND hwnd = CreateWindow(
 		wc.lpszClassName, // ウィンドウクラス名
 		L"CG2", // ウィンドウ名
 		WS_OVERLAPPEDWINDOW, // ウィンドウスタイル
@@ -545,6 +549,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		nullptr, // メニューハンドル
 		wc.hInstance, // インスタンスハンドル
 		nullptr); // ユーザーデータ
+
+	input->Initialize(hwnd);
 
 #ifdef _DEBUG
 	ComPtr <ID3D12Debug1> debugController = nullptr; // 変更点: ComPtr を使用
@@ -561,7 +567,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 #endif // DEBUG
 
 	//ウィンドウを表示する
-	ShowWindow(hand, SW_SHOW);
+	ShowWindow(hwnd, SW_SHOW);
 
 	// --- DirectX 12デバイスの初期化 ---
 	// DXGIファクトリーの生成
@@ -664,7 +670,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//コマンドキュー、ウィンドウハンドル、設定を渡して生成する
 	hr = dxgiFactory->CreateSwapChainForHwnd(
 		commandQueue.Get(), // コマンドキュー (変更点: Get() を使用)
-		hand, // ウィンドウハンドル
+		hwnd, // ウィンドウハンドル
 		&swapChainDesc, // スワップチェーンの設定
 		nullptr, // モニターのハンドル
 		nullptr, // スワップチェーンのフラグ
@@ -1044,7 +1050,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGui::StyleColorsDark();
-	ImGui_ImplWin32_Init(hand);
+	ImGui_ImplWin32_Init(hwnd);
 	// ImGuiはsrvDescriptorHeapの先頭を使うため、そのCPU/GPUハンドルを渡す
 	ImGui_ImplDX12_Init(device.Get(), swapChainDesc.BufferCount, rtvDesc.Format, srvDescriptorHeap.Get(),
 		srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -1135,6 +1141,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			ImGui_ImplDX12_NewFrame();
 			ImGui_ImplWin32_NewFrame();
 			ImGui::NewFrame();
+
+			input->Update(); // キー入力の更新
 
 			// Sphereの回転
 			transform.rotate.y += 0.01f;
@@ -1289,7 +1297,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	CloseHandle(fenceEvent);
 
-	CloseWindow(hand);
+	delete input;
+
+	CloseWindow(hwnd);
 	CoUninitialize();
 
 	return 0;
