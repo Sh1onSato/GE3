@@ -1,35 +1,47 @@
-﻿#pragma once
+#pragma once
 #include <cmath>
 #include <assert.h>
 
+struct Vector2 {
+	float x;
+	float y;
+};
+
+struct Vector3 {
+	float x, y, z;
+};
+
+struct Vector4 {
+	float x;
+	float y;
+	float z;
+	float w;
+};
+
+struct Matrix3x3 {
+	float m[3][3];
+};
+
+struct Matrix4x4 {
+	float m[4][4];
+};
+
+struct Sphere {
+	Vector3 center;
+	float radius;
+};
+
+Vector3 translate = {};
+Vector3 scale = {};
+Vector3 rotate = {};
+Vector3 point = {};
+
+Matrix4x4 m1 = {};
+Matrix4x4 m2 = {};
+Matrix4x4 transformationMatrix = {};
+
 class Calculation {
 public:
-
-	struct Vector3 {
-		float x, y, z;
-	};
-
-	struct Matrix3x3 {
-		float m[3][3];
-	};
-
-	struct Matrix4x4 {
-		float m[4][4];
-	};
-
-	struct Sphere {
-		Vector3 center;
-		float radius;
-	};
-
-	Vector3 translate = {};
-	Vector3 scale = {};
-	Vector3 rotate = {};
-	Vector3 point = {};
-
-	Matrix4x4 m1 = {};
-	Matrix4x4 m2 = {};
-	Matrix4x4 transformationMatrix = {};
 
 	static const int kColumnWidth = 1280;
 	static const int kRowHeight = 720;

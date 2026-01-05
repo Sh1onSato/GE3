@@ -1,16 +1,16 @@
-﻿#include "Calculation.h"
+#include "Calculation.h"
 #include <cmath> 
 #include <numbers> 
 
-Calculation::Vector3 Calculation::Add(const Vector3& a, const Vector3& b) {
+Vector3 Calculation::Add(const Vector3& a, const Vector3& b) {
 	return { a.x + b.x, a.y + b.y, a.z + b.z };
 }
 
-Calculation::Vector3 Calculation::Subtract(const Vector3& a, const Vector3& b) {
+Vector3 Calculation::Subtract(const Vector3& a, const Vector3& b) {
 	return { a.x - b.x, a.y - b.y, a.z - b.z };
 }
 
-Calculation::Vector3 Calculation::Multiply(float b, const Vector3& a) {
+Vector3 Calculation::Multiply(float b, const Vector3& a) {
 	return { a.x * b, a.y * b, a.z * b };
 }
 float Calculation::Dot(const Vector3& a, const Vector3& b) {
@@ -21,7 +21,7 @@ float Calculation::Length(const Vector3& a) {
 	return std::sqrt(Dot(a, a));
 }
 
-Calculation::Vector3 Calculation::Normalize(Vector3& a) {
+Vector3 Calculation::Normalize(Vector3& a) {
 	float length = Length(a);
 	if (length == 0) {
 		return { 0, 0, 0 };
@@ -29,7 +29,7 @@ Calculation::Vector3 Calculation::Normalize(Vector3& a) {
 	return { a.x / length, a.y / length, a.z / length };
 }
 
-Calculation::Matrix4x4 Calculation::Add(const Matrix4x4& a, const Matrix4x4& b)
+Matrix4x4 Calculation::Add(const Matrix4x4& a, const Matrix4x4& b)
 {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
@@ -40,7 +40,7 @@ Calculation::Matrix4x4 Calculation::Add(const Matrix4x4& a, const Matrix4x4& b)
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::Subtract(const Matrix4x4& a, const Matrix4x4& b) {
+Matrix4x4 Calculation::Subtract(const Matrix4x4& a, const Matrix4x4& b) {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 4; ++j) {
@@ -50,7 +50,7 @@ Calculation::Matrix4x4 Calculation::Subtract(const Matrix4x4& a, const Matrix4x4
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::Multiply(const Matrix4x4& a, const Matrix4x4& b) {
+Matrix4x4 Calculation::Multiply(const Matrix4x4& a, const Matrix4x4& b) {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 4; ++j) {
@@ -63,7 +63,7 @@ Calculation::Matrix4x4 Calculation::Multiply(const Matrix4x4& a, const Matrix4x4
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
+Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
 	Matrix4x4 result;
 	// 逆行列の計算を実装する
 	float det = 
@@ -169,7 +169,7 @@ Calculation::Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
 
 }
 
-Calculation::Matrix4x4 Calculation::Transpose(const Matrix4x4& a) {
+Matrix4x4 Calculation::Transpose(const Matrix4x4& a) {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 4; ++j) {
@@ -179,7 +179,7 @@ Calculation::Matrix4x4 Calculation::Transpose(const Matrix4x4& a) {
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeIdentity4x4() {
+Matrix4x4 Calculation::MakeIdentity4x4() {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 4; ++j) {
@@ -194,7 +194,7 @@ Calculation::Matrix4x4 Calculation::MakeIdentity4x4() {
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeScaleMatrix(const Vector3& Scale) {
+Matrix4x4 Calculation::MakeScaleMatrix(const Vector3& Scale) {
 	Matrix4x4 result;
 	result.m[0][0] = Scale.x;
 	result.m[0][1] = 0.0f;
@@ -216,7 +216,7 @@ Calculation::Matrix4x4 Calculation::MakeScaleMatrix(const Vector3& Scale) {
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeTranslationMatrix(const Vector3& Translate) {
+Matrix4x4 Calculation::MakeTranslationMatrix(const Vector3& Translate) {
 	Matrix4x4 result;
 	result.m[0][0] = 1.0f;
 	result.m[0][1] = 0.0f;
@@ -238,7 +238,7 @@ Calculation::Matrix4x4 Calculation::MakeTranslationMatrix(const Vector3& Transla
 	return result;
 }
 
-Calculation::Vector3 Calculation::Transform(const Vector3& vector, Matrix4x4& matrix) {
+Vector3 Calculation::Transform(const Vector3& vector, Matrix4x4& matrix) {
 	Vector3 result;
 	// 行列とベクトルの積を計算
 	result.x = vector.x * matrix.m[0][0] + vector.y * matrix.m[1][0] + vector.z * matrix.m[2][0] + matrix.m[3][0];
@@ -254,7 +254,7 @@ Calculation::Vector3 Calculation::Transform(const Vector3& vector, Matrix4x4& ma
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeRotationXMatrix(float radian)
+Matrix4x4 Calculation::MakeRotationXMatrix(float radian)
 {
 	Matrix4x4 result;
 
@@ -284,7 +284,7 @@ Calculation::Matrix4x4 Calculation::MakeRotationXMatrix(float radian)
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeRotationYMatrix(float radian) {
+Matrix4x4 Calculation::MakeRotationYMatrix(float radian) {
 	Matrix4x4 result;
 
 	float cosRadian = std::cosf(radian);
@@ -313,7 +313,7 @@ Calculation::Matrix4x4 Calculation::MakeRotationYMatrix(float radian) {
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeRotationZMatrix(float radian) {
+Matrix4x4 Calculation::MakeRotationZMatrix(float radian) {
 	Matrix4x4 result;
 
 	float cosRadian = std::cosf(radian);
@@ -343,7 +343,7 @@ Calculation::Matrix4x4 Calculation::MakeRotationZMatrix(float radian) {
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& Scale, const Vector3& Rotate, const Vector3& Translate) {
+Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& Scale, const Vector3& Rotate, const Vector3& Translate) {
 	Matrix4x4 result;
 
 	Matrix4x4 scaleMatrix = MakeScaleMatrix(Scale);
@@ -361,7 +361,7 @@ Calculation::Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& Scale, const
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakePerspectiveFovMatrix(float fovY, float aspectRatio, float nearClip, float farCrip) {  
+Matrix4x4 Calculation::MakePerspectiveFovMatrix(float fovY, float aspectRatio, float nearClip, float farCrip) {  
 Matrix4x4 result;  
 
 float tanHalfFovY = std::tan(fovY / 2);  
@@ -389,7 +389,7 @@ result.m[3][3] = 0.0f;
 return result;  
 }
 
-Calculation::Matrix4x4 Calculation::MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip) {
+Matrix4x4 Calculation::MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip) {
 	Matrix4x4 result;
 
 	result.m[0][0] = (2 / (right - left));
@@ -416,7 +416,7 @@ Calculation::Matrix4x4 Calculation::MakeOrthographicMatrix(float left, float top
 	return result;
 }
 
-Calculation::Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth) {
+Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth) {
 	Matrix4x4 result;
 
 	result.m[0][0] = width / 2;

@@ -26,6 +26,9 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 #include<wrl.h> // ComPtr を使用するために必要
 #include"Input.h"
 #include"WinApp.h"
+#include"DirectXCommon.h"
+#include"Logger.h"
+#include"StringUtility.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -35,25 +38,11 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 
 // ComPtr を簡単に使うために名前空間をusing
 using namespace Microsoft::WRL;
-
-struct Vector2 {
-	float x;
-	float y;
-};
-
-struct Vector3 {
-	float x, y, z;
-};
-
-struct Vector4 {
-	float x;
-	float y;
-	float z;
-	float w;
-};
+using namespace Logger;
+using namespace StringUtility;
 
 struct Transform {
-	Calculation::Vector3 scale,
+	Vector3 scale,
 		rotate,
 		translate;
 };
@@ -68,18 +57,18 @@ struct Material {
 	Vector4 color;
 	int32_t enableLighting;
 	float padding[3];
-	Calculation::Matrix4x4 uvTransform;
+	Matrix4x4 uvTransform;
 };
 
 struct TransformationMatrix {
-	Calculation::Matrix4x4 WVP;
-	Calculation::Matrix4x4 World;
+	Matrix4x4 WVP;
+	Matrix4x4 World;
 
 };
 
 struct DirectionalLight {
 	Vector4 color;
-	Calculation::Vector3 direction;
+	Vector3 direction;
 	float intensity;
 };
 
@@ -95,39 +84,6 @@ struct ModelData {
 // Transform変数を作る (Sphere用)
 Transform transform{ {1.0f,1.0f,1.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,0.0f} };
 Transform cameraTransform{ {1.0f,1.0f,1.0f}, {0.0f,0.0f,0.0f}, {0.0f,0.0f,-5.0f} };
-
-std::wstring ConvertString(const std::string& str) {
-	if (str.empty()) {
-		return std::wstring();
-	}
-
-	auto sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(&str[0]), static_cast<int>(str.size()), NULL, 0);
-	if (sizeNeeded == 0) {
-		return std::wstring();
-	}
-	std::wstring result(sizeNeeded, 0);
-	MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(&str[0]), static_cast<int>(str.size()), &result[0], sizeNeeded);
-	return result;
-}
-
-std::string ConvertString(const std::wstring& str) {
-	if (str.empty()) {
-		return std::string();
-	}
-
-	auto sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), NULL, 0, NULL, NULL);
-	if (sizeNeeded == 0) {
-		return std::string();
-	}
-	std::string result(sizeNeeded, 0);
-	WideCharToMultiByte(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), result.data(), sizeNeeded, NULL, NULL);
-	return result;
-}
-
-void Log(const std::string& message)
-{
-	OutputDebugStringA(message.c_str());
-}
 
 void Log(std::ostream& os, const std::string& message) {
 	os << message << std::endl;
@@ -477,14 +433,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	Calculation calculation;
 	Input* input = nullptr;
-	// ポインタ
 	WinApp* winApp = nullptr;
+	DirectXCommon* dxCommon = nullptr;
 
 	// Inputの初期化
 	input = new Input();
 	// WinAppの初期化
 	winApp = new WinApp();
+	// DirectXCommonの初期化
+	dxCommon = new DirectXCommon();
 
+	// logsフォルダを作成
 	std::filesystem::create_directories("logs");
 	//　現在時刻を取得（UTC時刻）
 	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
@@ -505,7 +464,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	input->Initialize(winApp);
 	winApp->Initialize();
-
+	dxCommon->Initialize();
 #ifdef _DEBUG
 	ComPtr <ID3D12Debug1> debugController = nullptr; // 変更点: ComPtr を使用
 	if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
@@ -519,8 +478,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	}
 
 #endif // DEBUG
-
-	
 
 	// --- DirectX 12デバイスの初期化 ---
 	// DXGIファクトリーの生成
@@ -1096,20 +1053,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 			// Sphereの回転
 			transform.rotate.y += 0.01f;
-			Calculation::Matrix4x4 woldMatrix = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+			Matrix4x4 woldMatrix = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
 
-			Calculation::Matrix4x4 cameraMatrix = calculation.MakeAffineMatrix(cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
-			Calculation::Matrix4x4 viewMatrix = calculation.Inverse(cameraMatrix);
-			Calculation::Matrix4x4 projectionMatrix = calculation.MakePerspectiveFovMatrix(0.45f, float(WinApp::KclientWidth) / float(WinApp::KclientHeight), 0.1f, 100.0f);
-			Calculation::Matrix4x4 worldViewProjectionMatrix = calculation.Multiply(woldMatrix, calculation.Multiply(viewMatrix, projectionMatrix));
+			Matrix4x4 cameraMatrix = calculation.MakeAffineMatrix(cameraTransform.scale, cameraTransform.rotate, cameraTransform.translate);
+			Matrix4x4 viewMatrix = calculation.Inverse(cameraMatrix);
+			Matrix4x4 projectionMatrix = calculation.MakePerspectiveFovMatrix(0.45f, float(WinApp::KclientWidth) / float(WinApp::KclientHeight), 0.1f, 100.0f);
+			Matrix4x4 worldViewProjectionMatrix = calculation.Multiply(woldMatrix, calculation.Multiply(viewMatrix, projectionMatrix));
 			wvpData->WVP = worldViewProjectionMatrix; // SphereのWVPを更新
 			wvpData->World = woldMatrix; // SphereのWorldを更新
 
 			// Spriteの変換行列
-			Calculation::Matrix4x4 worldMatrixSprite = calculation.MakeAffineMatrix(transformSprite.scale, transformSprite.rotate, transformSprite.translate);
-			Calculation::Matrix4x4 viewMatrixSprite = calculation.MakeIdentity4x4(); // Spriteは通常View変換しない
-			Calculation::Matrix4x4 projectionMatrixSprite = calculation.MakeOrthographicMatrix(0.0f, 0.0f, float(WinApp::KclientWidth), float(WinApp::KclientHeight), 0.0f, 100.0f); // クライアントサイズをそのまま使う
-			Calculation::Matrix4x4 worldViewProjectionMatrixSprite = calculation.Multiply(worldMatrixSprite, calculation.Multiply(viewMatrixSprite, projectionMatrixSprite));
+			Matrix4x4 worldMatrixSprite = calculation.MakeAffineMatrix(transformSprite.scale, transformSprite.rotate, transformSprite.translate);
+			Matrix4x4 viewMatrixSprite = calculation.MakeIdentity4x4(); // Spriteは通常View変換しない
+			Matrix4x4 projectionMatrixSprite = calculation.MakeOrthographicMatrix(0.0f, 0.0f, float(WinApp::KclientWidth), float(WinApp::KclientHeight), 0.0f, 100.0f); // クライアントサイズをそのまま使う
+			Matrix4x4 worldViewProjectionMatrixSprite = calculation.Multiply(worldMatrixSprite, calculation.Multiply(viewMatrixSprite, projectionMatrixSprite));
 			transformetionMatrixDataSprite->WVP = worldViewProjectionMatrixSprite; // SpriteのWVPを更新
 			transformetionMatrixDataSprite->World = worldMatrixSprite; // SpriteのWorldを更新
 
@@ -1132,7 +1089,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			ImGui::SliderAngle("UVRotate", &uvTransformSprite.rotate.z);
 			ImGui::End();
 
-			Calculation::Matrix4x4 uvTransformMatrix = calculation.MakeScaleMatrix(uvTransformSprite.scale);
+			Matrix4x4 uvTransformMatrix = calculation.MakeScaleMatrix(uvTransformSprite.scale);
 			uvTransformMatrix = calculation.Multiply(uvTransformMatrix, calculation.MakeRotationZMatrix(uvTransformSprite.rotate.z));
 			uvTransformMatrix = calculation.Multiply(uvTransformMatrix, calculation.MakeTranslationMatrix(uvTransformSprite.translate));
 			materialDataSprite->uvTransform = uvTransformMatrix; // UV変換行列を更新
@@ -1247,8 +1204,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 	CloseHandle(fenceEvent);
 	winApp->Finalize();
+
 	delete input;
 	delete winApp;
+	delete dxCommon;
 
 	return 0;
 }
