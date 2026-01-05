@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <Windows.h>
 namespace StringUtility{
 	std::wstring ConvertString(const std::string& str);
 
