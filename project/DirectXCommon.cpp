@@ -105,20 +105,19 @@ void DirectXCommon::Initialize(WinApp* winApp) {
 
 
     // 1. ルートパラメータ（シェーダーへの窓口）の設定
-// 現在の描画では マテリアル(b0), WVP(b1), テクスチャ(t0), ライト(b3) を使っている想定です
     D3D12_ROOT_PARAMETER rootParameters[4] = {};
 
-    // マテリアル (b0)
+    // マテリアル
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
     rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // WVP (b1)
+    // WVP
     rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[1].Descriptor.ShaderRegister = 1;
     rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // テクスチャ (DescriptorTable - t0)
+    // テクスチャ
     D3D12_DESCRIPTOR_RANGE descriptorRange[1] = {};
     descriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     descriptorRange[0].NumDescriptors = 1;
@@ -128,12 +127,12 @@ void DirectXCommon::Initialize(WinApp* winApp) {
     rootParameters[2].DescriptorTable.NumDescriptorRanges = 1;
     rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-    // ライト (b3)
+    // ライト
     rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[3].Descriptor.ShaderRegister = 3;
     rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // 2. サンプラー（テクスチャの補間設定）
+    // サンプラー（テクスチャの補間設定）
     D3D12_STATIC_SAMPLER_DESC staticSamplers[1] = {};
     staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;

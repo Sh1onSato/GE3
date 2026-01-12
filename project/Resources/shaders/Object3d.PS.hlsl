@@ -2,50 +2,50 @@
 
 struct Material
 {
-    float32_t4 color;
-    int32_t enableLighting;
-    float32_t4x4 uvTransform;
+    float4 color;
+    int enableLighting;
+    float4x4 uvTransform;
 };
 
 struct DirectionalLight
 {
-    float32_t4 color;
-    float32_t3 direction;
+    float4 color;
+    float3 direction;
     float intensity;
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
-Texture2D<float32_t4> gTexture : register(t0);
+Texture2D<float4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
-ConstantBuffer<DirectionalLight> gDirectionLight : register(b1); // b1ƒŒƒWƒXƒ^‚ÍC++‘¤‚Æˆê’v‚³‚¹‚é
+ConstantBuffer<DirectionalLight> gDirectionLight : register(b1); // b1ãƒ¬ã‚¸ã‚¹ã‚¿ã¯C++å´ã¨ä¸€è‡´ã•ã›ã‚‹
 
 struct PixelShaderOutput
 {
-    float32_t4 color : SV_TARGET0;
+    float4 color : SV_TARGET0;
 };
 
 
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
-    float4 transformedUV = mul(float32_t4(input.texcoord,0.0f, 1.0f), gMaterial.uvTransform);
-    float32_t4 textureColor = gTexture.Sample(gSampler, transformedUV.xy);
+    float4 transformedUV = mul(float4(input.texcoord,0.0f, 1.0f), gMaterial.uvTransform);
+    float4 textureColor = gTexture.Sample(gSampler, transformedUV.xy);
     
-    // Šî–{F‚ğİ’è
+    // åŸºæœ¬è‰²ã‚’è¨­å®š
     output.color = gMaterial.color * textureColor;
 
-    // ƒ‰ƒCƒeƒBƒ“ƒO‚ÌŒvZ‚Æ“K—p
+    // ãƒ©ã‚¤ãƒ†ã‚£ãƒ³ã‚°ã®è¨ˆç®—ã¨é©ç”¨
     if (gMaterial.enableLighting != 0){
-        // –@ü‚ğ³‹K‰»‚µAƒ‰ƒCƒg‚Ì•ûŒü‚ÆƒhƒbƒgÏ‚ğæ‚èAŒ‹‰Ê‚ğ0-1‚ÉƒNƒ‰ƒ“ƒv
+        // æ³•ç·šã‚’æ­£è¦åŒ–ã—ã€ãƒ©ã‚¤ãƒˆã®æ–¹å‘ã¨ãƒ‰ãƒƒãƒˆç©ã‚’å–ã‚Šã€çµæœã‚’0-1ã«ã‚¯ãƒ©ãƒ³ãƒ—
         float NdotL = dot(normalize(input.normal), -gDirectionLight.direction);
         float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
         
-        // ƒ‰ƒCƒg‚ÌF‚Æ‹­“x‚ğ“K—p
-        float32_t4 lightColor = gDirectionLight.color * gDirectionLight.intensity;
+        // ãƒ©ã‚¤ãƒˆã®è‰²ã¨å¼·åº¦ã‚’é©ç”¨
+        float4 lightColor = gDirectionLight.color * gDirectionLight.intensity;
 
-        // ÅI“I‚ÈF‚Éƒ‰ƒCƒeƒBƒ“ƒO‚ğ“K—p
-        output.color.rgb *= lightColor.rgb * cosFactor; // RGB¬•ª‚Ì‚İ‚É“K—p
+        // æœ€çµ‚çš„ãªè‰²ã«ãƒ©ã‚¤ãƒ†ã‚£ãƒ³ã‚°ã‚’é©ç”¨
+        output.color.rgb *= lightColor.rgb * cosFactor; // RGBæˆåˆ†ã®ã¿ã«é©ç”¨
     }
 
     return output;
