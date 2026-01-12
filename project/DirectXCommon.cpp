@@ -5,6 +5,7 @@
 #include"externals/imgui/imgui.h"
 #include"externals/imgui/imgui_impl_dx12.h"
 #include"externals/imgui/imgui_impl_win32.h"
+#include <thread>
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -129,7 +130,7 @@ void DirectXCommon::Initialize(WinApp* winApp) {
 
     // ライト
     rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-    rootParameters[3].Descriptor.ShaderRegister = 3;
+    rootParameters[3].Descriptor.ShaderRegister = 2;
     rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // サンプラー（テクスチャの補間設定）
@@ -160,6 +161,8 @@ void DirectXCommon::Initialize(WinApp* winApp) {
     }
 
     device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
+
+    InitialaizeFixFPS();
 }
 
 void DirectXCommon::PreDraw(){
@@ -214,6 +217,8 @@ void DirectXCommon::PostDraw(){
 
     // GPUの完了を待機
     WaitForGpu();
+
+    UpdateFixFPS();
 
     // 次のフレーム用の準備
     hr = commandAllocator->Reset();
@@ -320,4 +325,30 @@ ComPtr<ID3D12Resource> DirectXCommon::CreatBufferResource(size_t sizeInBytes) {
     ComPtr<ID3D12Resource> res = nullptr;
     device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&res));
     return res;
+}
+
+void DirectXCommon::InitialaizeFixFPS(){
+	reference_ = std::chrono::steady_clock::now();
+}
+
+void DirectXCommon::UpdateFixFPS(){
+    // 1/60秒ぴったりの時間
+	const std::chrono::microseconds KMinTime(uint64_t(1000000.0f / 60.0f));
+    // 1/60秒よりわずかに短い時間
+	const std::chrono::microseconds KMinCheckTime(uint64_t(1000000.0f / 65.0f));
+
+    // 現在時間を取得する
+	std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    // 前回記録から経過時間取得する
+    std::chrono::microseconds elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - reference_);
+
+    // 1/60(よわずかに短い時間)立っていない場合
+    if (elapsed < KMinTime) {
+        // 1/60秒経過するまで微小なスリープを繰り返す
+        while (std::chrono::steady_clock::now() - reference_ < KMinTime) {
+			// 1マイクロ秒スリープ
+			std::this_thread::sleep_for(std::chrono::microseconds(1));
+        }
+    }
+	reference_ = std::chrono::steady_clock::now();
 }

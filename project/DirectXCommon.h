@@ -6,6 +6,7 @@
 #include <format>
 #include <stdint.h>
 #include "WinApp.h"
+#include <chrono>
 
 class DirectXCommon {
 public:
@@ -133,4 +134,11 @@ private:
 
     D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
     uint32_t rtvDescriptorSize;
+
+    // FPS固定初期化
+    void InitialaizeFixFPS();
+    // FPS固定更新
+	void UpdateFixFPS();
+    // 記録時間(FPS固定化用)
+    std::chrono::steady_clock::time_point reference_;
 };

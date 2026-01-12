@@ -491,6 +491,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	// 単位行列を書き込んでおく
 	wvpData->World = calculation.MakeIdentity4x4();
 	wvpData->WVP = calculation.MakeIdentity4x4();
+	wvpResource->Unmap(0, nullptr);
 
 	constexpr uint32_t kSubdivision = 16; // 分割数
 
@@ -521,6 +522,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	VertexData* vertexData = nullptr;
 	vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&vertexData));
 	std::memcpy(vertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());
+	vertexResource->Unmap(0, nullptr);
 
 	// Sphere用のインデックスリソースにデータを書き込む
 	uint32_t* indexData = nullptr;
@@ -680,17 +682,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			Matrix4x4 viewMatrix = calculation.Inverse(cameraMatrix);
 			Matrix4x4 projectionMatrix = calculation.MakePerspectiveFovMatrix(0.45f, float(WinApp::KclientWidth) / float(WinApp::KclientHeight), 0.1f, 100.0f);
 			Matrix4x4 worldViewProjectionMatrix = calculation.Multiply(woldMatrix, calculation.Multiply(viewMatrix, projectionMatrix));
+			wvpResource->Map(0, nullptr, reinterpret_cast<void**>(&wvpData));
 			wvpData->WVP = worldViewProjectionMatrix; // SphereのWVPを更新
 			wvpData->World = woldMatrix; // SphereのWorldを更新
-
+			wvpResource->Unmap(0, nullptr);
 			// Spriteの変換行列
 			Matrix4x4 worldMatrixSprite = calculation.MakeAffineMatrix(transformSprite.scale, transformSprite.rotate, transformSprite.translate);
 			Matrix4x4 viewMatrixSprite = calculation.MakeIdentity4x4(); // Spriteは通常View変換しない
 			Matrix4x4 projectionMatrixSprite = calculation.MakeOrthographicMatrix(0.0f, 0.0f, float(WinApp::KclientWidth), float(WinApp::KclientHeight), 0.0f, 100.0f); // クライアントサイズをそのまま使う
 			Matrix4x4 worldViewProjectionMatrixSprite = calculation.Multiply(worldMatrixSprite, calculation.Multiply(viewMatrixSprite, projectionMatrixSprite));
+			transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
 			transformetionMatrixDataSprite->WVP = worldViewProjectionMatrixSprite; // SpriteのWVPを更新
 			transformetionMatrixDataSprite->World = worldMatrixSprite; // SpriteのWorldを更新
-
+			transformationMatrixResourceSprite->Unmap(0, nullptr);
 			// 開発用UIの処理
 			ImGui::ShowDemoWindow();
 			// カラー

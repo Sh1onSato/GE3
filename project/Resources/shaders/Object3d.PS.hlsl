@@ -18,7 +18,7 @@ ConstantBuffer<Material> gMaterial : register(b0);
 Texture2D<float4> gTexture : register(t0);
 SamplerState gSampler : register(s0);
 
-ConstantBuffer<DirectionalLight> gDirectionLight : register(b1); // b1レジスタはC++側と一致させる
+ConstantBuffer<DirectionalLight> gDirectionLight : register(b2); // b1レジスタはC++側と一致させる
 
 struct PixelShaderOutput
 {
