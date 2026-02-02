@@ -320,3 +320,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# --- My Project Custom Ignores ---
+project/Dumps/
+project/imgui.ini
+project/logs/
+**/externals/DirectXTex/Bin/
+**/externals/DirectXTex/x64/
