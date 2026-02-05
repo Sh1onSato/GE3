@@ -31,8 +31,6 @@ struct Sphere {
 	float radius;
 };
 
-
-
 class Calculation {
 public:
 
