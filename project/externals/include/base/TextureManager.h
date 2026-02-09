@@ -26,7 +26,7 @@ public:
 	void Finalize();
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata);
-
+	const DirectX::TexMetadata& GetMetadata(uint32_t textureIndex);
 	//Imgui用の変数
 	static uint32_t kSRVIndexTop;
 private:

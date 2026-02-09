@@ -134,4 +134,11 @@ Microsoft::WRL::ComPtr<ID3D12Resource> TextureManager::CreateTextureResource(ID3
 	return resource;
 }
 
+const DirectX::TexMetadata& TextureManager::GetMetadata(uint32_t textureIndex){
+	assert(textureIndex < textureDatas.size());
+	
+	TextureDate& textureData = textureDatas[textureIndex];
+	return textureData.metadata;
+}
+
 uint32_t TextureManager::kSRVIndexTop = 1;

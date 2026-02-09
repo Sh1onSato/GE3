@@ -15,11 +15,22 @@ public:
 	void Draw();
 
 	void ImGui(); // デバッグ用UIを表示する関数を追加
+	// --- 外部から数値を取得するための関数 (Getter) ---
+	const Vector2& GetAnchorPoint() const { return anchorPoint; }
+	const bool& GetIsFlipX() const { return isFlipX; }
+	const bool& GetIsFlipY() const { return isFlipY; }
+	const Vector2& GetTexLeftTop() const { return texLeftTop; }
+	const Vector2& GetTexSize() const { return texSize; }
 
 	// --- 外部から数値をいじるための関数 (Setter) ---
 	void SetPosition(const Vector2& pos) { transform.translate = { pos.x, pos.y, 0.0f }; }
 	void SetSize(const Vector2& size) { this->size = size; }
 	void SetRotation(float rotation) { transform.rotate.z = rotation; }
+	void SetAnchorPoint(const Vector2& anchorPoint) { this->anchorPoint = anchorPoint; }
+	void SetIsFlipX(bool isFlipX) { this->isFlipX = isFlipX; }
+	void SetIsFlipY(bool isFlipY) { this->isFlipY = isFlipY; }
+	void SetTexLeftTop(const Vector2& texLeftTop) { this->texLeftTop = texLeftTop; }
+	void SetTexSize(const Vector2& texSize) { this->texSize = texSize; }
 private:
 	SpriteCommon* spriteCommon = nullptr;
 	DirectXCommon* dxCommon = nullptr;
@@ -50,5 +61,19 @@ private:
 	uint32_t textureIndex = 0;
 	// デバッグ用にファイル名を保存しておく変数
 	std::string name;
+
+	Vector2 anchorPoint = { 0.0f, 0.0f }; 
+
+	// 左右フリップ
+	bool isFlipX = false;
+	// 上下フリップ
+	bool isFlipY = false;
+
+	// テクスチャ左上座標
+	Vector2 texLeftTop = { 0.0f, 0.0f };
+	// テクスチャの切り出し
+	Vector2 texSize = { 100.0f, 100.0f };
+	// テクスチャサイズをイメージに合わせる
+	void AdjustTextureSize();
 };
 

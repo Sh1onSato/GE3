@@ -241,7 +241,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 
 	uvChecker->SetPosition({ 0.0f, 0.0f });
-	uvChecker->SetSize({ 640.0f, 320.0f });
+	/*uvChecker->SetSize({ 640.0f, 320.0f });*/
 	monsterBall->SetPosition({ 640.0f, 360.0f });
 	monsterBall->SetSize({ 128.0f, 128.0f });
 	// Sphere用のWVPリソース

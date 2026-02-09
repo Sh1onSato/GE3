@@ -15,23 +15,45 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     textureIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath(textureFilePath);
     // Commonに「住所を教えて！」と頼んで、自分の中にメモ（変数）しておく
     this->textureSrvHandleGPU = spriteCommon->GetTextureHandle(textureIndex);
-
     this->name = textureFilePath; // メンバ変数にファイル名を保存しておく
     // 1. 頂点リソースの設定 (4頂点分でOK)
     vertexResourceSprite = dxCommon->CreatBufferResource(sizeof(VertexData) * 4);
+
+    float left = 0.0f - anchorPoint.x;
+    float right = 1.0f - anchorPoint.x;
+    float top = 0.0f - anchorPoint.y;
+    float bottom = 1.0f - anchorPoint.y;
+
+    // 左右反転・上下反転の処理
+    if (isFlipX) {
+        left = -left;
+        right = -right;
+    }
+    if (isFlipY) {
+        top = -top;
+        bottom = -bottom;
+    }
+
+    const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
+    float tex_left = texLeftTop.x / static_cast<float>(metadate.width);
+    float tex_right = (texLeftTop.x + texSize.x) / static_cast<float>(metadate.width);
+    float tex_top = texLeftTop.y / static_cast<float>(metadate.height);
+    float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
+
+    // 頂点データの書き込み
+    vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
+    VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
+    VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };
+    VertexDataSprite[3].position = { right, top, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { tex_right, tex_top };
+
     // .hのメンバ変数 vertexBufferViewSprite に代入
     vertexBufferViewSprite.BufferLocation = vertexResourceSprite->GetGPUVirtualAddress();
     vertexBufferViewSprite.SizeInBytes = sizeof(VertexData) * 4;
     vertexBufferViewSprite.StrideInBytes = sizeof(VertexData);
 
-    // 頂点データの書き込み
-    vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
-    VertexDataSprite[0].position = { 0.0f, 1.0f, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { 0.0f, 1.0f };
-    VertexDataSprite[1].position = { 0.0f, 0.0f, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { 0.0f, 0.0f };
-    VertexDataSprite[2].position = { 1.0f, 1.0f, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { 1.0f, 1.0f };
-    VertexDataSprite[3].position = { 1.0f, 0.0f, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { 1.0f, 0.0f };
-
-    // 2. インデックスリソースの設定 (6要素)
+    
+    // インデックスリソースの設定 (6要素)
     indexResourceSprite = dxCommon->CreatBufferResource(sizeof(uint32_t) * 6);
     indexBuffViewSprite.BufferLocation = indexResourceSprite->GetGPUVirtualAddress();
     indexBuffViewSprite.SizeInBytes = sizeof(uint32_t) * 6;
@@ -41,23 +63,53 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     indexDataSprite[0] = 0; indexDataSprite[1] = 1; indexDataSprite[2] = 2;
     indexDataSprite[3] = 1; indexDataSprite[4] = 3; indexDataSprite[5] = 2;
 
-    // 3. マテリアルリソースの設定
+    // マテリアルリソースの設定
     materialResourceSprite = dxCommon->CreatBufferResource(sizeof(Material));
     materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = false;
     materialData->uvTransform = calculation.MakeIdentity4x4();
 
-    // 4. 行列リソースの設定
+    // 行列リソースの設定
     transformationMatrixResourceSprite = dxCommon->CreatBufferResource(sizeof(TransformationMatrix));
     transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
     transformetionMatrixDataSprite->World = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
     transformetionMatrixDataSprite->WVP = calculation.MakeIdentity4x4();
 
-
+    AdjustTextureSize();
 }
 
 void Sprite::Update() {
+    // 1. 頂点リソースの設定 (4頂点分でOK)
+
+    float left = 0.0f - anchorPoint.x;
+    float right = 1.0f - anchorPoint.x;
+    float top = 0.0f - anchorPoint.y;
+    float bottom = 1.0f - anchorPoint.y;
+
+    // 左右反転・上下反転の処理
+    if (isFlipX) {
+        left = -left;
+        right = -right;
+    }
+    if (isFlipY) {
+        top = -top;
+        bottom = -bottom;
+    }
+
+    const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
+    float tex_left = texLeftTop.x / static_cast<float>(metadate.width);
+    float tex_right = (texLeftTop.x + texSize.x) / static_cast<float>(metadate.width);
+    float tex_top = texLeftTop.y / static_cast<float>(metadate.height);
+    float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
+
+    // 頂点データの書き込み
+    vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
+    VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
+    VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };
+    VertexDataSprite[3].position = { right, top, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { tex_right, tex_top };
+
     // 外部から設定された size と transform.scale を掛け合わせる
     Vector3 actualScale = {
         size.x * transform.scale.x,
@@ -142,4 +194,12 @@ void Sprite::ImGui(){
 
         ImGui::EndTabBar();
     }
+}
+
+void Sprite::AdjustTextureSize(){
+	const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
+    texSize.x = static_cast<float>(metadate.width);
+	texSize.y = static_cast<float>(metadate.height);
+    // 画像サイズをテクスチャサイズに合わせる
+	size = texSize;
 }
