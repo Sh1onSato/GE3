@@ -31,6 +31,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg
 #include"SpriteCommon.h"
 #include"Sprite.h"
 #include"Structs.h"
+#include"TextureManager.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -69,66 +70,6 @@ static LONG WINAPI ExportDump(EXCEPTION_POINTERS* exception) {
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 
-
-
-DirectX::ScratchImage LoadTexture(const std::string& filePath) {
-	// テクスチャの読み込み
-	DirectX::ScratchImage image{};
-	std::wstring filePathW = ConvertString(filePath);
-	HRESULT hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
-	assert(SUCCEEDED(hr));
-
-	// ミニマップの作成
-	DirectX::ScratchImage mipChain{};
-	hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_SRGB, 0, mipChain);
-	assert(SUCCEEDED(hr));
-
-	// ミップマップ付きのデータデータを返す
-	return mipChain;
-}
-
-ComPtr<ID3D12Resource> CreateTextureResource(ID3D12Device* device, const DirectX::TexMetadata& metadata) {
-	// テクスチャのリソースを作成
-	D3D12_RESOURCE_DESC resourceDesc{};
-	resourceDesc.Width = UINT(metadata.width);
-	resourceDesc.Height = UINT(metadata.height);
-	resourceDesc.MipLevels = UINT(metadata.mipLevels);
-	resourceDesc.DepthOrArraySize = UINT(metadata.arraySize);
-	resourceDesc.Format = metadata.format;
-	resourceDesc.SampleDesc.Count = 1;
-	resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION(metadata.dimension);
-
-	// 利用するHeepの設定
-	D3D12_HEAP_PROPERTIES heapProperties{};
-	heapProperties.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-
-	// Resourceの生成
-	ComPtr <ID3D12Resource> resource = nullptr; 
-	HRESULT hr = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource));
-	assert(SUCCEEDED(hr));
-	return resource;
-}
-
-[[nodiscard]]
-ComPtr<ID3D12Resource> UploadTextureData(ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon) {
-	// Mate情報を取得
-	std::vector<D3D12_SUBRESOURCE_DATA>subresorce;
-	DirectX::PrepareUpload(dxCommon->GetDevice(), mipImages.GetImages(), mipImages.GetImageCount(), mipImages.GetMetadata(), subresorce); // 変更点: device.Get() を使用
-	uint64_t intermediateSize = GetRequiredIntermediateSize(texture.Get(), 0, UINT(subresorce.size()));
-	ComPtr <ID3D12Resource> intermediateResource = dxCommon->CreatBufferResource(intermediateSize); // 変更点: CreatBufferResouce に device.Get() を渡す
-	UpdateSubresources(dxCommon->GetCommandList(), texture.Get(), intermediateResource.Get(), 0, 0, UINT(subresorce.size()), subresorce.data()); // 変更点: texture.Get() と intermediateResource.Get() を使用
-
-	D3D12_RESOURCE_BARRIER barrier{};
-	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-	barrier.Transition.pResource = texture.Get();
-	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-	barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-	barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
-	dxCommon->GetCommandList()->ResourceBarrier(1, &barrier);
-	return intermediateResource;
-}
 
 D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(ID3D12DescriptorHeap* descriptorHeap, uint32_t descrptorSize, uint32_t index) {
 	// ディスクリプタヒープの先頭を取得
@@ -250,7 +191,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	WinApp* winApp = nullptr;
 	DirectXCommon* dxCommon = nullptr;
 	SpriteCommon* spriteCommon = nullptr;
-	Sprite* sprite = new Sprite();
+	Sprite* uvChecker = new Sprite();
+	Sprite* monsterBall = new Sprite();
 
 	// Inputの初期化
 	input = new Input();
@@ -284,12 +226,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	input->Initialize(winApp);
 	dxCommon->Initialize(winApp);
 	dxCommon->ImGuiInitialize();
+	TextureManager::GetInstance()->Initialize();
 	spriteCommon->Initialize(dxCommon);
-	sprite->Initialize(spriteCommon,1);
-	sprite->Initialize(spriteCommon, 2);
+
+	// 2. 使うテクスチャをすべてロードしておく
+	TextureManager::GetInstance()->LoadTexture("resources/uvChecker.png", dxCommon);
+	TextureManager::GetInstance()->LoadTexture("resources/monsterBall.png", dxCommon);
+
+	uvChecker->Initialize(spriteCommon, "resources/uvChecker.png");
+	monsterBall->Initialize(spriteCommon, "resources/monsterBall.png");
+	
 
 	HRESULT hr = S_OK; // これを追加
 
+
+	uvChecker->SetPosition({ 0.0f, 0.0f });
+	uvChecker->SetSize({ 640.0f, 320.0f });
+	monsterBall->SetPosition({ 640.0f, 360.0f });
+	monsterBall->SetSize({ 128.0f, 128.0f });
 	// Sphere用のWVPリソース
 	Microsoft::WRL::ComPtr <ID3D12Resource> wvpResource = dxCommon->CreatBufferResource(sizeof(TransformationMatrix));
 	// データを書き込む
@@ -358,53 +312,17 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	directionalLightData->direction = calculation.Normalize(directionalLightData->direction); // 光の方向を正規化
 
 	
-	
-	// --- テクスチャのロードとアップロード、SRVの作成 ---
-	// テクスチャ1のロードとアップロード
-	DirectX::ScratchImage mipImages = LoadTexture("resources/uvChecker.png");
-	const DirectX::TexMetadata metadata = mipImages.GetMetadata();
-	Microsoft::WRL::ComPtr <ID3D12Resource> textureResource = CreateTextureResource(dxCommon->GetDevice(), metadata);
-	Microsoft::WRL::ComPtr < ID3D12Resource> textureUploadHeap = UploadTextureData(textureResource.Get(), mipImages, dxCommon);
-
-	// テクスチャ2のロードとアップロード
-	DirectX::ScratchImage mipImage2 = LoadTexture(modelData.material.textureFilePath);
-	const DirectX::TexMetadata metadata2 = mipImage2.GetMetadata();
-	// 変更点: CreateTextureResource の戻り値を ComPtr に変更
-	Microsoft::WRL::ComPtr <ID3D12Resource> textureResource2 = CreateTextureResource(dxCommon->GetDevice(), metadata2); // metadata2を使用
-	// 変更点: UploadTextureData の戻り値を ComPtr に変更
-	Microsoft::WRL::ComPtr <ID3D12Resource> textureUploadHeap2 = UploadTextureData(textureResource2.Get(), mipImage2, dxCommon);
-
-	// コマンドリストを閉じて実行、アップロード完了を待機
-	hr = dxCommon->GetCommandList()->Close();
-	assert(SUCCEEDED(hr));
-	ID3D12CommandList* commandListsForUpload[] = { dxCommon->GetCommandList() };
-	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandListsForUpload);
-	dxCommon->WaitForGpu();
-
-	// コマンドリストとアロケーターをリセットして、メインループで再度使用できるようにする
-	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
-	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
-
 	// SRVの作成
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = metadata.format; // テクスチャのフォーマット
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; // シェーダーのコンポーネントマッピング
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; // テクスチャの種類
-	srvDesc.Texture2D.MipLevels = UINT(metadata.mipLevels); // MipMapの数
-
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc2{};
-	srvDesc2.Format = metadata2.format;
-	srvDesc2.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc2.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc2.Texture2D.MipLevels = UINT(metadata2.mipLevels);
+	
+	//D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc2{};
+	//srvDesc2.Format = metadata2.format;
+	//srvDesc2.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	//srvDesc2.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	//srvDesc2.Texture2D.MipLevels = UINT(metadata2.mipLevels);
 
 	// SRVを作成するDescriotorHeapの場所を決める (ImGuiが0を使うので、1から開始)
 	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandelCPU = dxCommon->GetSrvCPUHandle(1); // Index 1
 	D3D12_CPU_DESCRIPTOR_HANDLE textureSrvHandelCPU2 = dxCommon->GetSrvCPUHandle(2); // Index 2
-	// SRVの生成
-	dxCommon->GetDevice()->CreateShaderResourceView(textureResource.Get(), &srvDesc, textureSrvHandelCPU);
-	dxCommon->GetDevice()->CreateShaderResourceView(textureResource2.Get(), &srvDesc2, textureSrvHandelCPU2); // srvDesc2を使用
-
 	
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
 	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; // 深度ステンシルのフォーマット
@@ -425,7 +343,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			input->Update(); // キー入力の更新
 
 			dxCommon->ImGuiPreDraw();
-			sprite->Update();
+			uvChecker->Update();
+			monsterBall->Update();
+
 			// Sphereの回転
 			transform.rotate.y += 0.01f;
 			Matrix4x4 woldMatrix = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
@@ -441,22 +361,29 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 			
 			// 開発用UIの処理
 			ImGui::ShowDemoWindow();
-			// カラー
-			ImGui::Begin("MaterialColor");
-			ImGui::ColorEdit4("Color", &materialData->color.x);
-			// 光の方向 (X, Y, Z 成分をスライダーで調整)
-			ImGui::SliderFloat3("Direction", &directionalLightData->direction.x, -1.0f, 1.0f);
-			directionalLightData->direction = calculation.Normalize(directionalLightData->direction); // 光の方向を正規化
-			// 光の強度 (スライダーで調整)
-			ImGui::SliderFloat("Intensity", &directionalLightData->intensity, 0.0f, 5.0f); // 0.0から5.0の範囲で調整可能
-			// 光の色 (ColorPickerで調整)
-			ImGui::ColorEdit4("Light Color", &directionalLightData->color.x);
-			ImGui::Checkbox("Use Monster Ball Texture", &useMonsterBall); // ImGuiで切り替えできるように追加
+			ImGui::Begin("DebugManager"); // 全体をまとめる親ウィンドウ
+
+			if (ImGui::BeginTabBar("MainTabBar")) {
+
+				// uvChecker 用のタブ
+				if (ImGui::BeginTabItem("UV Checker")) {
+					uvChecker->ImGui();
+					ImGui::EndTabItem();
+				}
+
+				// monsterBall 用のタブ
+				if (ImGui::BeginTabItem("Monster Ball")) {
+					monsterBall->ImGui();
+					ImGui::EndTabItem();
+				}
+
+				// 他にデバッグしたいものがあればここに追加
+				// if (ImGui::BeginTabItem("Camera")) { ... }
+
+				ImGui::EndTabBar();
+			}
 
 			ImGui::End();
-
-			sprite->ImGui();
-
 			dxCommon->PreDraw();
 
 			// 描画用のDescriptorHeapを設定 (SRV/CBV/UAV用)
@@ -481,7 +408,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 			spriteCommon->PreDraw();
 
-			sprite->Draw();
+			uvChecker->Draw();
+			monsterBall->Draw();
+
 			dxCommon->ImGuiPostDraw();
 			dxCommon->PostDraw();
 	}
@@ -492,12 +421,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	CloseHandle(dxCommon->GetFenceEvent());
 	dxCommon->ImGuiFinalize();
 	winApp->Finalize();
+	TextureManager::GetInstance()->Finalize();
 
 	delete input;
 	delete winApp;
 	delete dxCommon;
 	delete spriteCommon;
-	delete sprite;
+	delete uvChecker;
+	delete monsterBall;
 
 	return 0;
 }

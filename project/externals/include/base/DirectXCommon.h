@@ -5,8 +5,11 @@
 #include <string>
 #include <format>
 #include <stdint.h>
+#include"externals/DirectXTex/DirectXTex.h"
+#include"externals/DirectXTex/d3dx12.h"
 #include "WinApp.h"
 #include <chrono>
+
 
 class DirectXCommon {
 public:
@@ -96,7 +99,11 @@ const D3D12_RECT& GetScissorRect() const { return scissorRect; }
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE heapType, UINT numDescriptors, bool shaderVisible);
     Microsoft::WRL::ComPtr<ID3D12Resource> CreateDepthStencilTexureResource(int32_t width, int32_t height);
     Microsoft::WRL::ComPtr<ID3D12Resource> CreatBufferResource(size_t sizeInBytes);
+    [[nodiscard]]
+    Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(Microsoft::WRL::ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon);
 
+    // 最大SRV数(最大テクスチャ数)
+    static const uint32_t kMaxSrvCount;
 private:
     // --- 基盤系 ---
     WinApp* winApp = nullptr;
@@ -141,4 +148,6 @@ private:
 	void UpdateFixFPS();
     // 記録時間(FPS固定化用)
     std::chrono::steady_clock::time_point reference_;
+
+   
 };

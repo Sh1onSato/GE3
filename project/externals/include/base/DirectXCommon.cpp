@@ -7,6 +7,7 @@
 #include"externals/imgui/imgui_impl_win32.h"
 #include <thread>
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dxguid.lib") // IID_PPV_ARGS等の解決に必要
@@ -82,9 +83,9 @@ void DirectXCommon::Initialize(WinApp* winApp) {
     assert(SUCCEEDED(hr));
 
     // ヒープ作成
-    rtvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, false);
-    srvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128, true);
-    dsvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
+    rtvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxSrvCount, false);
+    srvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kMaxSrvCount, true);
+    dsvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxSrvCount, false);
 
     // RTV作成
     rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -327,6 +328,25 @@ ComPtr<ID3D12Resource> DirectXCommon::CreatBufferResource(size_t sizeInBytes) {
     return res;
 }
 
+Microsoft::WRL::ComPtr<ID3D12Resource> DirectXCommon::UploadTextureData(Microsoft::WRL::ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon){
+    // Mate情報を取得
+    std::vector<D3D12_SUBRESOURCE_DATA>subresorce;
+    DirectX::PrepareUpload(dxCommon->GetDevice(), mipImages.GetImages(), mipImages.GetImageCount(), mipImages.GetMetadata(), subresorce); // 変更点: device.Get() を使用
+    uint64_t intermediateSize = GetRequiredIntermediateSize(texture.Get(), 0, UINT(subresorce.size()));
+    ComPtr <ID3D12Resource> intermediateResource = dxCommon->CreatBufferResource(intermediateSize); // 変更点: CreatBufferResouce に device.Get() を渡す
+    UpdateSubresources(dxCommon->GetCommandList(), texture.Get(), intermediateResource.Get(), 0, 0, UINT(subresorce.size()), subresorce.data()); // 変更点: texture.Get() と intermediateResource.Get() を使用
+
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+    barrier.Transition.pResource = texture.Get();
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
+    dxCommon->GetCommandList()->ResourceBarrier(1, &barrier);
+    return intermediateResource;
+}
+
 void DirectXCommon::InitialaizeFixFPS(){
 	reference_ = std::chrono::steady_clock::now();
 }
@@ -352,3 +372,5 @@ void DirectXCommon::UpdateFixFPS(){
     }
 	reference_ = std::chrono::steady_clock::now();
 }
+
+const uint32_t DirectXCommon::kMaxSrvCount = 512;

@@ -5,15 +5,18 @@
 #include"externals/imgui/imgui_impl_dx12.h"
 #include"externals/imgui/imgui_impl_win32.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#include"TextureManager.h"
 
 
-
-void Sprite::Initialize(SpriteCommon* spriteCommon,uint32_t textureIndex){
+void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath){
     this->spriteCommon = spriteCommon;
     this->dxCommon = spriteCommon->GetDxCommon();
+    // 単位行列を書き込んでおく
+    textureIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath(textureFilePath);
     // Commonに「住所を教えて！」と頼んで、自分の中にメモ（変数）しておく
     this->textureSrvHandleGPU = spriteCommon->GetTextureHandle(textureIndex);
 
+    this->name = textureFilePath; // メンバ変数にファイル名を保存しておく
     // 1. 頂点リソースの設定 (4頂点分でOK)
     vertexResourceSprite = dxCommon->CreatBufferResource(sizeof(VertexData) * 4);
     // .hのメンバ変数 vertexBufferViewSprite に代入
@@ -23,10 +26,10 @@ void Sprite::Initialize(SpriteCommon* spriteCommon,uint32_t textureIndex){
 
     // 頂点データの書き込み
     vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
-    VertexDataSprite[0].position = { 0.0f, 360.0f, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { 0.0f, 1.0f };
+    VertexDataSprite[0].position = { 0.0f, 1.0f, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { 0.0f, 1.0f };
     VertexDataSprite[1].position = { 0.0f, 0.0f, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { 0.0f, 0.0f };
-    VertexDataSprite[2].position = { 640.0f, 360.0f, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { 1.0f, 1.0f };
-    VertexDataSprite[3].position = { 640.0f, 0.0f, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { 1.0f, 0.0f };
+    VertexDataSprite[2].position = { 1.0f, 1.0f, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { 1.0f, 1.0f };
+    VertexDataSprite[3].position = { 1.0f, 0.0f, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { 1.0f, 0.0f };
 
     // 2. インデックスリソースの設定 (6要素)
     indexResourceSprite = dxCommon->CreatBufferResource(sizeof(uint32_t) * 6);
@@ -50,19 +53,28 @@ void Sprite::Initialize(SpriteCommon* spriteCommon,uint32_t textureIndex){
     transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
     transformetionMatrixDataSprite->World = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
     transformetionMatrixDataSprite->WVP = calculation.MakeIdentity4x4();
+
+
 }
 
 void Sprite::Update() {
-    // 1. スプライトのワールド行列を計算
-    Matrix4x4 worldMatrix = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    // 外部から設定された size と transform.scale を掛け合わせる
+    Vector3 actualScale = {
+        size.x * transform.scale.x,
+        size.y * transform.scale.y,
+        1.0f
+    };
+    // 外部から設定されたサイズを反映させる
+    Vector3 scale = { size.x * transform.scale.x, size.y * transform.scale.y, 1.0f };
+    // スプライトのワールド行列を計算
+    Matrix4x4 worldMatrix = calculation.MakeAffineMatrix(scale, transform.rotate, transform.translate);
 
-    // 2. ビュー行列（スプライトは通常単位行列）
+    // ビュー行列（スプライトは通常単位行列）
     Matrix4x4 viewMatrix = calculation.MakeIdentity4x4();
 
-    // 3. プロジェクション行列（平行投影 / 正射影行列）
-    // 本来は WinApp の定数や SpriteCommon からサイズをもらうのが良い
+    // プロジェクション行列（平行投影 / 正射影行列）
     Matrix4x4 projectionMatrix = calculation.MakeOrthographicMatrix(
-        0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 100.0f);
+        0.0f, 0.0f, screenResolution.x, screenResolution.y, 0.0f, 100.0f);
 
     // 4. WVP行列の合成
     Matrix4x4 wvpMatrix = calculation.Multiply(worldMatrix, calculation.Multiply(viewMatrix, projectionMatrix));
@@ -92,7 +104,7 @@ void Sprite::Draw() {
     commandList->SetGraphicsRootConstantBufferView(1, transformationMatrixResourceSprite->GetGPUVirtualAddress());
 
     // 3. テクスチャをセット (今のところ main からもらったハンドルを使う想定)
-    commandList->SetGraphicsRootDescriptorTable(2, textureSrvHandleGPU);
+    commandList->SetGraphicsRootDescriptorTable(2, TextureManager::GetInstance()->GetSrvHandleGPU(textureIndex));
 
     // 4. 描画！
     commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
@@ -100,12 +112,34 @@ void Sprite::Draw() {
 }
 
 void Sprite::ImGui(){
-    ImGui::Begin("Sprite Debug"); // ウィンドウの名前（任意）
+    // タブバーの開始
+    if (ImGui::BeginTabBar("SpriteTabBar")) {
 
-    // UV変換の操作
-    ImGui::DragFloat2("UVTranslate", &uvTransformSprite.translate.x, 0.01f, -10.0f, 10.0f);
-    ImGui::DragFloat2("UVScale", &uvTransformSprite.scale.x, 0.01f, -10.0f, 10.0f);
-    ImGui::SliderAngle("UVRotate", &uvTransformSprite.rotate.z);
+        // --- 座標変換 ---
+        if (ImGui::BeginTabItem("Transform")) {
+            ImGui::DragFloat2("Position", &transform.translate.x, 1.0f); // 座標
+            ImGui::DragFloat2("Size", &size.x, 1.0f);                   // サイズ
+            ImGui::SliderAngle("Rotate", &transform.rotate.z);         // 回転
+            ImGui::EndTabItem();
+        }
+        // --- マテリアル色変更 --- 
+        if (ImGui::BeginTabItem("Material")) {
+            // materialData->color を直接編集する
+            // ImGui::ColorEdit4 は 0.0f ~ 1.0f の float4 を自動で扱えます
+            ImGui::ColorEdit4("Color", &materialData->color.x);
 
-    ImGui::End();
+            // ついでにライティングの有効/無効も切り替えられるように
+            ImGui::Checkbox("Enable Lighting", reinterpret_cast<bool*>(&materialData->enableLighting));
+            ImGui::EndTabItem();
+        }
+        // --- UV変換 ---
+        if (ImGui::BeginTabItem("UV")) {
+            ImGui::DragFloat2("UVTranslate", &uvTransformSprite.translate.x, 0.01f, -10.0f, 10.0f);
+            ImGui::DragFloat2("UVScale", &uvTransformSprite.scale.x, 0.01f, -10.0f, 10.0f);
+            ImGui::SliderAngle("UVRotate", &uvTransformSprite.rotate.z);
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
 }
