@@ -319,12 +319,31 @@ ComPtr<ID3D12Resource> DirectXCommon::CreateDepthStencilTexureResource(int32_t w
 }
 
 ComPtr<ID3D12Resource> DirectXCommon::CreatBufferResource(size_t sizeInBytes) {
-    D3D12_HEAP_PROPERTIES prop{}; prop.Type = D3D12_HEAP_TYPE_UPLOAD;
-    D3D12_RESOURCE_DESC desc{}; desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    desc.Width = sizeInBytes; desc.Height = 1; desc.DepthOrArraySize = 1; desc.MipLevels = 1;
-    desc.SampleDesc.Count = 1; desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    // 定数バッファは256バイトの倍数である必要があるため、切り上げ計算を行う
+    size_t alignment = 256;
+    size_t alignedSize = (sizeInBytes + alignment - 1) & ~(alignment - 1);
+
+    D3D12_HEAP_PROPERTIES prop{};
+    prop.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Width = alignedSize; // 切り上げたサイズを指定
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
     ComPtr<ID3D12Resource> res = nullptr;
-    device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&res));
+    device->CreateCommittedResource(
+        &prop,
+        D3D12_HEAP_FLAG_NONE,
+        &desc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&res)
+    );
     return res;
 }
 

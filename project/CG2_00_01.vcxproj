@@ -168,6 +168,9 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="externals\include\base\ShaderCompiler.cpp" />
     <ClCompile Include="externals\include\2d\Sprite.cpp" />
     <ClCompile Include="externals\include\base\TextureManager.cpp" />
+    <ClCompile Include="externals\include\3d\Object3dCommon.cpp" />
+    <ClCompile Include="externals\include\3d\Object3d.cpp" />
+    <ClCompile Include="Model.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Resources\shaders\Object3d.VS.hlsl">
@@ -207,6 +210,9 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="externals\include\2d\Sprite.h" />
     <ClInclude Include="externals\include\base\Structs.h" />
     <ClInclude Include="externals\include\base\TextureManager.h" />
+    <ClInclude Include="externals\include\3d\Object3dCommon.h" />
+    <ClInclude Include="externals\include\3d\Object3d.h" />
+    <ClInclude Include="Model.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="externals\imgui\LICENSE.txt" />
