@@ -4,8 +4,9 @@
 
 using namespace ShaderCompiler;
 
-void Object3dCommon::Initialize(DirectXCommon* dxCommon) {
+void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 	this->dxCommon = dxCommon;
+	this->srvManager = srvManager;
     HRESULT hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&dxcUtils));
     assert(SUCCEEDED(hr));
     hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&dxcCompiler));
@@ -22,10 +23,8 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon) {
     directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
 
     directionalLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    directionalLightData->direction = { 1.0f, -1.0f, 0.0f };
+    directionalLightData->direction = { 0.0f, 0.0f, 1.0f }; // 前方からの光に変更
     directionalLightData->intensity = 1.0f;
-    directionalLightData->direction = calculation.Normalize(directionalLightData->direction); // 光の方向を正規化
-
 }
 
 void Object3dCommon::CreateRootSignature() {
@@ -131,6 +130,8 @@ void Object3dCommon::CreateGraphicsPipeline() {
 
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.SampleDesc.Count = 1;
+    psoDesc.SampleDesc.Quality = 0;
+    psoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
     psoDesc.NumRenderTargets = 1;
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -143,35 +144,12 @@ void Object3dCommon::CreateGraphicsPipeline() {
 void Object3dCommon::PreDraw() {
     auto commandList = dxCommon->GetCommandList();
 
-    // 1. 現在のバックバッファのインデックスを取得
-    UINT backBufferIndex = dxCommon->GetBackBufferIndex();
-
-    // 2. リソースバリアを張る
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    // エラー対策
-    barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-
-    // エラー対策: GetSwapChainResource を使って ID3D12Resource* を取得
-    barrier.Transition.pResource = dxCommon->GetSwapChainResource(backBufferIndex);
-    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    commandList->ResourceBarrier(1, &barrier);
-
-    // 3. 描画先の設定（RTVとDSVをセット）
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = dxCommon->GetRtvHandle(backBufferIndex);
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dxCommon->GetDsvHandle();
-    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
-
-    // 4. 深度バッファをクリア（これを忘れると3Dが重なりません）
-    commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
-    // --- 5. 既存のパイプライン設定 ---
+    // 4. パイプライン設定 ---
     commandList->SetGraphicsRootSignature(rootSignature.Get());
     commandList->SetPipelineState(pipelineState.Get());
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    ID3D12DescriptorHeap* descriptorHeaps[] = { dxCommon->GetSrvHeap() };
+    ID3D12DescriptorHeap* descriptorHeaps[] = { srvManager->GetDescriptorHeap() };
     commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
     // 定数バッファのセット（DirectionalLight）

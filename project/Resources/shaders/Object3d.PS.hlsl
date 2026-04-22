@@ -35,6 +35,7 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 基本色を設定
     output.color = gMaterial.color * textureColor;
 
+    /*
     // ライティングの計算と適用
     if (gMaterial.enableLighting != 0){
         // 法線を正規化し、ライトの方向とドット積を取り、結果を0-1にクランプ
@@ -47,6 +48,7 @@ PixelShaderOutput main(VertexShaderOutput input)
         // 最終的な色にライティングを適用
         output.color.rgb *= lightColor.rgb * cosFactor; // RGB成分のみに適用
     }
+    */
 
     return output;
 }

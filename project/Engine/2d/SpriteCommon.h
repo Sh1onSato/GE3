@@ -1,11 +1,12 @@
 #pragma once
 #include"DirectXCommon.h"
 #include"ShaderCompiler.h"
+#include"SrvManager.h"
 
 class SpriteCommon {
 public:
 	// 初期化
-	void Initialize(DirectXCommon* dxCommon);
+	void Initialize(DirectXCommon* dxCommon, SrvManager* srvManager);
 
 	// 描画前処理
 	void PreDraw();
@@ -16,10 +17,11 @@ public:
 	IDxcBlob* GetPixelShaderBlob() const { return pixelShaderBlob.Get(); }
 	// 画像番号を渡すと、その「住所(Handle)」を返してくれる関数を作る
 	D3D12_GPU_DESCRIPTOR_HANDLE GetTextureHandle(uint32_t index) {
-		return dxCommon->GetSrvGPUHandle(index);
+		return srvManager->GetGPUDescriptorHandle(index);
 	}
 private:
 	DirectXCommon* dxCommon = nullptr;
+	SrvManager* srvManager = nullptr;
 
 	Microsoft::WRL::ComPtr <IDxcUtils> dxcUtils = nullptr;
 	Microsoft::WRL::ComPtr <IDxcCompiler3> dxcCompiler = nullptr;

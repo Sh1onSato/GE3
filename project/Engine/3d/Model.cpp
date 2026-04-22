@@ -4,6 +4,9 @@
 void Model::Initialize(DirectXCommon* dxCommon, const std::string& directoryPath, const std::string& filename) {
 	// 1. ファイルを読み込む
 	modelData = LoadObjFile(directoryPath, filename);
+	if (modelData.material.textureFilePath.size() > 0) {
+		TextureManager::GetInstance()->LoadTexture(modelData.material.textureFilePath);
+	}
 
 	// 2. 頂点リソースの作成
 	vertexResource = dxCommon->CreatBufferResource(sizeof(VertexData) * modelData.vertices.size());
@@ -23,7 +26,10 @@ void Model::Initialize(DirectXCommon* dxCommon, const std::string& directoryPath
 void Model::Draw(ID3D12GraphicsCommandList* commandList) {
 	// 描画コマンドの発行
 	commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
+	uint32_t textureIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath(modelData.material.textureFilePath);
+	commandList->SetGraphicsRootDescriptorTable(2, TextureManager::GetInstance()->GetSrvHandleGPU(textureIndex));
 	commandList->DrawInstanced(UINT(modelData.vertices.size()), 1, 0, 0);
+
 }
 
 MaterialData Model::LoadMaterialTemplateFile(const std::string& directoryPath, const std::string& filename) {

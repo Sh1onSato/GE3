@@ -1,7 +1,8 @@
 #include "SpriteCommon.h"
 using namespace ShaderCompiler;
-void SpriteCommon::Initialize(DirectXCommon* dxCommon) {
+void SpriteCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 	this->dxCommon = dxCommon; // 受け取ったポインタをメンバ変数に保存
+	this->srvManager = srvManager;
 	// --- dxcCompilerの初期化 ---
 	HRESULT hr = S_OK; // これを追加
 	hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&dxcUtils));
@@ -45,6 +46,14 @@ void SpriteCommon::Initialize(DirectXCommon* dxCommon) {
 
 	// 全ての要素を書き込む
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	blendDesc.RenderTarget[0].BlendEnable = TRUE;
+	blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+	blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+
 	// 裏面(時計回り)を表示しない
 	rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
 	// 三角形の中を塗りつぶす
@@ -57,22 +66,23 @@ void SpriteCommon::Initialize(DirectXCommon* dxCommon) {
 	graphicsPipelineStateDesc.PS = { pixelShaderBlob->GetBufferPointer(),pixelShaderBlob->GetBufferSize() }; // ピクセルシェーダー
 	graphicsPipelineStateDesc.BlendState = blendDesc; // ブレンドステート
 	graphicsPipelineStateDesc.RasterizerState = rasterizerDesc; // ラスタライザーステート
-	
+
 	// 書き込むRTVの情報
 	graphicsPipelineStateDesc.NumRenderTargets = 1; // 書き込むRTVの数
 	graphicsPipelineStateDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; // 書き込むRTVのフォーマット
-	
+
 	// 利用するトポロジ(形状)のタイプ。三角形
 	graphicsPipelineStateDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	
+
 	// どのように画面に色を打ち込むのかの設定
 	graphicsPipelineStateDesc.SampleDesc.Count = 1;
 	graphicsPipelineStateDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
-	
+
 	// 深度ステンシルの設定
-	depthStencilDesc.DepthEnable = true; // 深度テストを有効にする
-	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL; // 全ての深度値を書き込む
-	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // 深度比較関数
+	depthStencilDesc.DepthEnable = false; // 深度テストを無効にする
+	depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // 深度値を書き込まない
+	depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS; // 常に描画
+
 	
 	// ステンシルは使わない
 	graphicsPipelineStateDesc.DepthStencilState = depthStencilDesc; // パイプラインステートに深度ステンシルの設定を適用

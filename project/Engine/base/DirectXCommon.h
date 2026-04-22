@@ -1,6 +1,7 @@
 #pragma once
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <dxgidebug.h>
 #include <wrl.h>
 #include <string>
 #include <format>
@@ -10,9 +11,33 @@
 #include "WinApp.h"
 #include <chrono>
 
+// D3Dリソースリークチェック用の構造体
+struct D3DResourceLeakCheker {
+    ~D3DResourceLeakCheker() {
+        Microsoft::WRL::ComPtr <IDXGIDebug1> debug;
+        if (SUCCEEDED(DXGIGetDebugInterface1(0, IID_PPV_ARGS(&debug)))) {
+            debug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
+            debug->ReportLiveObjects(DXGI_DEBUG_APP, DXGI_DEBUG_RLO_ALL);
+            debug->ReportLiveObjects(DXGI_DEBUG_D3D12, DXGI_DEBUG_RLO_ALL);
+        }
+    }
+};
 
 class DirectXCommon {
 public:
+    // --- スタティックヘルパー関数 ---
+    static D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(ID3D12DescriptorHeap* descriptorHeap, uint32_t descriptorSize, uint32_t index) {
+        D3D12_CPU_DESCRIPTOR_HANDLE handleCPU = descriptorHeap->GetCPUDescriptorHandleForHeapStart();
+        handleCPU.ptr += static_cast<SIZE_T>(descriptorSize) * index;
+        return handleCPU;
+    }
+
+    static D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(ID3D12DescriptorHeap* descriptorHeap, uint32_t descriptorSize, uint32_t index) {
+        D3D12_GPU_DESCRIPTOR_HANDLE handleGPU = descriptorHeap->GetGPUDescriptorHandleForHeapStart();
+        handleGPU.ptr += static_cast<SIZE_T>(descriptorSize) * index;
+        return handleGPU;
+    }
+
     // 初期化
     void Initialize(WinApp* winApp);
     void PreDraw();
@@ -21,7 +46,7 @@ public:
     void WaitForGpu();
 	void CreateSwapChainRTV();
     // --- ImGui関連を追加 ---
-    void ImGuiInitialize();
+    void ImGuiInitialize(class SrvManager* srvManager);
     void ImGuiPreDraw();
     void ImGuiPostDraw();
     void ImGuiFinalize();
@@ -34,7 +59,6 @@ public:
     ID3D12CommandAllocator* GetCommandAllocator() const { return commandAllocator.Get(); }
 
     // --- ヒープ系 ---
-    ID3D12DescriptorHeap* GetSrvHeap() const { return srvDescriptorHeap.Get(); }
     ID3D12DescriptorHeap* GetRtvHeap() const { return rtvDescriptorHeap.Get(); }
     ID3D12DescriptorHeap* GetDsvHeap() const { return dsvDescriptorHeap.Get(); }
 
@@ -73,21 +97,6 @@ public:
     // 深度バッファのリソースを返す
     ID3D12Resource* GetDepthStencilResource() const { return depthStencilResource.Get(); }
 
-    // --- SRVハンドル取得系 ---
-    // 指定したインデックスのCPUハンドルを取得
-    D3D12_CPU_DESCRIPTOR_HANDLE GetSrvCPUHandle(UINT index) const {
-        D3D12_CPU_DESCRIPTOR_HANDLE handle = srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
-        handle.ptr += (index * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
-        return handle;
-    }
-
-    // 指定したインデックスのGPUハンドルを取得
-    D3D12_GPU_DESCRIPTOR_HANDLE GetSrvGPUHandle(UINT index) const {
-        D3D12_GPU_DESCRIPTOR_HANDLE handle = srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-        handle.ptr += (index * device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
-        return handle;
-    }
-
     // --- ビューポート・シザー矩形 ---
 const D3D12_VIEWPORT& GetViewport() const { return viewport; }
 const D3D12_RECT& GetScissorRect() const { return scissorRect; }
@@ -124,7 +133,6 @@ private:
     // --- ディスクリプタヒープ ---
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> rtvDescriptorHeap;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> dsvDescriptorHeap;
-    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvDescriptorHeap;
 
     // --- 同期系 ---
     Microsoft::WRL::ComPtr<ID3D12Fence> fence;

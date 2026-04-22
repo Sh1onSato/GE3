@@ -5,10 +5,11 @@
 #include <d3d12.h>
 #include"Calculation.h"
 #include <dxcapi.h>
+#include "SrvManager.h"
 
 class Object3dCommon{
 public:
-	void Initialize(DirectXCommon* dxCommon);
+	void Initialize(DirectXCommon* dxCommon, SrvManager* srvManager);
 
 	void PreDraw();
 
@@ -21,6 +22,7 @@ private:
 
 private:
     DirectXCommon* dxCommon = nullptr;
+    SrvManager* srvManager = nullptr;
 	Calculation calculation;
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;

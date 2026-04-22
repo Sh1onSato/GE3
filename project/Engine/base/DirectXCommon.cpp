@@ -1,4 +1,5 @@
 #include "DirectXCommon.h"
+#include "SrvManager.h"
 #include <cassert>
 #include "Logger.h"
 #include "StringUtility.h"
@@ -84,7 +85,6 @@ void DirectXCommon::Initialize(WinApp* winApp) {
 
     // ヒープ作成
     rtvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxSrvCount, false);
-    srvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kMaxSrvCount, true);
     dsvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxSrvCount, false);
 
     // RTV作成
@@ -101,7 +101,12 @@ void DirectXCommon::Initialize(WinApp* winApp) {
 
     viewport.Width = (float)WinApp::KclientWidth;
     viewport.Height = (float)WinApp::KclientHeight;
+    viewport.TopLeftX = 0.0f;
+    viewport.TopLeftY = 0.0f;
+    viewport.MinDepth = 0.0f;
     viewport.MaxDepth = 1.0f;
+    scissorRect.left = 0;
+    scissorRect.top = 0;
     scissorRect.right = WinApp::KclientWidth;
     scissorRect.bottom = WinApp::KclientHeight;
 
@@ -259,19 +264,20 @@ void DirectXCommon::CreateSwapChainRTV(){
     }
 }
 
-void DirectXCommon::ImGuiInitialize() {
+void DirectXCommon::ImGuiInitialize(SrvManager* srvManager) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(winApp->GetHwnd());
 
+    uint32_t index = srvManager->Allocate();
     ImGui_ImplDX12_Init(
         device.Get(),
         2, // swapChainDesc.BufferCount
         DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // rtvDesc.Format
-        srvDescriptorHeap.Get(),
-        srvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-        srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart()
+        srvManager->GetDescriptorHeap(),
+        srvManager->GetCPUDescriptorHandle(index),
+        srvManager->GetGPUDescriptorHandle(index)
     );
 }
 
