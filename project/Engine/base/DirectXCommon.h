@@ -11,6 +11,11 @@
 #include "WinApp.h"
 #include <chrono>
 
+#pragma comment(lib, "d3d12.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "dxcompiler.lib")
+
 // D3Dリソースリークチェック用の構造体
 struct D3DResourceLeakCheker {
     ~D3DResourceLeakCheker() {

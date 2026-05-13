@@ -23,7 +23,6 @@ private:
 private:
     DirectXCommon* dxCommon = nullptr;
     SrvManager* srvManager = nullptr;
-	Calculation calculation;
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pipelineState;

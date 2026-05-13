@@ -1,6 +1,6 @@
 #include "Sprite.h"
 #include "SpriteCommon.h"
-#include"calculation.h"
+#include"Calculation.h"
 #include"externals/imgui/imgui.h"
 #include"externals/imgui/imgui_impl_dx12.h"
 #include"externals/imgui/imgui_impl_win32.h"
@@ -68,13 +68,13 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = false;
-    materialData->uvTransform = calculation.MakeIdentity4x4();
+    materialData->uvTransform = Calculation::MakeIdentity4x4();
 
     // 行列リソースの設定
     transformationMatrixResourceSprite = dxCommon->CreatBufferResource(sizeof(TransformationMatrix));
     transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
-    transformetionMatrixDataSprite->World = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
-    transformetionMatrixDataSprite->WVP = calculation.MakeIdentity4x4();
+    transformetionMatrixDataSprite->World = Calculation::MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    transformetionMatrixDataSprite->WVP = Calculation::MakeIdentity4x4();
 
     AdjustTextureSize();
 }
@@ -119,17 +119,17 @@ void Sprite::Update() {
     // 外部から設定されたサイズを反映させる
     Vector3 scale = { size.x * transform.scale.x, size.y * transform.scale.y, 1.0f };
     // スプライトのワールド行列を計算
-    Matrix4x4 worldMatrix = calculation.MakeAffineMatrix(scale, transform.rotate, transform.translate);
+    Matrix4x4 worldMatrix = Calculation::MakeAffineMatrix(scale, transform.rotate, transform.translate);
 
     // ビュー行列（スプライトは通常単位行列）
-    Matrix4x4 viewMatrix = calculation.MakeIdentity4x4();
+    Matrix4x4 viewMatrix = Calculation::MakeIdentity4x4();
 
     // プロジェクション行列（平行投影 / 正射影行列）
-    Matrix4x4 projectionMatrix = calculation.MakeOrthographicMatrix(
+    Matrix4x4 projectionMatrix = Calculation::MakeOrthographicMatrix(
         0.0f, 0.0f, screenResolution.x, screenResolution.y, 0.0f, 100.0f);
 
     // 4. WVP行列の合成
-    Matrix4x4 wvpMatrix = calculation.Multiply(worldMatrix, calculation.Multiply(viewMatrix, projectionMatrix));
+    Matrix4x4 wvpMatrix = worldMatrix * viewMatrix * projectionMatrix;
 
     // 5. GPU上のリソース（定数バッファ）に書き込む
     // Initialize で Map したポインタを保持している場合は、そこに直接代入するだけでOK
@@ -137,9 +137,9 @@ void Sprite::Update() {
     transformetionMatrixDataSprite->World = worldMatrix;
 
 
-    Matrix4x4 uvTransformMatrix = calculation.MakeScaleMatrix(uvTransformSprite.scale);
-    uvTransformMatrix = calculation.Multiply(uvTransformMatrix, calculation.MakeRotationZMatrix(uvTransformSprite.rotate.z));
-    uvTransformMatrix = calculation.Multiply(uvTransformMatrix, calculation.MakeTranslationMatrix(uvTransformSprite.translate));
+    Matrix4x4 uvTransformMatrix = Calculation::MakeScaleMatrix(uvTransformSprite.scale) * 
+                                  Calculation::MakeRotationZMatrix(uvTransformSprite.rotate.z) * 
+                                  Calculation::MakeTranslationMatrix(uvTransformSprite.translate);
     materialData->uvTransform = uvTransformMatrix; // UV変換行列を更新
 
 }

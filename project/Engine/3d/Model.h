@@ -13,8 +13,6 @@ public:
     void Draw(ID3D12GraphicsCommandList* commandList);
 
 private:
-	Calculation calculation;
-
 
 private:
     // 既存のメンバ関数はprivateにして、Initializeから呼ぶのが一般的です

@@ -9,13 +9,13 @@ Camera::Camera() {
 
 void Camera::Update() {
     // カメラのワールド行列を作成
-    Matrix4x4 cameraMatrix = calculation.MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    Matrix4x4 cameraMatrix = Calculation::MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
     // ビュー行列はカメラ行列の逆行列
-    viewMatrix = calculation.Inverse(cameraMatrix);
+    viewMatrix = Calculation::Inverse(cameraMatrix);
     // プロジェクション行列の作成
-    projectionMatrix = calculation.MakePerspectiveFovMatrix(fovY, aspectRatio, nearZ, farZ);
+    projectionMatrix = Calculation::MakePerspectiveFovMatrix(fovY, aspectRatio, nearZ, farZ);
     // ビュープロジェクション行列の計算
-    viewProjectionMatrix = calculation.Multiply(viewMatrix, projectionMatrix);
+    viewProjectionMatrix = viewMatrix * projectionMatrix;
 }
 
 void Camera::ImGui() {

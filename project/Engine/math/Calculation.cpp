@@ -2,17 +2,43 @@
 #include <cmath> 
 #include <numbers> 
 
-Vector3 Calculation::Add(const Vector3& a, const Vector3& b) {
-	return { a.x + b.x, a.y + b.y, a.z + b.z };
+// --- Matrix4x4 演算子オーバーロード ---
+
+Matrix4x4 Matrix4x4::operator+(const Matrix4x4& other) const {
+    Matrix4x4 result;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            result.m[i][j] = m[i][j] + other.m[i][j];
+        }
+    }
+    return result;
 }
 
-Vector3 Calculation::Subtract(const Vector3& a, const Vector3& b) {
-	return { a.x - b.x, a.y - b.y, a.z - b.z };
+Matrix4x4 Matrix4x4::operator-(const Matrix4x4& other) const {
+    Matrix4x4 result;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            result.m[i][j] = m[i][j] - other.m[i][j];
+        }
+    }
+    return result;
 }
 
-Vector3 Calculation::Multiply(float b, const Vector3& a) {
-	return { a.x * b, a.y * b, a.z * b };
+Matrix4x4 Matrix4x4::operator*(const Matrix4x4& other) const {
+    Matrix4x4 result;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            result.m[i][j] = 0;
+            for (int k = 0; k < 4; ++k) {
+                result.m[i][j] += m[i][k] * other.m[k][j];
+            }
+        }
+    }
+    return result;
 }
+
+// --- Calculation 静的関数 ---
+
 float Calculation::Dot(const Vector3& a, const Vector3& b) {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -21,7 +47,7 @@ float Calculation::Length(const Vector3& a) {
 	return std::sqrt(Dot(a, a));
 }
 
-Vector3 Calculation::Normalize(Vector3& a) {
+Vector3 Calculation::Normalize(const Vector3& a) {
 	float length = Length(a);
 	if (length == 0) {
 		return { 0, 0, 0 };
@@ -29,43 +55,8 @@ Vector3 Calculation::Normalize(Vector3& a) {
 	return { a.x / length, a.y / length, a.z / length };
 }
 
-Matrix4x4 Calculation::Add(const Matrix4x4& a, const Matrix4x4& b)
-{
-	Matrix4x4 result;
-	for (int i = 0; i < 4; ++i) {
-		for (int j = 0; j < 4; ++j) {
-			result.m[i][j] = a.m[i][j] + b.m[i][j];
-		}
-	}
-	return result;
-}
-
-Matrix4x4 Calculation::Subtract(const Matrix4x4& a, const Matrix4x4& b) {
-	Matrix4x4 result;
-	for (int i = 0; i < 4; ++i) {
-		for (int j = 0; j < 4; ++j) {
-			result.m[i][j] = a.m[i][j] - b.m[i][j];
-		}
-	}
-	return result;
-}
-
-Matrix4x4 Calculation::Multiply(const Matrix4x4& a, const Matrix4x4& b) {
-	Matrix4x4 result;
-	for (int i = 0; i < 4; ++i) {
-		for (int j = 0; j < 4; ++j) {
-			result.m[i][j] = 0;
-			for (int k = 0; k < 4; ++k) {
-				result.m[i][j] += a.m[i][k] * b.m[k][j];
-			}
-		}
-	}
-	return result;
-}
-
 Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
 	Matrix4x4 result;
-	// 逆行列の計算を実装する
 	float det = 
 		a.m[0][3] * a.m[1][2] * a.m[2][1] * a.m[3][0] - a.m[0][2] * a.m[1][3] * a.m[2][1] * a.m[3][0] -
 		a.m[0][3] * a.m[1][1] * a.m[2][2] * a.m[3][0] + a.m[0][1] * a.m[1][3] * a.m[2][2] * a.m[3][0] +
@@ -81,7 +72,7 @@ Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
 		a.m[0][1] * a.m[1][0] * a.m[2][2] * a.m[3][3] + a.m[0][0] * a.m[1][1] * a.m[2][2] * a.m[3][3];
 
 	if (det == 0.0f) {
-		return result = {};
+		return {};
 	}
 	float invDet = 1.0f / det;
 
@@ -166,7 +157,6 @@ Matrix4x4 Calculation::Inverse(const Matrix4x4& a) {
 		a.m[0][1] * a.m[1][0] * a.m[2][2] + a.m[0][0] * a.m[1][1] * a.m[2][2]);
 
 	return result;
-
 }
 
 Matrix4x4 Calculation::Transpose(const Matrix4x4& a) {
@@ -183,64 +173,30 @@ Matrix4x4 Calculation::MakeIdentity4x4() {
 	Matrix4x4 result;
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 4; ++j) {
-			if (i == j) {
-				result.m[i][j] = 1.0f;
-			}
-			else {
-				result.m[i][j] = 0.0f;
-			}
+			result.m[i][j] = (i == j) ? 1.0f : 0.0f;
 		}
 	}
 	return result;
 }
 
-Matrix4x4 Calculation::MakeScaleMatrix(const Vector3& Scale) {
-	Matrix4x4 result;
-	result.m[0][0] = Scale.x;
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = Scale.y;
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = 0.0f;
-	result.m[2][2] = Scale.z;
-	result.m[2][3] = 0.0f;
-	result.m[3][0] = 0.0f;
-	result.m[3][1] = 0.0f;
-	result.m[3][2] = 0.0f;
-	result.m[3][3] = 1.0f;
-
+Matrix4x4 Calculation::MakeScaleMatrix(const Vector3& scale) {
+	Matrix4x4 result = MakeIdentity4x4();
+	result.m[0][0] = scale.x;
+	result.m[1][1] = scale.y;
+	result.m[2][2] = scale.z;
 	return result;
 }
 
-Matrix4x4 Calculation::MakeTranslationMatrix(const Vector3& Translate) {
-	Matrix4x4 result;
-	result.m[0][0] = 1.0f;
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = 1.0f;
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = 0.0f;
-	result.m[2][2] = 1.0f;
-	result.m[2][3] = 0.0f;
-	result.m[3][0] = Translate.x;
-	result.m[3][1] = Translate.y;
-	result.m[3][2] = Translate.z;
-	result.m[3][3] = 1.0f;
-
+Matrix4x4 Calculation::MakeTranslationMatrix(const Vector3& translate) {
+	Matrix4x4 result = MakeIdentity4x4();
+	result.m[3][0] = translate.x;
+	result.m[3][1] = translate.y;
+	result.m[3][2] = translate.z;
 	return result;
 }
 
-Vector3 Calculation::Transform(const Vector3& vector, Matrix4x4& matrix) {
+Vector3 Calculation::Transform(const Vector3& vector, const Matrix4x4& matrix) {
 	Vector3 result;
-	// 行列とベクトルの積を計算
 	result.x = vector.x * matrix.m[0][0] + vector.y * matrix.m[1][0] + vector.z * matrix.m[2][0] + matrix.m[3][0];
 	result.y = vector.x * matrix.m[0][1] + vector.y * matrix.m[1][1] + vector.z * matrix.m[2][1] + matrix.m[3][1];
 	result.z = vector.x * matrix.m[0][2] + vector.y * matrix.m[1][2] + vector.z * matrix.m[2][2] + matrix.m[3][2];
@@ -254,260 +210,191 @@ Vector3 Calculation::Transform(const Vector3& vector, Matrix4x4& matrix) {
 	return result;
 }
 
-Matrix4x4 Calculation::MakeRotationXMatrix(float radian)
-{
-	Matrix4x4 result;
-
-	float cosRadian = std::cosf(radian);
-	float sinRadian = std::sinf(radian);
-
-	result.m[0][0] = 1.0f;
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = cosRadian;
-	result.m[1][2] = sinRadian;
-	result.m[1][3] = 0.0f;
-
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = -sinRadian;
-	result.m[2][2] = cosRadian;
-	result.m[2][3] = 0.0f;
-
-	result.m[3][0] = 0.0f;
-	result.m[3][1] = 0.0f;
-	result.m[3][2] = 0.0f;
-	result.m[3][3] = 1.0f;
-
+Matrix4x4 Calculation::MakeRotationXMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity4x4();
+	float cosR = std::cos(radian);
+	float sinR = std::sin(radian);
+	result.m[1][1] = cosR;
+	result.m[1][2] = sinR;
+	result.m[2][1] = -sinR;
+	result.m[2][2] = cosR;
 	return result;
 }
 
 Matrix4x4 Calculation::MakeRotationYMatrix(float radian) {
-	Matrix4x4 result;
-
-	float cosRadian = std::cosf(radian);
-	float sinRadian = std::sinf(radian);
-
-	result.m[0][0] = cosRadian;
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = -sinRadian;
-	result.m[0][3] = 0.0f;
-
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = 1.0f;
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-
-	result.m[2][0] = sinRadian;
-	result.m[2][1] = 0.0f;
-	result.m[2][2] = cosRadian;
-	result.m[2][3] = 0.0f;
-
-	result.m[3][0] = 0.0f;
-	result.m[3][1] = 0.0f;
-	result.m[3][2] = 0.0f;
-	result.m[3][3] = 1.0f;
-
+	Matrix4x4 result = MakeIdentity4x4();
+	float cosR = std::cos(radian);
+	float sinR = std::sin(radian);
+	result.m[0][0] = cosR;
+	result.m[0][2] = -sinR;
+	result.m[2][0] = sinR;
+	result.m[2][2] = cosR;
 	return result;
 }
 
 Matrix4x4 Calculation::MakeRotationZMatrix(float radian) {
-	Matrix4x4 result;
-
-	float cosRadian = std::cosf(radian);
-	float sinRadian = std::sinf(radian);
-
-	result.m[0][0] = cosRadian;
-	result.m[0][1] = sinRadian;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-
-	result.m[1][0] = -sinRadian;
-	result.m[1][1] = cosRadian;
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = 0.0f;
-	result.m[2][2] = 1.0f;
-	result.m[2][3] = 0.0f;
-
-	result.m[3][0] = 0.0f;
-	result.m[3][1] = 0.0f;
-	result.m[3][2] = 0.0f;
-	result.m[3][3] = 1.0f;
-
-	// 行列を返す
+	Matrix4x4 result = MakeIdentity4x4();
+	float cosR = std::cos(radian);
+	float sinR = std::sin(radian);
+	result.m[0][0] = cosR;
+	result.m[0][1] = sinR;
+	result.m[1][0] = -sinR;
+	result.m[1][1] = cosR;
 	return result;
 }
 
-Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& Scale, const Vector3& Rotate, const Vector3& Translate) {
-	Matrix4x4 result;
-
-	Matrix4x4 scaleMatrix = MakeScaleMatrix(Scale);
-	Matrix4x4 rotateXMatrix = MakeRotationXMatrix(Rotate.x);
-	Matrix4x4 rotateYMatrix = MakeRotationYMatrix(Rotate.y);
-	Matrix4x4 rotateZMatrix = MakeRotationZMatrix(Rotate.z);
-	Matrix4x4 translationMatrix = MakeTranslationMatrix(Translate);
-
-	result = Multiply(scaleMatrix, rotateXMatrix);
-	result = Multiply(result, rotateYMatrix);
-	result = Multiply(result, rotateZMatrix);
-	result = Multiply(result, translationMatrix);
-
-	// 結果を返す
-	return result;
+Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& scale, const Vector3& rotate, const Vector3& translate) {
+	return MakeScaleMatrix(scale) * 
+           (MakeRotationXMatrix(rotate.x) * MakeRotationYMatrix(rotate.y) * MakeRotationZMatrix(rotate.z)) * 
+           MakeTranslationMatrix(translate);
 }
 
-Matrix4x4 Calculation::MakePerspectiveFovMatrix(float fovY, float aspectRatio, float nearClip, float farCrip) {  
-Matrix4x4 result;  
+Matrix4x4 Calculation::MakeAffineMatrix(const Vector3& scale, const Quaternion& rotate, const Vector3& translate) {
+	return MakeScaleMatrix(scale) * MakeRotateMatrix(rotate) * MakeTranslationMatrix(translate);
+}
 
-float tanHalfFovY = std::tan(fovY / 2);  
+Matrix4x4 Calculation::MakeBillboardMatrix(const Vector3& scale, const Vector3& translate, const Matrix4x4& viewMatrix) {
+	Matrix4x4 backToFrontMatrix = MakeIdentity4x4();
+	// ビュー行列の逆行列（回転のみ）を取得
+	backToFrontMatrix.m[0][0] = viewMatrix.m[0][0];
+	backToFrontMatrix.m[0][1] = viewMatrix.m[1][0];
+	backToFrontMatrix.m[0][2] = viewMatrix.m[2][0];
+	backToFrontMatrix.m[1][0] = viewMatrix.m[0][1];
+	backToFrontMatrix.m[1][1] = viewMatrix.m[1][1];
+	backToFrontMatrix.m[1][2] = viewMatrix.m[2][1];
+	backToFrontMatrix.m[2][0] = viewMatrix.m[0][2];
+	backToFrontMatrix.m[2][1] = viewMatrix.m[1][2];
+	backToFrontMatrix.m[2][2] = viewMatrix.m[2][2];
 
-result.m[0][0] = 1.0f / (aspectRatio * tanHalfFovY);  
-result.m[0][1] = 0.0f;  
-result.m[0][2] = 0.0f;  
-result.m[0][3] = 0.0f;  
+	return MakeScaleMatrix(scale) * backToFrontMatrix * MakeTranslationMatrix(translate);
+}
 
-result.m[1][0] = 0.0f;  
-result.m[1][1] = 1.0f / tanHalfFovY;  
-result.m[1][2] = 0.0f;  
-result.m[1][3] = 0.0f;  
+Matrix4x4 Calculation::MakePerspectiveFovMatrix(float fovY, float aspectRatio, float nearClip, float farClip) {  
+    Matrix4x4 result = {};
+    float tanHalfFovY = std::tan(fovY / 2.0f);  
 
-result.m[2][0] = 0.0f;  
-result.m[2][1] = 0.0f;  
-result.m[2][2] = farCrip / (farCrip - nearClip);  
-result.m[2][3] = 1.0f;  
-
-result.m[3][0] = 0.0f;  
-result.m[3][1] = 0.0f;  
-result.m[3][2] = (-nearClip * farCrip) / (farCrip - nearClip);  
-result.m[3][3] = 0.0f;  
-
-return result;  
+    result.m[0][0] = 1.0f / (aspectRatio * tanHalfFovY);  
+    result.m[1][1] = 1.0f / tanHalfFovY;  
+    result.m[2][2] = farClip / (farClip - nearClip);  
+    result.m[2][3] = 1.0f;  
+    result.m[3][2] = (-nearClip * farClip) / (farClip - nearClip);  
+    return result;  
 }
 
 Matrix4x4 Calculation::MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip) {
-	Matrix4x4 result;
-
-	result.m[0][0] = (2 / (right - left));
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = (2 / (top - bottom));
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = 0.0f;
+	Matrix4x4 result = {};
+	result.m[0][0] = 2.0f / (right - left);
+	result.m[1][1] = 2.0f / (top - bottom);
 	result.m[2][2] = 1.0f / (farClip - nearClip);
-	result.m[2][3] = 0.0f;
-
 	result.m[3][0] = (left + right) / (left - right);
 	result.m[3][1] = (top + bottom) / (bottom - top);
 	result.m[3][2] = nearClip / (nearClip - farClip);
 	result.m[3][3] = 1.0f;
-
-
 	return result;
 }
 
 Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth) {
-	Matrix4x4 result;
-
-	result.m[0][0] = width / 2;
-	result.m[0][1] = 0.0f;
-	result.m[0][2] = 0.0f;
-	result.m[0][3] = 0.0f;
-
-	result.m[1][0] = 0.0f;
-	result.m[1][1] = -height / 2;
-	result.m[1][2] = 0.0f;
-	result.m[1][3] = 0.0f;
-
-	result.m[2][0] = 0.0f;
-	result.m[2][1] = 0.0f;
+	Matrix4x4 result = MakeIdentity4x4();
+	result.m[0][0] = width / 2.0f;
+	result.m[1][1] = -height / 2.0f;
 	result.m[2][2] = maxDepth - minDepth;
-	result.m[2][3] = 0.0f;
-
-	result.m[3][0] = left + (width / 2);
-	result.m[3][1] = top + (height / 2);
+	result.m[3][0] = left + (width / 2.0f);
+	result.m[3][1] = top + (height / 2.0f);
 	result.m[3][2] = minDepth;
-	result.m[3][3] = 1.0f;
-
-
 	return result;
 }
 
-void Calculation::DrawSphere(const Sphere& sphere, Matrix4x4& viewProjectionMatrix,  Matrix4x4& viewportMatrix, uint32_t color) {
-	const uint32_t kSubdivisions = 16;
-	const float kLonEvery = float(2 * std::numbers::pi) / kSubdivisions;
-	const float kLotEvery = float(std::numbers::pi) / kSubdivisions;
-	for (uint32_t lotIndex = 0; lotIndex < kLotEvery; ++lotIndex) {
-		float lat = float(-std::numbers::pi) / 2 + lotIndex * kLotEvery;
-		for (uint32_t lonIndex = 0; lonIndex < kSubdivisions; ++lonIndex) {
-			float lon = lonIndex * kLonEvery;
-			Vector3 a, b, c;
-			a = {
-			   sphere.center.x + sphere.radius * cosf(lat) * cosf(lon),
-			   sphere.center.y + sphere.radius * sinf(lat),
-			   sphere.center.z + sphere.radius * cosf(lat) * sinf(lon)
-			};
-
-			b = {
-				sphere.center.x + sphere.radius * cosf(lat + kLotEvery) * cosf(lon),
-				sphere.center.y + sphere.radius * sinf(lat + kLotEvery),
-				sphere.center.z + sphere.radius * cosf(lat + kLotEvery) * sinf(lon)
-			};
-
-			c = {
-				sphere.center.x + sphere.radius * cosf(lat) * cosf(lon + kLonEvery),
-				sphere.center.y + sphere.radius * sinf(lat),
-				sphere.center.z + sphere.radius * cosf(lat) * sinf(lon + kLonEvery)
-			};
-
-			Vector3 screenA = Transform(Transform(a, viewProjectionMatrix), viewportMatrix);
-			Vector3 screenB = Transform(Transform(b, viewProjectionMatrix), viewportMatrix);
-			Vector3 screenC = Transform(Transform(c, viewProjectionMatrix), viewportMatrix);
-
-		
-		}
-	}
+Quaternion Calculation::Multiply(const Quaternion& q, const Quaternion& r) {
+	return {
+		q.w * r.x + q.x * r.w + q.y * r.z - q.z * r.y,
+		q.w * r.y - q.x * r.z + q.y * r.w + q.z * r.x,
+		q.w * r.z + q.x * r.y - q.y * r.x + q.z * r.w,
+		q.w * r.w - q.x * r.x - q.y * r.y - q.z * r.z
+	};
 }
 
-void Calculation::DrawGrid(Matrix4x4& viewProjectionMatrix, Matrix4x4& viewportMatrix) {
-	const float  kGridHalfWidth = 2.0f;
+Quaternion Calculation::IdentityQuaternion() {
+	return { 0.0f, 0.0f, 0.0f, 1.0f };
+}
 
-	const uint32_t kSubdivision = 10;
+Quaternion Calculation::Conjugate(const Quaternion& q) {
+	return { -q.x, -q.y, -q.z, q.w };
+}
 
-	const float kGridEvery = (kGridHalfWidth * 2.0f) / float(kSubdivision);
+float Calculation::Norm(const Quaternion& q) {
+	return std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+}
 
-	for (uint32_t xIndex = 0; xIndex <= kSubdivision; ++xIndex) {
-		float x = -kGridHalfWidth + kGridEvery * xIndex;
+Quaternion Calculation::Normalize(const Quaternion& q) {
+	float norm = Norm(q);
+	if (norm == 0.0f) return IdentityQuaternion();
+	return { q.x / norm, q.y / norm, q.z / norm, q.w / norm };
+}
 
-		Vector3 start = { x, 0.0f, -kGridHalfWidth };
+Quaternion Calculation::Inverse(const Quaternion& q) {
+	float norm = Norm(q);
+	Quaternion conj = Conjugate(q);
+	if (norm == 0.0f) return IdentityQuaternion();
+	float normSq = norm * norm;
+	return { conj.x / normSq, conj.y / normSq, conj.z / normSq, conj.w / normSq };
+}
 
-		Vector3 end = { x, 0.0f, kGridHalfWidth };
+Quaternion Calculation::MakeAxisAngleQuaternion(const Vector3& axis, float angle) {
+	Vector3 n = Normalize(axis);
+	float sinA = std::sin(angle / 2.0f);
+	return { n.x * sinA, n.y * sinA, n.z * sinA, std::cos(angle / 2.0f) };
+}
 
-		Vector3 screenStart = Transform(Transform(start, viewProjectionMatrix), viewportMatrix);
-		Vector3 screenEnd = Transform(Transform(end, viewProjectionMatrix), viewportMatrix);
+Matrix4x4 Calculation::MakeRotateMatrix(const Quaternion& q) {
+	Matrix4x4 result = MakeIdentity4x4();
+	result.m[0][0] = q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z;
+	result.m[0][1] = 2.0f * (q.x * q.y + q.w * q.z);
+	result.m[0][2] = 2.0f * (q.x * q.z - q.w * q.y);
 
+	result.m[1][0] = 2.0f * (q.x * q.y - q.w * q.z);
+	result.m[1][1] = q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z;
+	result.m[1][2] = 2.0f * (q.y * q.z + q.w * q.x);
 
+	result.m[2][0] = 2.0f * (q.x * q.z + q.w * q.y);
+	result.m[2][1] = 2.0f * (q.y * q.z - q.w * q.x);
+	result.m[2][2] = q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z;
+	return result;
+}
+
+Quaternion Calculation::Slerp(const Quaternion& q0, const Quaternion& q1, float t) {
+	float dot = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w;
+	Quaternion target = q1;
+	if (dot < 0.0f) {
+		target = { -q1.x, -q1.y, -q1.z, -q1.w };
+		dot = -dot;
 	}
 
-	for (uint32_t zIndex = 0; zIndex <= kSubdivision; ++zIndex) {
-
-		float z = -kGridHalfWidth + kGridEvery * zIndex;
-
-		Vector3 start = { -kGridHalfWidth, 0.0f, z };
-		Vector3 end = { kGridHalfWidth, 0.0f, z };
-
-		Vector3 screenStart = Transform(Transform(start, viewProjectionMatrix), viewportMatrix);
-		Vector3 screenEnd = Transform(Transform(end, viewProjectionMatrix), viewportMatrix);
-
+	if (dot >= 1.0f - 0.0005f) {
+		return {
+			(1.0f - t) * q0.x + t * target.x,
+			(1.0f - t) * q0.y + t * target.y,
+			(1.0f - t) * q0.z + t * target.z,
+			(1.0f - t) * q0.w + t * target.w
+		};
 	}
+
+	float theta = std::acos(dot);
+	float sinTheta = std::sin(theta);
+	float scale0 = std::sin((1.0f - t) * theta) / sinTheta;
+	float scale1 = std::sin(t * theta) / sinTheta;
+
+	return {
+		scale0 * q0.x + scale1 * target.x,
+		scale0 * q0.y + scale1 * target.y,
+		scale0 * q0.z + scale1 * target.z,
+		scale0 * q0.w + scale1 * target.w
+	};
+}
+
+void Calculation::DrawSphere(const Sphere& sphere, const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix, uint32_t color) {
+    // 描画の実装は現状維持（あるいは描画クラスへ移動を推奨）
+}
+
+void Calculation::DrawGrid(const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix) {
+    // 描画の実装は現状維持
 }

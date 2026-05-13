@@ -21,7 +21,6 @@ public:
     void SetTransform(const Transform& transform) { this->transform = transform; }
 
 private:
-    Calculation calculation;
     Transform transform;
     Matrix4x4 viewMatrix;
     Matrix4x4 projectionMatrix;

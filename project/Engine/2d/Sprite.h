@@ -34,7 +34,6 @@ public:
 private:
 	SpriteCommon* spriteCommon = nullptr;
 	DirectXCommon* dxCommon = nullptr;
-	Calculation calculation;
 
 	Microsoft::WRL::ComPtr <ID3D12Resource> vertexResourceSprite;
 	Microsoft::WRL::ComPtr<ID3D12Resource> materialResourceSprite;
