@@ -327,3 +327,4 @@ project/imgui.ini
 project/logs/
 **/externals/DirectXTex/Bin/
 **/externals/DirectXTex/x64/
+project/GaminiLog/
