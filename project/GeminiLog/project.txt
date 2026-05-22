@@ -45,16 +45,17 @@
 ## 3. 描画システム (Rendering System)
 実際に画面に何かを表示するためのクラス群です。
 
-### Object3dCommon / SpriteCommon
+### Object3dCommon / SpriteCommon / ParticleCommon
 - **役割**: 「描き方（GraphicsPipeline / RootSignature）」を定義します。
-- **関連クラス**: `Object3d`, `Sprite`
+- **関連クラス**: `Object3d`, `Sprite`, `ParticleManager`
 - **必須条件**: `DirectXCommon` と `SrvManager` が必要です。
-- **ポイント**: 3D用と2D用で描き方が異なるため、それぞれの専用クラスがあります。
+- **ポイント**: 3D用、2D用、パーティクル用で描き方（ブレンドモードやカリング設定など）が異なるため、それぞれの専用クラスがあります。
 
-### Object3d / Sprite
+### Object3d / Sprite / ParticleManager
 - **役割**: 「描かれる個体（実体）」です。座標（Transform）や色（Material）を持ちます。
-- **関連クラス**: `Object3dCommon`, `SpriteCommon`, `Model`
+- **関連クラス**: `Object3dCommon`, `SpriteCommon`, `ParticleCommon`, `Model`
 - **依存関係**: 描画には必ず対応する `Common` クラスが初期化されている必要があります。
+- **重要なポイント**: GPUへ行列（WVPなど）を送る際は、**「転置（Transpose）なし」**で送る必要があります。転置すると深度値（Z値）が正しく計算されず、前後関係が崩れる原因になります。
 
 ---
 

@@ -72,8 +72,8 @@ void ParticleManager::Update() {
         
         // GPU用データに書き込み
         if (instanceCount < kMaxParticles) {
-            instancingData[instanceCount].World = Calculation::Transpose(worldMatrix);
-            instancingData[instanceCount].WVP = Calculation::Transpose(worldMatrix * viewProjectionMatrix);
+            instancingData[instanceCount].World = worldMatrix;
+            instancingData[instanceCount].WVP = worldMatrix * viewProjectionMatrix;
             
             float alpha = 1.0f - (it->currentTime / it->lifeTime);
             instancingData[instanceCount].color = it->color;

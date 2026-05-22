@@ -93,7 +93,12 @@ void DirectXCommon::Initialize(WinApp* winApp) {
 
     // DSV作成
     depthStencilResource = CreateDepthStencilTexureResource(WinApp::KclientWidth, WinApp::KclientHeight);
-    device->CreateDepthStencilView(depthStencilResource.Get(), nullptr, dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+    
+    // DSVの設定
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+    dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; // フォーマット
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D; // 2Dテクスチャ
+    device->CreateDepthStencilView(depthStencilResource.Get(), &dsvDesc, dsvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
     // 同期・描画設定
     device->CreateFence(fenceValue, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
@@ -193,7 +198,8 @@ void DirectXCommon::PreDraw(){
     // 画面全体をクリア
     float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f }; // 背景色
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-    commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    // 深度とステンシルの両方をクリア
+    commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
     // 共通の描画設定
     commandList->RSSetViewports(1, &viewport);
@@ -268,22 +274,37 @@ void DirectXCommon::ImGuiInitialize(SrvManager* srvManager) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
-    ImGui_ImplWin32_Init(winApp->GetHwnd());
+
+    // 最新のImGuiではバックエンド初期化前にフォントアトラスを構築しておくのが安全です
+    ImGuiIO& io = ImGui::GetIO();
+
+    // ディスプレイサイズとDeltaTimeの初期値を設定（NewFrameでのアサート防止）
+    io.DisplaySize = ImVec2(static_cast<float>(WinApp::KclientWidth), static_cast<float>(WinApp::KclientHeight));
+    io.DeltaTime = 1.0f / 60.0f;
+
+    if (!ImGui_ImplWin32_Init(winApp->GetHwnd())) {
+        assert(false && "ImGui_ImplWin32_Init failed");
+    }
 
     uint32_t index = srvManager->Allocate();
-    ImGui_ImplDX12_Init(
-        device.Get(),
-        2, // swapChainDesc.BufferCount
-        DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, // rtvDesc.Format
-        srvManager->GetDescriptorHeap(),
-        srvManager->GetCPUDescriptorHandle(index),
-        srvManager->GetGPUDescriptorHandle(index)
-    );
-}
 
+    ImGui_ImplDX12_InitInfo init_info = {};
+    init_info.Device = device.Get();
+    init_info.CommandQueue = commandQueue.Get();
+    init_info.NumFramesInFlight = 2;
+    init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    init_info.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    init_info.SrvDescriptorHeap = srvManager->GetDescriptorHeap();
+    init_info.LegacySingleSrvCpuDescriptor = srvManager->GetCPUDescriptorHandle(index);
+    init_info.LegacySingleSrvGpuDescriptor = srvManager->GetGPUDescriptorHandle(index);
+
+    if (!ImGui_ImplDX12_Init(&init_info)) {
+        assert(false && "ImGui_ImplDX12_Init failed");
+    }
+}
 void DirectXCommon::ImGuiPreDraw(){
-    ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    ImGui_ImplDX12_NewFrame();
     ImGui::NewFrame();
 }
 
@@ -312,15 +333,35 @@ ComPtr<ID3D12DescriptorHeap> DirectXCommon::CreateDescriptorHeap(D3D12_DESCRIPTO
 
 ComPtr<ID3D12Resource> DirectXCommon::CreateDepthStencilTexureResource(int32_t width, int32_t height) {
     D3D12_RESOURCE_DESC desc{};
-    desc.Width = width; desc.Height = height; desc.MipLevels = 1; desc.DepthOrArraySize = 1;
-    desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; desc.SampleDesc.Count = 1;
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.DepthOrArraySize = 1;
+    desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
-    D3D12_HEAP_PROPERTIES prop{}; prop.Type = D3D12_HEAP_TYPE_DEFAULT;
-    D3D12_CLEAR_VALUE clear{}; clear.DepthStencil.Depth = 1.0f; clear.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    D3D12_HEAP_PROPERTIES prop{};
+    prop.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_CLEAR_VALUE clear{};
+    clear.DepthStencil.Depth = 1.0f;
+    clear.DepthStencil.Stencil = 0;
+    clear.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
     ComPtr<ID3D12Resource> res = nullptr;
-    device->CreateCommittedResource(&prop, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&res));
+    HRESULT hr = device->CreateCommittedResource(
+        &prop,
+        D3D12_HEAP_FLAG_NONE,
+        &desc,
+        D3D12_RESOURCE_STATE_DEPTH_WRITE,
+        &clear,
+        IID_PPV_ARGS(&res)
+    );
+    assert(SUCCEEDED(hr));
     return res;
 }
 

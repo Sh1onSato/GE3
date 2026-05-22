@@ -22,8 +22,10 @@ void MyGame::Draw() {
 	// シーンマネージャ経由で現在のシーンを描画
 	sceneManager->Draw();
 
-	// 画面表示
+	// ImGuiの描画
 	dxCommon->ImGuiPostDraw();
+
+	// 画面表示
 	dxCommon->PostDraw();
 }
 

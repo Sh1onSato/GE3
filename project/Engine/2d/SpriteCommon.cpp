@@ -158,4 +158,8 @@ void SpriteCommon::PreDraw(){
 
 	// 3. 形状を三角形に設定
 	dxCommon->GetCommandList()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	// 4. デスクリプタヒープをセット
+	ID3D12DescriptorHeap* descriptorHeaps[] = { srvManager->GetDescriptorHeap() };
+	dxCommon->GetCommandList()->SetDescriptorHeaps(1, descriptorHeaps);
 }

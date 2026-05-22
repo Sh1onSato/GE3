@@ -54,8 +54,10 @@ void WinApp::Finalize(){
 // ウィンドウプロシージャ
 LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) {
-		return true;
+	if (ImGui::GetCurrentContext()) {
+		if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) {
+			return true;
+		}
 	}
 	switch (msg)
 	{

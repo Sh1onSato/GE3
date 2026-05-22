@@ -16,6 +16,11 @@ void SceneManager::Update() {
         currentScene->SetSceneManager(this);
         // 新シーンの初期化
         currentScene->Initialize();
+
+        if (currentScene) {
+            currentScene->Update();
+        }
+        return;
     }
 
     // 現在のシーンを更新

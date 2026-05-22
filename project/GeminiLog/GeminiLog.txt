@@ -1,13 +1,7 @@
 # Gemini CLI 作業ログ: 自作エンジン開発・改善
 
 ## 1. 現状分析（2026/05/08）
-エンジンのコードを確認し、以下の状態であることを把握しました。
-- DirectX 12の基礎（Device, CommandList, SwapChain等）が強固に実装されている。
-- `Framework` クラスによるライフサイクル管理が導入済み。
-- モデル・テクスチャのマネージャ化、ディスクリプタ管理（SrvManager）が実装済み。
-- Sprite、Object3d、Camera、Input(DirectInput) の基本機能が動作。
-- シーン管理システムおよび数学ライブラリ（Quaternion）が導入されている。
-- インクルードパスの問題が発生していたが、ユーザーによりルートディレクトリが追加され解消済み。
+（略）
 
 ## 2. 実施した改善内容
 
@@ -27,36 +21,33 @@
 （略）
 
 ### F. パーティクルシステムの導入 (2026/05/11)
-学校の指示に基づき、管理と放出を分離したパーティクルシステムを実装しました。
-- **新規作成**:
-    - `Resources/shaders/Particle.*`: インスタンシング描画と加算合成に対応したシェーダー。
-    - `Engine/3d/ParticleCommon.h / .cpp`: パーティクル専用のパイプライン（加算、深度OFF）管理。
-    - `Engine/3d/ParticleManager.h / .cpp`: 粒のリスト管理、移動、寿命フェード、インスタンシング描画。
-    - `Engine/3d/ParticleEmitter.h / .cpp`: 発生ルール（頻度、ランダム初速など）の制御。
-- **既存修正**:
-    - `Framework.h / .cpp`: `ParticleCommon` のライフサイクル管理を追加。
-    - `GameScene.h / .cpp`: パーティクルマネージャーとエミッターのテスト実装を追加。
-- **不具合修正と最適化 (2026/05/11)**:
-    - **シェーダー修正**: `Particle.VS.hlsl` での行列計算エラーを修正し、`Particle.hlsli` の構造体をインプットレイアウトに適合。
-    - **パス修正**: `ParticleCommon.cpp` 内のシェーダーファイルパスを `Resources/` に統一。
-    - **ビルボード実装**: `Calculation` クラスに `MakeBillboardMatrix` を追加し、パーティクルが常にカメラを向くように改善。
-    - **インスタンス数最適化**: `ParticleManager::Draw` で、実際に更新された個数のみを描画するように修正。
-    - **乱数生成の最適化**: `ParticleEmitter` での乱数生成器の初期化を効率化。
-- **ImGui連携と堅牢性の向上 (2026/05/11)**:
-    - **ImGui操作対応**: `GameScene` にパーティクルエミッターの設定をリアルタイム変更できるデバッグUIを追加。
-    - **クラッシュ防止策**: `uniform_real_distribution` に渡す引数の最小・最大値が逆転してもクラッシュしないよう、`ParticleEmitter` 内で安全装置（min/maxの補正）を実装。
+（略）
+
+### G. 描画品質と前後関係の修正 (2026/05/13)
+モデルの「突き抜け（前後関係の崩れ）」および「2値抜き（アルファテスト）」の問題を全面的に修正しました。
+- **2値抜き（アルファテスト）の実装**:
+    - `Object3d.PS.hlsl` を修正し、アルファ値が 0.5 以下のピクセルを `discard` する処理を追加。これにより、テクスチャの透明部分が正しく抜けるようになりました。
+- **深度テスト（Zテスト）の正常化**:
+    - **行列転置の修正**: `Object3d.cpp` および `ParticleManager.cpp` で GPU に行列を送る際の `Transpose` 処理を削除。これにより、頂点の Z 座標が正しく計算され、前後関係が正常に判定されるようになりました。
+    - **DSV初期化の堅牢化**: `DirectXCommon.cpp` で `CreateDepthStencilView` を呼ぶ際、明示的に `D3D12_DEPTH_STENCIL_VIEW_DESC` を設定するように修正。
+    - **クリア処理の修正**: `ClearDepthStencilView` に `D3D12_CLEAR_FLAG_STENCIL` を追加し、深度とステンシルを同時にクリアするようにしました。
+- **カリング設定の適正化**:
+    - `Object3dCommon.cpp` のパイプライン設定で `CullMode` を `BACK` に変更。
+    - `FrontCounterClockwise = TRUE` を設定し、反時計回りを表面として扱うように変更。これにより、モデルの裏面が正しくカリングされ、自分自身の突き抜けが解消されました。
+- **不具合修正**:
+    - 深度バッファに対して誤ったリソースバリア（同じ状態への遷移）を張っていた箇所を削除し、クラッシュを修正。
 
 ## 3. 次回のステップ（優先度の高いもの）
-1. **定数バッファの集約管理 (Constant Buffer View Pool)**: 
-   - 現状 `Object3d` ごとにリソースを作成しているのを、1つの大きなバッファからオフセットで切り出す方式に最適化する。
-2. **カメラへのクォータニオン適用**:
-   - `Camera` クラスの回転管理もクォータニオンに移行し、自由なカメラワークを可能にする。
-3. **パーティクルの更なる表現向上**:
-   - 重力加速度の導入や、サイズ・色の時間変化カーブの実装。
+1.  **定数バッファの集約管理 (Constant Buffer View Pool)**: 
+    - 現状 `Object3d` ごとにリソースを作成しているのを、1つの大きなバッファからオフセットで切り出す方式に最適化する。
+2.  **カメラへのクォータニオン適用**:
+    - `Camera` クラスの回転管理もクォータニオンに移行し、自由なカメラワークを可能にする。
+3.  **ライティングの有効化**:
+    - シェーダー内でコメントアウトされているライティング処理を、デバッグUI等から切り替え可能にする。
 
-
-## 4. 完了時のファイル構成（主要な新規ファイル）
-- Engine/scene/BaseScene.h
-- Engine/scene/SceneManager.h / .cpp
-- Engine/scene/TitleScene.h / .cpp
-- Engine/scene/GameScene.h / .cpp
+## 4. 完了時のファイル構成（主要な新規・修正ファイル）
+- Resources/shaders/Object3d.PS.hlsl (2値抜き追加)
+- Engine/base/DirectXCommon.cpp (DSV初期化・クリア修正)
+- Engine/3d/Object3dCommon.cpp (カリング・PSO修正)
+- Engine/3d/Object3d.cpp (行列転送修正)
+- Engine/3d/ParticleManager.cpp (行列転送修正)

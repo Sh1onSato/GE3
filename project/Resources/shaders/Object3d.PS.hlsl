@@ -35,6 +35,11 @@ PixelShaderOutput main(VertexShaderOutput input)
     // 基本色を設定
     output.color = gMaterial.color * textureColor;
 
+    // アルファ値が0.5以下ならピクセルを破棄（2値抜き）
+    if (output.color.a <= 0.5f) {
+        discard;
+    }
+
     /*
     // ライティングの計算と適用
     if (gMaterial.enableLighting != 0){

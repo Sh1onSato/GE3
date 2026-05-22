@@ -19,7 +19,7 @@ void Object3d::Initialize(Object3dCommon* common) {
 
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = 1;
-    materialData->uvTransform = Calculation::Transpose(Calculation::MakeIdentity4x4());
+    materialData->uvTransform = Calculation::MakeIdentity4x4();
 
     // デフォルトのトランスフォーム
     transform = { {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} };
@@ -53,9 +53,9 @@ void Object3d::Update() {
     }
 
     Matrix4x4 wvpMatrix = worldMatrix * viewProjectionMatrix;
-    // 3. データ転送 (GPUに送る前に行列を転置する)
-    wvpData->World = Calculation::Transpose(worldMatrix);
-    wvpData->WVP = Calculation::Transpose(wvpMatrix);
+    // 3. データ転送
+    wvpData->World = worldMatrix;
+    wvpData->WVP = wvpMatrix;
 }
 
 void Object3d::Draw() {
