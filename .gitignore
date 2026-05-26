@@ -328,3 +328,5 @@ project/logs/
 **/externals/DirectXTex/Bin/
 **/externals/DirectXTex/x64/
 project/GaminiLog/
+# Gemini CLI Logs
+project/GeminiLog/
