@@ -5,6 +5,9 @@
 #include "Model.h"
 #include "Camera.h"
 #include "Calculation.h"
+#include "ParticleManager.h"
+#include "ParticleEmitter.h"
+#include <memory>
 
 /// <summary>
 /// ゲーム本編シーン
@@ -22,13 +25,13 @@ public:
 
 private:
 	// シーン固有のオブジェクト
-	Camera* camera = nullptr;
-	Model* model = nullptr;
-	Object3d* object3d = nullptr;
-	Object3d* object3d2 = nullptr;
-	Sprite* uvChecker = nullptr;
-	Sprite* monsterBall = nullptr;
+	Camera* camera = nullptr; // カメラはCameraManagerが所有しているため、参照用として生ポインタで持つ
+	std::unique_ptr<Model> model = nullptr;
+	std::unique_ptr<Object3d> object3d = nullptr;
+	std::unique_ptr<Object3d> object3d2 = nullptr;
+	std::unique_ptr<Sprite> uvChecker = nullptr;
+	std::unique_ptr<Sprite> monsterBall = nullptr;
 
-	class ParticleManager* particleManager = nullptr;
-	class ParticleEmitter* particleEmitter = nullptr;
+	std::unique_ptr<ParticleManager> particleManager = nullptr;
+	std::unique_ptr<ParticleEmitter> particleEmitter = nullptr;
 };

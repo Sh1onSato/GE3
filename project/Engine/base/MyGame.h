@@ -1,5 +1,7 @@
 #pragma once
 #include "Framework.h"
+#include "SceneFactory.h"
+#include <memory>
 
 class MyGame : public Framework {
 public:
@@ -14,4 +16,8 @@ public:
 
 	// 描画
 	void Draw() override;
+
+private:
+	// シーンファクトリー
+	std::unique_ptr<SceneFactory> sceneFactory = nullptr;
 };

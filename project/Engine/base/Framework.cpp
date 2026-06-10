@@ -33,63 +33,56 @@ void Framework::Run() {
 
 void Framework::Initialize() {
 	instance = this;
-	winApp = new WinApp();
+	winApp = std::make_unique<WinApp>();
 	winApp->Initialize();
 
-	dxCommon = new DirectXCommon();
-	dxCommon->Initialize(winApp);
+	dxCommon = std::make_unique<DirectXCommon>();
+	dxCommon->Initialize(winApp.get());
 
-	srvManager = new SrvManager();
-	srvManager->Initialize(dxCommon);
+	srvManager = std::make_unique<SrvManager>();
+	srvManager->Initialize(dxCommon.get());
 
-	input = new Input();
-	input->Initialize(winApp);
+	input = std::make_unique<Input>();
+	input->Initialize(winApp.get());
 
-	dxCommon->ImGuiInitialize(srvManager);
+	AudioManager::GetInstance()->Initialize();
+	ImGuiManager::GetInstance()->Initialize(winApp.get(), dxCommon.get(), srvManager.get());
 
-	TextureManager::GetInstance()->Initialize(dxCommon, srvManager);
-	ModelManager::GetInstance()->Initialize(dxCommon);
+	TextureManager::GetInstance()->Initialize(dxCommon.get(), srvManager.get());
+	ModelManager::GetInstance()->Initialize(dxCommon.get());
 
-	spriteCommon = new SpriteCommon();
-	spriteCommon->Initialize(dxCommon, srvManager);
+	spriteCommon = std::make_unique<SpriteCommon>();
+	spriteCommon->Initialize(dxCommon.get(), srvManager.get());
 
-	object3dCommon = new Object3dCommon();
-	object3dCommon->Initialize(dxCommon, srvManager);
+	object3dCommon = std::make_unique<Object3dCommon>();
+	object3dCommon->Initialize(dxCommon.get(), srvManager.get());
 
-	particleCommon = new ParticleCommon();
-	particleCommon->Initialize(dxCommon, srvManager);
+	particleCommon = std::make_unique<ParticleCommon>();
+	particleCommon->Initialize(dxCommon.get(), srvManager.get());
 
 	CameraManager::GetInstance()->Initialize();
 
-	sceneManager = new SceneManager();
+	sceneManager = std::make_unique<SceneManager>();
 }
 
 void Framework::Update() {
 	input->Update();
-	dxCommon->ImGuiPreDraw();
+	ImGuiManager::GetInstance()->Begin();
 	sceneManager->Update();
 }
 
 void Framework::Finalize() {
 	sceneManager->Finalize();
-	delete sceneManager;
 
 	// 各種マネージャーの終了処理
 	ModelManager::GetInstance()->Finalize();
 	TextureManager::GetInstance()->Finalize();
 
-	// 解放処理
-	delete particleCommon;
-	delete object3dCommon;
-	delete spriteCommon;
-	delete input;
+	// 解放処理（unique_ptr が自動で行うため delete は不要）
 	
-	dxCommon->ImGuiFinalize();
+	AudioManager::GetInstance()->Finalize();
+	ImGuiManager::GetInstance()->Finalize();
 	CloseHandle(dxCommon->GetFenceEvent());
-	delete dxCommon;
-
-	delete srvManager;
 
 	winApp->Finalize();
-	delete winApp;
 }

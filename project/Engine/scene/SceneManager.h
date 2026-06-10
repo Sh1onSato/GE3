@@ -1,6 +1,8 @@
 #pragma once
 #include "BaseScene.h"
+#include "AbstractSceneFactory.h"
 #include <memory>
+#include <string>
 
 /// <summary>
 /// シーン管理クラス
@@ -13,8 +15,13 @@ public:
     void Draw();
 
     // シーンの切り替え予約
-    // ※実際の切り替えは次のフレームの最初に行われる
     void ChangeScene(BaseScene* nextScene);
+
+    // シーンの切り替え予約（文字列指定）
+    void ChangeScene(const std::string& sceneName);
+
+    // シーンファクトリーのセット
+    void SetSceneFactory(AbstractSceneFactory* factory) { sceneFactory = factory; }
 
     // 終了処理
     void Finalize();
@@ -24,4 +31,7 @@ private:
     std::unique_ptr<BaseScene> currentScene = nullptr;
     // 次のシーン（遷移予約用）
     std::unique_ptr<BaseScene> nextScene = nullptr;
+
+    // シーンファクトリー
+    AbstractSceneFactory* sceneFactory = nullptr;
 };

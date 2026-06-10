@@ -271,15 +271,22 @@
     <ClInclude Include="Engine\scene\BaseScene.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
-    <ClInclude Include="Engine\3d\ModelManager.h">
+    <ClInclude Include="Engine\scene\AbstractSceneFactory.h">
+      <Filter>ヘッダー ファイル\engine\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\scene\BaseScene.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
     <ClInclude Include="Engine\scene\GameScene.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
+    <ClInclude Include="Engine\scene\SceneFactory.h">
+      <Filter>ヘッダー ファイル\engine\scene</Filter>
+    </ClInclude>
     <ClInclude Include="Engine\scene\SceneManager.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
+
     <ClInclude Include="Engine\scene\TitleScene.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>

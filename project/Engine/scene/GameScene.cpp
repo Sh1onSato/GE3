@@ -20,24 +20,24 @@ void GameScene::Initialize() {
     camera = CameraManager::GetInstance()->GetActiveCamera();
 
     // 3. モデルの生成と初期化
-    model = new Model();
+    model = std::make_unique<Model>();
     model->Initialize(framework->GetDxCommon(), "Resources", "plane.obj");
 
     // 4. 3Dオブジェクトの生成と設定
-    object3d = new Object3d();
+    object3d = std::make_unique<Object3d>();
     object3d->Initialize(framework->GetObject3dCommon());
-    object3d->SetModel(model);
+    object3d->SetModel(model.get());
 
-    object3d2 = new Object3d();
+    object3d2 = std::make_unique<Object3d>();
     object3d2->Initialize(framework->GetObject3dCommon());
-    object3d2->SetModel(model);
+    object3d2->SetModel(model.get());
     object3d2->SetTranslate({ 2.0f, 0.0f, 0.0f });
     object3d2->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f });
 
     // 5. スプライトの生成
-    uvChecker = new Sprite();
+    uvChecker = std::make_unique<Sprite>();
     uvChecker->Initialize(framework->GetSpriteCommon(), "Resources/uvChecker.png");
-    monsterBall = new Sprite();
+    monsterBall = std::make_unique<Sprite>();
     monsterBall->Initialize(framework->GetSpriteCommon(), "Resources/monsterBall.png");
 
     uvChecker->SetPosition({ 0.0f, 0.0f });
@@ -45,11 +45,11 @@ void GameScene::Initialize() {
     monsterBall->SetSize({ 128.0f, 128.0f });
 
     // 6. パーティクルの初期化 (テクスチャがロード済みであることを確認してから)
-    particleManager = new ParticleManager();
+    particleManager = std::make_unique<ParticleManager>();
     uint32_t texIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath("Resources/monsterBall.png");
     particleManager->Initialize(framework->GetParticleCommon(), texIndex);
 
-    particleEmitter = new ParticleEmitter();
+    particleEmitter = std::make_unique<ParticleEmitter>();
     ParticleEmitter::EmitterSetting setting;
     setting.position = { 0.0f, 0.0f, 0.0f };
     setting.minVelocity = { -0.1f, 0.1f, -0.1f };
@@ -58,10 +58,23 @@ void GameScene::Initialize() {
     setting.lifeTime = 1.0f;
     setting.count = 2;
     setting.frequency = 0.1f;
-    particleEmitter->Initialize("TestEmitter", particleManager, setting);
+    particleEmitter->Initialize("TestEmitter", particleManager.get(), setting);
+
+    // 音声のロード
+    AudioManager::GetInstance()->Load("fanfare", "Resources/fanfare.wav");
+    AudioManager::GetInstance()->Load("mokugyo", "Resources/mokugyo.wav");
 }
 
 void GameScene::Update() {
+    // スペースキーでファンファーレ再生
+    if (Framework::GetInstance()->GetInput()->TriggerKey(DIK_SPACE)) {
+        AudioManager::GetInstance()->Play("fanfare");
+    }
+    // Mキーで木魚再生
+    if (Framework::GetInstance()->GetInput()->TriggerKey(DIK_M)) {
+        AudioManager::GetInstance()->Play("mokugyo");
+    }
+
     uvChecker->Update();
     monsterBall->Update();
     camera->Update();
@@ -113,11 +126,5 @@ void GameScene::Draw() {
 }
 
 void GameScene::Finalize() {
-    delete object3d;
-    delete object3d2;
-    delete monsterBall;
-    delete uvChecker;
-    delete model;
-    delete particleEmitter;
-    delete particleManager;
+    // unique_ptr が自動で解放するため、手動 delete は不要
 }

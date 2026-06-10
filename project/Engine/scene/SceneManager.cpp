@@ -41,6 +41,15 @@ void SceneManager::ChangeScene(BaseScene* nextScene) {
     this->nextScene.reset(nextScene);
 }
 
+void SceneManager::ChangeScene(const std::string& sceneName) {
+    if (sceneFactory) {
+        // ファクトリーを使ってシーンを生成し、予約する
+        BaseScene* next = sceneFactory->CreateScene(sceneName);
+        ChangeScene(next);
+    }
+}
+
+
 void SceneManager::Finalize() {
     if (currentScene) {
         currentScene->Finalize();

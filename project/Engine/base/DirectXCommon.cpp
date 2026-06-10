@@ -3,11 +3,7 @@
 #include <cassert>
 #include "Logger.h"
 #include "StringUtility.h"
-#include"externals/imgui/imgui.h"
-#include"externals/imgui/imgui_impl_dx12.h"
-#include"externals/imgui/imgui_impl_win32.h"
 #include <thread>
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -268,56 +264,6 @@ void DirectXCommon::CreateSwapChainRTV(){
         // RTVの生成
         device->CreateRenderTargetView(swapChainResources[i].Get(), &rtvDesc, handle);
     }
-}
-
-void DirectXCommon::ImGuiInitialize(SrvManager* srvManager) {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-
-    // 最新のImGuiではバックエンド初期化前にフォントアトラスを構築しておくのが安全です
-    ImGuiIO& io = ImGui::GetIO();
-
-    // ディスプレイサイズとDeltaTimeの初期値を設定（NewFrameでのアサート防止）
-    io.DisplaySize = ImVec2(static_cast<float>(WinApp::KclientWidth), static_cast<float>(WinApp::KclientHeight));
-    io.DeltaTime = 1.0f / 60.0f;
-
-    if (!ImGui_ImplWin32_Init(winApp->GetHwnd())) {
-        assert(false && "ImGui_ImplWin32_Init failed");
-    }
-
-    uint32_t index = srvManager->Allocate();
-
-    ImGui_ImplDX12_InitInfo init_info = {};
-    init_info.Device = device.Get();
-    init_info.CommandQueue = commandQueue.Get();
-    init_info.NumFramesInFlight = 2;
-    init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    init_info.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
-    init_info.SrvDescriptorHeap = srvManager->GetDescriptorHeap();
-    init_info.LegacySingleSrvCpuDescriptor = srvManager->GetCPUDescriptorHandle(index);
-    init_info.LegacySingleSrvGpuDescriptor = srvManager->GetGPUDescriptorHandle(index);
-
-    if (!ImGui_ImplDX12_Init(&init_info)) {
-        assert(false && "ImGui_ImplDX12_Init failed");
-    }
-}
-void DirectXCommon::ImGuiPreDraw(){
-    ImGui_ImplWin32_NewFrame();
-    ImGui_ImplDX12_NewFrame();
-    ImGui::NewFrame();
-}
-
-void DirectXCommon::ImGuiPostDraw(){
-    ImGui::Render();
-	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList.Get());
-}
-
-void DirectXCommon::ImGuiFinalize(){
-    // --- 解放処理 ---
-    ImGui_ImplDX12_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
 }
 
 // ヘルパー関数群（引数にdeviceを取らない形に整理）

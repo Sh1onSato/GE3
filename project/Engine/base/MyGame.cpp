@@ -1,12 +1,16 @@
 #include "MyGame.h"
-#include "GameScene.h"
 
 void MyGame::Initialize() {
 	// 基底クラスの初期化
 	Framework::Initialize();
 
-	// 最初のアクティブシーンをゲームシーンに設定
-	sceneManager->ChangeScene(new GameScene());
+	// シーンファクトリーの生成
+	sceneFactory = std::make_unique<SceneFactory>();
+	// シーンマネージャにファクトリーをセット
+	sceneManager->SetSceneFactory(sceneFactory.get());
+
+	// 最初のアクティブシーンを設定
+	sceneManager->ChangeScene("GAME");
 }
 
 void MyGame::Update() {
@@ -23,7 +27,8 @@ void MyGame::Draw() {
 	sceneManager->Draw();
 
 	// ImGuiの描画
-	dxCommon->ImGuiPostDraw();
+	ImGuiManager::GetInstance()->End();
+	ImGuiManager::GetInstance()->Draw();
 
 	// 画面表示
 	dxCommon->PostDraw();

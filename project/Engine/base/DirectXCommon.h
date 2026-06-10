@@ -50,11 +50,6 @@ public:
 
     void WaitForGpu();
 	void CreateSwapChainRTV();
-    // --- ImGui関連を追加 ---
-    void ImGuiInitialize(class SrvManager* srvManager);
-    void ImGuiPreDraw();
-    void ImGuiPostDraw();
-    void ImGuiFinalize();
 
     // --- ゲッター ----
     // --- デバイス・コマンド系 ---
