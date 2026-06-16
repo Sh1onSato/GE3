@@ -68,7 +68,6 @@ ModelData Model::LoadObjFile(const std::string& directoryPath, const std::string
 			Vector4 position;
 			s >> position.x >> position.y >> position.z;
 			position.w = 1.0f;
-			position.x *= -1.0f;
 			positions.push_back(position);
 		}
 		else if (identifier == "vt") {
@@ -80,7 +79,6 @@ ModelData Model::LoadObjFile(const std::string& directoryPath, const std::string
 		else if (identifier == "vn") {
 			Vector3 normal;
 			s >> normal.x >> normal.y >> normal.z;
-			normal.x *= -1.0f;
 			normals.push_back(normal);
 		}
 		else if (identifier == "f") {
@@ -100,9 +98,9 @@ ModelData Model::LoadObjFile(const std::string& directoryPath, const std::string
 				Vector3 normal = normals[elementIndice[2] - 1];
 				triangle[facevertex] = { position, texcoord, normal };
 			}
-			modelData.vertices.push_back(triangle[2]);
-			modelData.vertices.push_back(triangle[1]);
 			modelData.vertices.push_back(triangle[0]);
+			modelData.vertices.push_back(triangle[1]);
+			modelData.vertices.push_back(triangle[2]);
 		}
 		else if (identifier == "mtllib") {
 			std::string materialFilename;

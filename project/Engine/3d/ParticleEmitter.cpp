@@ -18,26 +18,40 @@ void ParticleEmitter::Update() {
     if (timer >= setting.frequency) {
         timer -= setting.frequency;
 
-        // 最小値と最大値が逆転していたら補正する
-        Vector3 minV = {
-            (std::min)(setting.minVelocity.x, setting.maxVelocity.x),
-            (std::min)(setting.minVelocity.y, setting.maxVelocity.y),
-            (std::min)(setting.minVelocity.z, setting.maxVelocity.z)
-        };
-        Vector3 maxV = {
-            (std::max)(setting.minVelocity.x, setting.maxVelocity.x),
-            (std::max)(setting.minVelocity.y, setting.maxVelocity.y),
-            (std::max)(setting.minVelocity.z, setting.maxVelocity.z)
-        };
-
-        // 乱数生成器の準備
-        std::uniform_real_distribution<float> distV_X(minV.x, maxV.x);
-        std::uniform_real_distribution<float> distV_Y(minV.y, maxV.y);
-        std::uniform_real_distribution<float> distV_Z(minV.z, maxV.z);
-
         // 指定された数だけ放出
         for (uint32_t i = 0; i < setting.count; ++i) {
-            Vector3 velocity = { distV_X(randomEngine), distV_Y(randomEngine), distV_Z(randomEngine) };
+            Vector3 velocity;
+
+            // X軸
+            if (setting.minVelocity.x == setting.maxVelocity.x) {
+                velocity.x = setting.minVelocity.x;
+            } else {
+                float minV = (std::min)(setting.minVelocity.x, setting.maxVelocity.x);
+                float maxV = (std::max)(setting.minVelocity.x, setting.maxVelocity.x);
+                std::uniform_real_distribution<float> dist(minV, maxV);
+                velocity.x = dist(randomEngine);
+            }
+
+            // Y軸
+            if (setting.minVelocity.y == setting.maxVelocity.y) {
+                velocity.y = setting.minVelocity.y;
+            } else {
+                float minV = (std::min)(setting.minVelocity.y, setting.maxVelocity.y);
+                float maxV = (std::max)(setting.minVelocity.y, setting.maxVelocity.y);
+                std::uniform_real_distribution<float> dist(minV, maxV);
+                velocity.y = dist(randomEngine);
+            }
+
+            // Z軸
+            if (setting.minVelocity.z == setting.maxVelocity.z) {
+                velocity.z = setting.minVelocity.z;
+            } else {
+                float minV = (std::min)(setting.minVelocity.z, setting.maxVelocity.z);
+                float maxV = (std::max)(setting.minVelocity.z, setting.maxVelocity.z);
+                std::uniform_real_distribution<float> dist(minV, maxV);
+                velocity.z = dist(randomEngine);
+            }
+
             manager->Emit(setting.position, velocity, setting.color, setting.lifeTime);
         }
     }

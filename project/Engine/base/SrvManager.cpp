@@ -40,6 +40,18 @@ void SrvManager::CreateSRVForTexture2D(uint32_t srvIndex, ID3D12Resource* pResou
     dxCommon->GetDevice()->CreateShaderResourceView(pResource, &srvDesc, GetCPUDescriptorHandle(srvIndex));
 }
 
+void SrvManager::CreateSRVForTextureCube(uint32_t srvIndex, ID3D12Resource* pResource, DXGI_FORMAT format, UINT mipLevels) {
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = format;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE; // キューブテクスチャ
+    srvDesc.TextureCube.MipLevels = mipLevels;
+    srvDesc.TextureCube.MostDetailedMip = 0;
+    srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+
+    dxCommon->GetDevice()->CreateShaderResourceView(pResource, &srvDesc, GetCPUDescriptorHandle(srvIndex));
+}
+
 void SrvManager::PreDraw() {
     // 描画時に使用するヒープの設定
     ID3D12DescriptorHeap* descriptorHeaps[] = { descriptorHeap.Get() };

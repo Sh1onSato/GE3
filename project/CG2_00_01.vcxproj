@@ -195,6 +195,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\base\TextureManager.cpp" />
     <ClCompile Include="Engine\3d\Object3dCommon.cpp" />
     <ClCompile Include="Engine\3d\Object3d.cpp" />
+    <ClCompile Include="Engine\3d\Skybox.cpp" />
+    <ClCompile Include="Engine\3d\SkyboxCommon.cpp" />
     <ClCompile Include="Engine\3d\Model.cpp" />
     <ClCompile Include="Engine\3d\ModelManager.cpp" />
     <ClCompile Include="Engine\base\Framework.cpp" />
@@ -262,6 +264,8 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\base\TextureManager.h" />
     <ClInclude Include="Engine\3d\Object3dCommon.h" />
     <ClInclude Include="Engine\3d\Object3d.h" />
+    <ClInclude Include="Engine\3d\Skybox.h" />
+    <ClInclude Include="Engine\3d\SkyboxCommon.h" />
     <ClInclude Include="Engine\3d\Model.h" />
     <ClInclude Include="Engine\3d\ModelManager.h" />
     <ClInclude Include="Engine\base\Framework.h" />

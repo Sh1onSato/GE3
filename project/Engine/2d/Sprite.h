@@ -31,6 +31,7 @@ public:
 	void SetIsFlipY(bool isFlipY) { this->isFlipY = isFlipY; }
 	void SetTexLeftTop(const Vector2& texLeftTop) { this->texLeftTop = texLeftTop; }
 	void SetTexSize(const Vector2& texSize) { this->texSize = texSize; }
+	void SetColor(const Vector4& color) { materialData->color = color; }
 private:
 	SpriteCommon* spriteCommon = nullptr;
 	DirectXCommon* dxCommon = nullptr;

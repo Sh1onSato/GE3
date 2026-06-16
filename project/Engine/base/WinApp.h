@@ -18,6 +18,12 @@ public:
 	HWND GetHwnd()const { return hwnd; }
 	HINSTANCE GetHinstance()const { return wc.hInstance; }
 
+	// マウスカーソルの表示・非表示
+	void ShowCursor(bool isShow);
+
+	// マウスをウィンドウ内に閉じ込める
+	void SetClipCursor(bool isClip);
+
 	static const int KclientWidth = 1280; // クライアント領域の幅
 	static const int KclientHeight = 720; // クライアント領域の高さ
 private:

@@ -3,9 +3,6 @@
 #include"externals/imgui/imgui.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-#pragma comment(lib, "dinput8.lib")
-#pragma comment(lib, "dxguid.lib")
-
 void WinApp::Initialize() {
 	HRESULT hr = CoInitializeEx(nullptr, COINITBASE_MULTITHREADED);
 	
@@ -21,6 +18,9 @@ void WinApp::Initialize() {
 	RegisterClass(&wc);
 	//ウィンドウサイズを表す構造体に、クライアント領域
 	RECT wrc = { 0,0,KclientWidth,KclientHeight };
+
+	// ウィンドウサイズを補正
+	AdjustWindowRect(&wrc, WS_OVERLAPPEDWINDOW, false);
 
 	//ウィンドウサイズの生成
 	hwnd = CreateWindow(
@@ -41,14 +41,11 @@ void WinApp::Initialize() {
 }
 
 void WinApp::Update() {
-
-
 }
 
 void WinApp::Finalize(){
 	CloseWindow(hwnd);
 	CoUninitialize();
-
 }
 
 // ウィンドウプロシージャ
@@ -74,7 +71,7 @@ LRESULT CALLBACK WinApp::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-bool WinApp::ProcessMassage(){
+bool WinApp::ProcessMassage() {
 	MSG msg{};
 	if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 		//メッセージがあったら処理する
@@ -87,4 +84,20 @@ bool WinApp::ProcessMassage(){
 	}
 
 	return false;
+}
+
+void WinApp::ShowCursor(bool isShow) {
+	::ShowCursor(isShow);
+}
+
+void WinApp::SetClipCursor(bool isClip) {
+	if (isClip) {
+		RECT rect;
+		GetClientRect(hwnd, &rect);
+		MapWindowPoints(hwnd, nullptr, reinterpret_cast<LPPOINT>(&rect), 2);
+		::ClipCursor(&rect);
+	}
+	else {
+		::ClipCursor(nullptr);
+	}
 }

@@ -7,6 +7,7 @@
 #include "SpriteCommon.h"
 #include "Object3dCommon.h"
 #include "ParticleCommon.h"
+#include "SkyboxCommon.h"
 #include "SceneManager.h"
 #include "ImGuiManager.h"
 #include "AudioManager.h"
@@ -45,6 +46,7 @@ public:
 	SpriteCommon* GetSpriteCommon() const { return spriteCommon.get(); }
 	Object3dCommon* GetObject3dCommon() const { return object3dCommon.get(); }
 	ParticleCommon* GetParticleCommon() const { return particleCommon.get(); }
+	SkyboxCommon* GetSkyboxCommon() const { return skyboxCommon.get(); }
 
 protected:
 	std::unique_ptr<WinApp> winApp = nullptr;
@@ -56,6 +58,7 @@ protected:
 	std::unique_ptr<SpriteCommon> spriteCommon = nullptr;
 	std::unique_ptr<Object3dCommon> object3dCommon = nullptr;
 	std::unique_ptr<ParticleCommon> particleCommon = nullptr;
+	std::unique_ptr<SkyboxCommon> skyboxCommon = nullptr;
 	std::unique_ptr<SceneManager> sceneManager = nullptr;
 
 	bool endRequest = false;

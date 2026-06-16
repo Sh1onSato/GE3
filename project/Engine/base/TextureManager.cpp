@@ -1,4 +1,6 @@
 #include "TextureManager.h"
+#include "Logger.h"
+#include <algorithm>
 
 TextureManager* TextureManager::instance = nullptr;
 
@@ -34,12 +36,22 @@ void TextureManager::LoadTexture(const std::string& filePath){
 	// テクスチャの読み込み
 	DirectX::ScratchImage image{};
 	std::wstring filePathW = ConvertString(filePath);
-	HRESULT hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
+	HRESULT hr;
+	if (filePath.find(".dds") != std::string::npos) {
+		hr = DirectX::LoadFromDDSFile(filePathW.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+	} else {
+		hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
+	}
 	assert(SUCCEEDED(hr));
-	// ミニマップの作成
+
+	// ミニマップの作成（DDSの場合は既に含まれていることが多いのでチェック）
 	DirectX::ScratchImage mipChain{};
-	hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_SRGB, 0, mipChain);
-	assert(SUCCEEDED(hr));
+	if (DirectX::IsCompressed(image.GetMetadata().format) || filePath.find(".dds") != std::string::npos) {
+		mipChain = std::move(image);
+	} else {
+		hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_SRGB, 0, mipChain);
+		assert(SUCCEEDED(hr));
+	}
 
 	// テクスチャデータを追加
 	textureDatas.resize(textureDatas.size() + 1);
@@ -52,7 +64,11 @@ void TextureManager::LoadTexture(const std::string& filePath){
 
 	// SRVの作成
 	textureData.srvIndex = srvManager->Allocate();
-	srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, static_cast<UINT>(textureData.metadata.mipLevels));
+	if (textureData.metadata.miscFlags & DirectX::TEX_MISC_TEXTURECUBE) {
+		srvManager->CreateSRVForTextureCube(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, static_cast<UINT>(textureData.metadata.mipLevels));
+	} else {
+		srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, static_cast<UINT>(textureData.metadata.mipLevels));
+	}
 
 	// テクスチャデータのアップロード
 	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(),mipChain,dxCommon);

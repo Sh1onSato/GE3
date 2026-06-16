@@ -60,6 +60,9 @@ void Framework::Initialize() {
 	particleCommon = std::make_unique<ParticleCommon>();
 	particleCommon->Initialize(dxCommon.get(), srvManager.get());
 
+	skyboxCommon = std::make_unique<SkyboxCommon>();
+	skyboxCommon->Initialize(dxCommon.get(), srvManager.get());
+
 	CameraManager::GetInstance()->Initialize();
 
 	sceneManager = std::make_unique<SceneManager>();

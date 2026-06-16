@@ -12,6 +12,10 @@ public:
     void Initialize(DirectXCommon* dxCommon, const std::string& directoryPath, const std::string& filename);
     void Draw(ID3D12GraphicsCommandList* commandList);
 
+    // Getter
+    const D3D12_VERTEX_BUFFER_VIEW& GetVertexBufferView() const { return vertexBufferView; }
+    UINT GetVertexCount() const { return (UINT)modelData.vertices.size(); }
+
 private:
 
 private:
