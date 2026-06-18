@@ -1,51 +1,9 @@
 #pragma once
+#include "Structs.h"
 #include <cmath>
 #include <assert.h>
 #include <stdint.h>
-
-struct Vector2 {
-	float x, y;
-
-	Vector2 operator+(const Vector2& other) const { return { x + other.x, y + other.y }; }
-	Vector2 operator-(const Vector2& other) const { return { x - other.x, y - other.y }; }
-	Vector2 operator*(float scalar) const { return { x * scalar, y * scalar }; }
-};
-
-struct Vector3 {
-	float x, y, z;
-
-	Vector3 operator+(const Vector3& other) const { return { x + other.x, y + other.y, z + other.z }; }
-	Vector3 operator-(const Vector3& other) const { return { x - other.x, y - other.y, z - other.z }; }
-	Vector3 operator*(float scalar) const { return { x * scalar, y * scalar, z * scalar }; }
-	Vector3& operator+=(const Vector3& other) { x += other.x; y += other.y; z += other.z; return *this; }
-	Vector3& operator-=(const Vector3& other) { x -= other.x; y -= other.y; z -= other.z; return *this; }
-	Vector3& operator*=(float scalar) { x *= scalar; y *= scalar; z *= scalar; return *this; }
-};
-
-struct Vector4 {
-	float x, y, z, w;
-};
-
-struct Matrix3x3 {
-	float m[3][3];
-};
-
-struct Matrix4x4 {
-	float m[4][4];
-
-	Matrix4x4 operator+(const Matrix4x4& other) const;
-	Matrix4x4 operator-(const Matrix4x4& other) const;
-	Matrix4x4 operator*(const Matrix4x4& other) const;
-};
-
-struct Sphere {
-	Vector3 center;
-	float radius;
-};
-
-struct Quaternion {
-	float x, y, z, w;
-};
+#include <iostream>
 
 class Calculation {
 public:
@@ -88,6 +46,9 @@ public:
 	static Matrix4x4 MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip);
 	static Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth);
 
+	// 当たり判定
+	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);
+
 	// クォータニオン演算
 	static Quaternion Multiply(const Quaternion& q, const Quaternion& r);
 	static Quaternion IdentityQuaternion();
@@ -103,4 +64,3 @@ public:
 	static void DrawSphere(const Sphere& sphere, const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix, uint32_t color);
 	static void DrawGrid(const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix);
 };
-

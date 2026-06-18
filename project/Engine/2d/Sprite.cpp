@@ -145,22 +145,29 @@ void Sprite::Update() {
 }
 
 void Sprite::Draw() {
+    Draw(this->textureIndex);
+}
+
+void Sprite::Draw(uint32_t textureIndex) {
+    DrawSRV(TextureManager::GetInstance()->GetSrvIndex(textureIndex));
+}
+
+void Sprite::DrawSRV(uint32_t srvIndex) {
     ID3D12GraphicsCommandList* commandList = dxCommon->GetCommandList();
 
     // 1. 頂点とインデックスをセット
     commandList->IASetVertexBuffers(0, 1, &vertexBufferViewSprite);
     commandList->IASetIndexBuffer(&indexBuffViewSprite);
 
-    // 2. 定数バッファをセット (RootParameterの番号に合わせる)
+    // 2. 定数バッファをセット
     commandList->SetGraphicsRootConstantBufferView(0, materialResourceSprite->GetGPUVirtualAddress());
     commandList->SetGraphicsRootConstantBufferView(1, transformationMatrixResourceSprite->GetGPUVirtualAddress());
 
-    // 3. テクスチャをセット (今のところ main からもらったハンドルを使う想定)
-    commandList->SetGraphicsRootDescriptorTable(2, TextureManager::GetInstance()->GetSrvHandleGPU(textureIndex));
+    // 3. テクスチャをセット（SRVインデックスから直接ハンドルを取得）
+    commandList->SetGraphicsRootDescriptorTable(2, spriteCommon->GetTextureHandle(srvIndex));
 
     // 4. 描画！
     commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
-
 }
 
 void Sprite::ImGui(){

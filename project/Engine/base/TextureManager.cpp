@@ -15,6 +15,53 @@ void TextureManager::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
 	this->dxCommon = dxCommon;
 	this->srvManager = srvManager;
 	textureDatas.reserve(SrvManager::kMaxSRVCount);
+
+	// 白テクスチャをデフォルトで作成
+	CreateInternalWhiteTexture();
+}
+
+void TextureManager::CreateInternalWhiteTexture() {
+	const std::string name = "white";
+	// 既に存在するかチェック
+	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
+	if (it != textureDatas.end()) return;
+
+	// 1x1ピクセルの白色データを作成
+	DirectX::ScratchImage image{};
+	HRESULT hr = image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, 1);
+	assert(SUCCEEDED(hr));
+
+	// 白色を書き込む
+	uint8_t* pixels = image.GetPixels();
+	pixels[0] = 255; // R
+	pixels[1] = 255; // G
+	pixels[2] = 255; // B
+	pixels[3] = 255; // A
+
+	// テクスチャデータを追加
+	textureDatas.resize(textureDatas.size() + 1);
+	TextureData& textureData = textureDatas.back();
+
+	textureData.filePath = name;
+	textureData.metadata = image.GetMetadata();
+	textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
+
+	// SRVの作成
+	textureData.srvIndex = srvManager->Allocate();
+	srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, 1);
+
+	// アップロード
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(), image, dxCommon);
+
+	// コマンド実行と待機
+	hr = dxCommon->GetCommandList()->Close();
+	assert(SUCCEEDED(hr));
+	ID3D12CommandList* commandLists[] = { dxCommon->GetCommandList() };
+	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+	dxCommon->WaitForGpu();
+
+	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
+	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
 }
 
 void TextureManager::LoadTexture(const std::string& filePath){
@@ -101,6 +148,11 @@ uint32_t TextureManager::GetTextureIndexByFilePath(const std::string& filePath){
 	}
 	assert(0);
 	return 0;
+}
+
+uint32_t TextureManager::GetSrvIndex(uint32_t textureIndex) const {
+	assert(textureIndex < textureDatas.size());
+	return textureDatas[textureIndex].srvIndex;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::GetSrvHandleGPU(uint32_t textureIndex){

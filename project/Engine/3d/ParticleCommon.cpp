@@ -26,7 +26,7 @@ void ParticleCommon::PreDraw() {
     auto commandList = dxCommon->GetCommandList();
     commandList->SetGraphicsRootSignature(rootSignature.Get());
     commandList->SetPipelineState(pipelineState.Get());
-    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
     // ディスクリプタヒープのセット (これを忘れると描画時にエラーになる)
     ID3D12DescriptorHeap* descriptorHeaps[] = { srvManager->GetDescriptorHeap() };

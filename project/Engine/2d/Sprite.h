@@ -13,6 +13,8 @@ public:
 	void Update();
 	//描画
 	void Draw();
+	void Draw(uint32_t textureIndex); 
+	void DrawSRV(uint32_t srvIndex); // 追加：SRVインデックスを直接指定して描画
 
 	void ImGui(); // デバッグ用UIを表示する関数を追加
 	// --- 外部から数値を取得するための関数 (Getter) ---

@@ -21,7 +21,13 @@ public:
 	/// <param name="filePath">テクスチャファイルのパス</param>
 	void LoadTexture(const std::string& filePath);
 
+	/// <summary>
+	/// 1x1の白いテクスチャを内部で生成する
+	/// </summary>
+	void CreateInternalWhiteTexture();
+
 	uint32_t GetTextureIndexByFilePath(const std::string& filePath);
+	uint32_t GetSrvIndex(uint32_t textureIndex) const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetSrvHandleGPU(uint32_t textureIndex);
 
 	void Finalize();

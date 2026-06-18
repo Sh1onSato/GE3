@@ -13,17 +13,25 @@ void GameScene::Initialize() {
 
     TextureManager::GetInstance()->LoadTexture("Resources/uvChecker.png");
     TextureManager::GetInstance()->LoadTexture("Resources/monsterBall.png");
-    // TextureManager::GetInstance()->LoadTexture("Resources/white1x1.png"); // 一時コメントアウト
+    TextureManager::GetInstance()->LoadTexture("Resources/syouzyuu1.png");
+    
+    // 内部生成された白テクスチャを取得してパーティクルを初期化
+    uint32_t whiteTexIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath("white");
+    particleManager = std::make_unique<ParticleManager>();
+    particleManager->Initialize(framework->GetParticleCommon(), whiteTexIndex);
+
+    postProcess = std::make_unique<PostProcess>();
+    postProcess->Initialize(framework->GetDxCommon(), framework->GetSrvManager());
 
     reticle = std::make_unique<Sprite>();
-    reticle->Initialize(framework->GetSpriteCommon(), "Resources/uvChecker.png"); // 代わりのテクスチャ
+    reticle->Initialize(framework->GetSpriteCommon(), "Resources/syouzyuu1.png");
     // 画面中央に配置 (1280x720)
     reticle->SetPosition({ (float)WinApp::KclientWidth / 2.0f, (float)WinApp::KclientHeight / 2.0f });
-    // サイズを小さく (6x6ピクセル程度)
-    reticle->SetSize({ 6.0f, 6.0f });
+    // サイズを少し大きく (12x12ピクセル程度)
+    reticle->SetSize({ 40.0f, 40.0f });
     // 中心点をずらして真ん中に
     reticle->SetAnchorPoint({ 0.5f, 0.5f });
-    // 目立つように赤色にする
+    // 赤い壁の上でも見えるように「緑色」にする
     reticle->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f });
 
     std::unique_ptr<Camera> newCamera = std::make_unique<Camera>();
@@ -231,8 +239,27 @@ void GameScene::Update() {
         velocity.y = 0;
     }
 
+    // --- ヒットフラッシュの更新 ---
+    for (auto it = hitFlashes.begin(); it != hitFlashes.end(); ) {
+        it->timer -= 1.0f / 60.0f;
+        if (it->timer <= 0) {
+            // 時間切れなら元の色に戻す
+            it->object->SetColor(it->originalColor);
+            it = hitFlashes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     cameraTransform.translate = { playerPos.x, playerPos.y + eyeHeight, playerPos.z };
 
+    // --- 射撃処理 ---
+    if (!isLookPaused && input->TriggerMouseButton(0)) {
+        FireShot();
+    }
+
+    postProcess->Update();
+    particleManager->Update();
     skybox->Update();
     floor->Update();
     for (auto& wall : walls) { wall->Update(); }
@@ -256,6 +283,10 @@ void GameScene::Update() {
 void GameScene::Draw() {
     Framework* framework = Framework::GetInstance();
 
+    // --- 1. ポストプロセス用のオフスクリーンレンダリング開始 ---
+    // ここで描画先をテクスチャに「寄り道」させる
+    postProcess->PreDraw();
+
     // スカイボックスの描画
     framework->GetSkyboxCommon()->PreDraw();
     skybox->Draw();
@@ -265,7 +296,22 @@ void GameScene::Draw() {
     floor->Draw();
     for (auto& wall : walls) { wall->Draw(); }
 
-    // UI（レティクル）の描画
+    // パーティクルの描画
+    framework->GetParticleCommon()->PreDraw();
+    particleManager->Draw();
+
+    // 描画先を本来の画面（スワップチェーン）に「戻す」
+    postProcess->PostDraw();
+    // --- 1. オフスクリーンレンダリング終了 ---
+
+    // --- 2. 画面への最終描画 ---
+    // ポストプロセスの結果（テクスチャ）を画面いっぱいに描画
+    // ここは専用の PSO/RootSignature で描画される
+    postProcess->Draw();
+
+    // --- 3. UI（レティクル）の描画 ---
+    // PostProcess::Draw でルートシグネチャが書き換わっているため、
+    // スプライトを描く前にもう一度 SpriteCommon::PreDraw を呼ぶ必要がある
     framework->GetSpriteCommon()->PreDraw();
     reticle->Draw();
 }
@@ -274,4 +320,83 @@ void GameScene::Finalize() {
     // 終了時は必ずマウスを解放する
     Framework::GetInstance()->GetWinApp()->ShowCursor(true);
     Framework::GetInstance()->GetWinApp()->SetClipCursor(false);
+}
+
+void GameScene::FireShot() {
+    Transform camTrans = camera->GetTransform();
+    
+    // カメラの回転から前方ベクトルを計算
+    // rotate.x が上下、rotate.y が左右の回転
+    Vector3 direction;
+    direction.x = std::cos(camTrans.rotate.x) * std::sin(camTrans.rotate.y);
+    direction.y = std::sin(-camTrans.rotate.x);
+    direction.z = std::cos(camTrans.rotate.x) * std::cos(camTrans.rotate.y);
+    direction = Calculation::Normalize(direction);
+
+    Ray ray = { camTrans.translate, direction };
+    
+    // 全ての壁と床を判定対象にする
+    std::vector<Object3d*> targets;
+    if (floor) targets.push_back(floor.get());
+    for (auto& w : walls) targets.push_back(w.get());
+
+    Object3d* closestObject = nullptr;
+    float minDistance = FLT_MAX;
+    RaycastHit hit;
+    RaycastHit closestHit;
+
+    for (Object3d* obj : targets) {
+        AABB aabb = GetAABB(*obj);
+        if (Calculation::TestRayAABB(ray, aabb, &hit)) {
+            if (hit.distance < minDistance) {
+                minDistance = hit.distance;
+                closestObject = obj;
+                closestHit = hit;
+            }
+        }
+    }
+
+    if (closestObject) {
+        // ヒットした場合の演出
+        // 1. パーティクル（火花）を出す
+        std::random_device seed_gen;
+        std::mt19937 randomEngine(seed_gen());
+        std::uniform_real_distribution<float> distV(-0.1f, 0.1f);
+        
+        for (int i = 0; i < 10; ++i) {
+            Vector3 v = { distV(randomEngine), distV(randomEngine), distV(randomEngine) };
+            particleManager->Emit(closestHit.hitPoint, v, { 1.0f, 0.8f, 0.0f, 1.0f }, 0.5f);
+        }
+
+        // 2. 壁の色を一時的に変える
+        auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
+            return f.object == closestObject;
+        });
+
+        if (it != hitFlashes.end()) {
+            // 既にフラッシュ中ならタイマーをリセット
+            it->timer = 0.2f;
+        } else {
+            // 新しくフラッシュを開始
+            HitFlash flash;
+            flash.object = closestObject;
+            flash.timer = 0.2f;
+            flash.originalColor = closestObject->GetColor();
+            hitFlashes.push_back(flash);
+        }
+
+        closestObject->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 赤くする
+        
+        Logger::Log("Hit! Distance: " + std::to_string(minDistance) + "\n");
+    } else {
+        Logger::Log("Miss...\n");
+    }
+}
+
+AABB GameScene::GetAABB(const Object3d& object) {
+    Transform t = object.GetTransform();
+    AABB aabb;
+    aabb.min = { t.translate.x - t.scale.x, t.translate.y - t.scale.y, t.translate.z - t.scale.z };
+    aabb.max = { t.translate.x + t.scale.x, t.translate.y + t.scale.y, t.translate.z + t.scale.z };
+    return aabb;
 }

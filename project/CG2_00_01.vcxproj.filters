@@ -147,6 +147,9 @@
     <ClCompile Include="Engine\base\MyGame.cpp">
       <Filter>ソース ファイル\engine\base</Filter>
     </ClCompile>
+    <ClCompile Include="Engine\base\PostProcess.cpp">
+      <Filter>ソース ファイル\engine\base</Filter>
+    </ClCompile>
     <ClCompile Include="Engine\base\SrvManager.cpp">
       <Filter>ソース ファイル\engine\base</Filter>
     </ClCompile>
@@ -284,6 +287,9 @@
       <Filter>ヘッダー ファイル\engine\base</Filter>
     </ClInclude>
     <ClInclude Include="Engine\base\MyGame.h">
+      <Filter>ヘッダー ファイル\engine\base</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\base\PostProcess.h">
       <Filter>ヘッダー ファイル\engine\base</Filter>
     </ClInclude>
     <ClInclude Include="Engine\base\SrvManager.h">

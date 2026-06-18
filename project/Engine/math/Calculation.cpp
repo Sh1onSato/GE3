@@ -304,6 +304,60 @@ Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, fl
 	return result;
 }
 
+bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit) {
+	float tmin = 0.0f;
+	float tmax = FLT_MAX;
+
+	// X軸方向の判定
+	if (std::abs(ray.direction.x) < 1e-6f) {
+		if (ray.origin.x < aabb.min.x || ray.origin.x > aabb.max.x) return false;
+	} else {
+		float invD = 1.0f / ray.direction.x;
+		float t1 = (aabb.min.x - ray.origin.x) * invD;
+		float t2 = (aabb.max.x - ray.origin.x) * invD;
+		if (t1 > t2) std::swap(t1, t2);
+		tmin = std::max(tmin, t1);
+		tmax = std::min(tmax, t2);
+		if (tmin > tmax) return false;
+	}
+
+	// Y軸方向の判定
+	if (std::abs(ray.direction.y) < 1e-6f) {
+		if (ray.origin.y < aabb.min.y || ray.origin.y > aabb.max.y) return false;
+	} else {
+		float invD = 1.0f / ray.direction.y;
+		float t1 = (aabb.min.y - ray.origin.y) * invD;
+		float t2 = (aabb.max.y - ray.origin.y) * invD;
+		if (t1 > t2) std::swap(t1, t2);
+		tmin = std::max(tmin, t1);
+		tmax = std::min(tmax, t2);
+		if (tmin > tmax) return false;
+	}
+
+	// Z軸方向の判定
+	if (std::abs(ray.direction.z) < 1e-6f) {
+		if (ray.origin.z < aabb.min.z || ray.origin.z > aabb.max.z) return false;
+	} else {
+		float invD = 1.0f / ray.direction.z;
+		float t1 = (aabb.min.z - ray.origin.z) * invD;
+		float t2 = (aabb.max.z - ray.origin.z) * invD;
+		if (t1 > t2) std::swap(t1, t2);
+		tmin = std::max(tmin, t1);
+		tmax = std::min(tmax, t2);
+		if (tmin > tmax) return false;
+	}
+
+	// 衝突情報をセット
+	if (outHit) {
+		outHit->distance = tmin;
+		outHit->hitPoint = ray.origin + ray.direction * tmin;
+		// 本来は法線も計算するが、今回は簡略化のためゼロセット
+		outHit->normal = { 0, 0, 0 }; 
+	}
+
+	return true;
+}
+
 Quaternion Calculation::Multiply(const Quaternion& q, const Quaternion& r) {
 	return {
 		q.w * r.x + q.x * r.w + q.y * r.z - q.z * r.y,

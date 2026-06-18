@@ -8,6 +8,7 @@
 #include "Calculation.h"
 #include "ParticleManager.h"
 #include "ParticleEmitter.h"
+#include "PostProcess.h"
 #include <memory>
 #include <vector>
 
@@ -29,6 +30,19 @@ private:
 	// 当たり判定チェック
 	bool CheckCollision(const Vector3& pos, float* outMaxY = nullptr);
 
+	// 射撃処理
+	void FireShot();
+	// オブジェクトからAABBを取得する補助関数
+	AABB GetAABB(const Object3d& object);
+
+	// ヒット演出用の構造体
+	struct HitFlash {
+		Object3d* object;
+		float timer;
+		Vector4 originalColor;
+	};
+	std::vector<HitFlash> hitFlashes;
+
 	// シーン固有のオブジェクト
 	Camera* camera = nullptr; 
 	std::unique_ptr<Model> model = nullptr;
@@ -37,11 +51,13 @@ private:
 	std::unique_ptr<Object3d> object3d2 = nullptr;
 	std::unique_ptr<Object3d> floor = nullptr;    // 追加：床
 	std::unique_ptr<Skybox> skybox = nullptr;     // 追加：スカイボックス
+	std::vector<std::unique_ptr<Object3d>> walls; // 追加：複数の壁
 	
 	std::unique_ptr<Sprite> uvChecker = nullptr;
 	std::unique_ptr<Sprite> monsterBall = nullptr;
 	std::unique_ptr<Sprite> reticle = nullptr; // 追加：レティクル
 
+	std::unique_ptr<PostProcess> postProcess = nullptr;
 	std::unique_ptr<ParticleManager> particleManager = nullptr;
 	std::unique_ptr<ParticleEmitter> particleEmitter = nullptr;
 

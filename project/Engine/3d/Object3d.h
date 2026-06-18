@@ -21,6 +21,7 @@ public:
     void SetTranslate(const Vector3& translate) { transform.translate = translate; }
     void SetCamera(Camera* camera) { this->camera = camera; }
     void SetColor(const Vector4& color) { materialData->color = color; }
+    const Vector4& GetColor() const { return materialData->color; }
     void SetEnableLighting(bool enable) { materialData->enableLighting = enable ? 1 : 0; }
 
     // Getter
