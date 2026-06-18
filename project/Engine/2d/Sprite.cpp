@@ -96,7 +96,7 @@ void Sprite::Update() {
         top = -top;
         bottom = -bottom;
     }
-
+    //
     const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
     float tex_left = texLeftTop.x / static_cast<float>(metadate.width);
     float tex_right = (texLeftTop.x + texSize.x) / static_cast<float>(metadate.width);
