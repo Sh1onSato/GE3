@@ -33,18 +33,22 @@ struct ParticleForGPU {
 class ParticleManager {
 public:
     // 1つのマネージャーで管理できる最大数
-    static const uint32_t kMaxParticles = 1000;
+    static const uint32_t kMaxParticles = 50000;
 
-    void Initialize(ParticleCommon* common, uint32_t textureIndex);
+    void Initialize(ParticleCommon* common, uint32_t textureIndex, ParticleDrawType drawType = ParticleDrawType::kTriangle);
     void Update();
     void Draw();
 
     // パーティクルの追加
     void Emit(const Vector3& position, const Vector3& velocity, const Vector4& color, float lifeTime);
 
+    // ゲッター
+    ParticleDrawType GetDrawType() const { return drawType; }
+
 private:
     ParticleCommon* common = nullptr;
     uint32_t textureIndex = 0;
+    ParticleDrawType drawType = ParticleDrawType::kTriangle;
 
     // 現在のアクティブなパーティクル数
     uint32_t instanceCount = 0;

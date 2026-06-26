@@ -22,13 +22,21 @@ void ParticleCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
     CreateGraphicsPipeline();
 }
 
-void ParticleCommon::PreDraw() {
+void ParticleCommon::PreDraw(ParticleDrawType drawType) {
     auto commandList = dxCommon->GetCommandList();
     commandList->SetGraphicsRootSignature(rootSignature.Get());
-    commandList->SetPipelineState(pipelineState.Get());
-    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
-    // ディスクリプタヒープのセット (これを忘れると描画時にエラーになる)
+    if (drawType == ParticleDrawType::kPoint) {
+        commandList->SetPipelineState(pipelineStatePoint.Get());
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
+    } else if (drawType == ParticleDrawType::kLine) {
+        commandList->SetPipelineState(pipelineStateLine.Get());
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    } else {
+        commandList->SetPipelineState(pipelineStateTriangle.Get());
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    }
+
     ID3D12DescriptorHeap* descriptorHeaps[] = { srvManager->GetDescriptorHeap() };
     commandList->SetDescriptorHeaps(1, descriptorHeaps);
 }
@@ -137,8 +145,18 @@ void ParticleCommon::CreateGraphicsPipeline() {
     psoDesc.NumRenderTargets = 1;
     psoDesc.SampleDesc.Count = 1;
     psoDesc.SampleMask = D3D12_DEFAULT_SAMPLE_MASK;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    // 1. 点用 PSO の作成
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStatePoint));
+    assert(SUCCEEDED(hr));
 
-    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState));
+    // 2. 線用 PSO の作成
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+    hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStateLine));
+    assert(SUCCEEDED(hr));
+
+    // 3. 面用 PSO の作成
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStateTriangle));
     assert(SUCCEEDED(hr));
 }

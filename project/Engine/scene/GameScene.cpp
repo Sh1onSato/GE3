@@ -18,7 +18,8 @@ void GameScene::Initialize() {
     // 内部生成された白テクスチャを取得してパーティクルを初期化
     uint32_t whiteTexIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath("white");
     particleManager = std::make_unique<ParticleManager>();
-    particleManager->Initialize(framework->GetParticleCommon(), whiteTexIndex);
+    // とりあえず線（kLine）で初期化してみます。kPoint, kTriangle も指定可能です。
+    particleManager->Initialize(framework->GetParticleCommon(), whiteTexIndex, ParticleDrawType::kLine);
 
     postProcess = std::make_unique<PostProcess>();
     postProcess->Initialize(framework->GetDxCommon(), framework->GetSrvManager());
@@ -297,7 +298,7 @@ void GameScene::Draw() {
     for (auto& wall : walls) { wall->Draw(); }
 
     // パーティクルの描画
-    framework->GetParticleCommon()->PreDraw();
+    framework->GetParticleCommon()->PreDraw(particleManager->GetDrawType());
     particleManager->Draw();
 
     // 描画先を本来の画面（スワップチェーン）に「戻す」
@@ -363,7 +364,7 @@ void GameScene::FireShot() {
         std::mt19937 randomEngine(seed_gen());
         std::uniform_real_distribution<float> distV(-0.1f, 0.1f);
         
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 100; ++i) {
             Vector3 v = { distV(randomEngine), distV(randomEngine), distV(randomEngine) };
             particleManager->Emit(closestHit.hitPoint, v, { 1.0f, 0.8f, 0.0f, 1.0f }, 0.5f);
         }
