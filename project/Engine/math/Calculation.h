@@ -18,6 +18,7 @@ public:
 	static Vector3 Subtract(const Vector3& a, const Vector3& b) { return a - b; }
 	static Vector3 Multiply(float b, const Vector3& a) { return a * b; }
 	static float Dot(const Vector3& a, const Vector3& b);
+	static Vector3 Cross(const Vector3& a, const Vector3& b);
 	static float Length(const Vector3& a);
 	static Vector3 Normalize(const Vector3& a);
 
@@ -45,6 +46,8 @@ public:
 	static Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspectRatio, float nearClip, float farCrip);
 	static Matrix4x4 MakeOrthographicMatrix(float left, float top, float right, float bottom, float nearClip, float farClip);
 	static Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth);
+	// eyeからtargetを見るビュー行列を作成（行ベクトル規約。Inverse(MakeAffineMatrix(...))と等価）
+	static Matrix4x4 MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up);
 
 	// 当たり判定
 	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);
@@ -57,6 +60,8 @@ public:
 	static Quaternion Normalize(const Quaternion& q);
 	static Quaternion Inverse(const Quaternion& q);
 	static Quaternion MakeAxisAngleQuaternion(const Vector3& axis, float angle);
+	// from方向をto方向へ最短で向ける回転クォータニオン（±Z等の正反対も特異点ガード済み）
+	static Quaternion DirectionToDirection(const Vector3& from, const Vector3& to);
 	static Matrix4x4 MakeRotateMatrix(const Quaternion& q);
 	static Quaternion Slerp(const Quaternion& q0, const Quaternion& q1, float t);
 

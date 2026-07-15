@@ -11,6 +11,8 @@ public:
     virtual void Initialize(Object3dCommon* common);
     virtual void Update();
     virtual void Draw();
+    // シャドウマップ生成パス用の描画（深度のみ、ライト視点WVPで描画）
+    void DrawShadow(const Matrix4x4& lightViewProjection);
     void ImGui(); // 追加
 
     // Setter
@@ -39,10 +41,16 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> materialResource;
     Material* materialData = nullptr;
 
+    // シャドウマップ生成パス用のWVP（ライト視点）リソース
+    Microsoft::WRL::ComPtr<ID3D12Resource> shadowWvpResource;
+    Matrix4x4* shadowWvpData = nullptr;
+
     // 座標情報
     Transform transform;
     Quaternion quaternionRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
-    
+    // Update()で計算したワールド行列（DrawShadowでも使い回すためメンバ化）
+    Matrix4x4 worldMatrix = Calculation::MakeIdentity4x4();
+
     Camera* camera = nullptr;
 };
 

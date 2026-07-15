@@ -13,6 +13,11 @@ void Object3d::Initialize(Object3dCommon* common) {
     materialResource = common->GetDxCommon()->CreatBufferResource(sizeof(Material));
     materialResource->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
 
+    // シャドウマップ生成パス用のWVPリソース作成
+    shadowWvpResource = common->GetDxCommon()->CreatBufferResource(sizeof(Matrix4x4));
+    shadowWvpResource->Map(0, nullptr, reinterpret_cast<void**>(&shadowWvpData));
+    *shadowWvpData = Calculation::MakeIdentity4x4();
+
     // 初期化
     wvpData->World = Calculation::MakeIdentity4x4();
     wvpData->WVP = Calculation::MakeIdentity4x4();
@@ -29,15 +34,17 @@ void Object3d::Initialize(Object3dCommon* common) {
 void Object3d::SetRotate(const Vector3& rotate) {
     transform.rotate = rotate;
     // オイラー角からクォータニオンを作成
+    // MakeAffineMatrix(Vector3)側のオイラー回転順(RotX*RotY*RotZ)と一致させるため、
+    // クォータニオン積はその逆順(qZ, qY, qXの順にMultiply)で合成する
     Quaternion qX = Calculation::MakeAxisAngleQuaternion({ 1.0f, 0.0f, 0.0f }, rotate.x);
     Quaternion qY = Calculation::MakeAxisAngleQuaternion({ 0.0f, 1.0f, 0.0f }, rotate.y);
     Quaternion qZ = Calculation::MakeAxisAngleQuaternion({ 0.0f, 0.0f, 1.0f }, rotate.z);
-    quaternionRotation = Calculation::Multiply(qX, Calculation::Multiply(qY, qZ));
+    quaternionRotation = Calculation::Multiply(qZ, Calculation::Multiply(qY, qX));
 }
 
 void Object3d::Update() {
     // 1. ワールド行列の計算 (クォータニオンを使用)
-    Matrix4x4 worldMatrix = Calculation::MakeAffineMatrix(transform.scale, quaternionRotation, transform.translate);
+    worldMatrix = Calculation::MakeAffineMatrix(transform.scale, quaternionRotation, transform.translate);
 
     // 2. ビュー・プロジェクション行列の取得
     Matrix4x4 viewProjectionMatrix;
@@ -71,6 +78,23 @@ void Object3d::Draw() {
 
     // モデル自身の描画処理
     model->Draw(commandList);
+}
+
+void Object3d::DrawShadow(const Matrix4x4& lightViewProjection) {
+    if (!model) { return; } // モデルがセットされていなければ何もしない
+
+    auto commandList = common->GetDxCommon()->GetCommandList();
+
+    // ライト視点のWVP行列を計算して転送
+    *shadowWvpData = worldMatrix * lightViewProjection;
+
+    // WVPバッファをセット (b0、シャドウ用ルートシグネチャはこれのみ)
+    commandList->SetGraphicsRootConstantBufferView(0, shadowWvpResource->GetGPUVirtualAddress());
+
+    // 深度のみの描画（Model::Drawはテクスチャ用のディスクリプタテーブルをb2にセットするため、
+    // シャドウ用ルートシグネチャ(b0のみ)では使えない。頂点バッファのバインドとDrawInstancedのみ直接発行する）
+    commandList->IASetVertexBuffers(0, 1, &model->GetVertexBufferView());
+    commandList->DrawInstanced(model->GetVertexCount(), 1, 0, 0);
 }
 
 void Object3d::ImGui() {

@@ -311,6 +311,40 @@ ComPtr<ID3D12Resource> DirectXCommon::CreateDepthStencilTexureResource(int32_t w
     return res;
 }
 
+ComPtr<ID3D12Resource> DirectXCommon::CreateShadowMapResource(int32_t width, int32_t height) {
+    D3D12_RESOURCE_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.DepthOrArraySize = 1;
+    desc.Format = DXGI_FORMAT_R32_TYPELESS;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+    D3D12_HEAP_PROPERTIES prop{};
+    prop.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_CLEAR_VALUE clear{};
+    clear.DepthStencil.Depth = 1.0f;
+    clear.DepthStencil.Stencil = 0;
+    clear.Format = DXGI_FORMAT_D32_FLOAT;
+
+    ComPtr<ID3D12Resource> res = nullptr;
+    HRESULT hr = device->CreateCommittedResource(
+        &prop,
+        D3D12_HEAP_FLAG_NONE,
+        &desc,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        &clear,
+        IID_PPV_ARGS(&res)
+    );
+    assert(SUCCEEDED(hr));
+    return res;
+}
+
 ComPtr<ID3D12Resource> DirectXCommon::CreatBufferResource(size_t sizeInBytes) {
     // 定数バッファは256バイトの倍数である必要があるため、切り上げ計算を行う
     size_t alignment = 256;

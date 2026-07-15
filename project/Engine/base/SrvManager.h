@@ -20,6 +20,8 @@ public:
     // SRVの作成
     void CreateSRVForTexture2D(uint32_t srvIndex, ID3D12Resource* pResource, DXGI_FORMAT format, UINT mipLevels);
     void CreateSRVForTextureCube(uint32_t srvIndex, ID3D12Resource* pResource, DXGI_FORMAT format, UINT mipLevels);
+    // シャドウマップ（深度テクスチャ）用のSRVを作成（Format R32_FLOAT固定）
+    void CreateSRVForDepthTexture(uint32_t srvIndex, ID3D12Resource* pResource);
 
     // 描画前の設定（ヒープのセット）
     void PreDraw();

@@ -2,10 +2,12 @@
 
 // Windowsアプリでのエントリーポイント(main関数)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+
 	// D3Dリソースリークチェック
 	D3DResourceLeakCheker leakChecker;
 	// COM初期化
 	CoInitializeEx(0, COINIT_MULTITHREADED);
+
 	// ダンプ出力設定
 	SetUnhandledExceptionFilter(Logger::ExportDump);
 
@@ -21,5 +23,4 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	// COM終了
 	CoUninitialize();
 
-	return 0;
 }

@@ -8,15 +8,26 @@ void Model::Initialize(DirectXCommon* dxCommon, const std::string& directoryPath
 		TextureManager::GetInstance()->LoadTexture(modelData.material.textureFilePath);
 	}
 
-	// 2. 頂点リソースの作成
+	CreateVertexBuffer(dxCommon);
+}
+
+void Model::InitializeFromVertices(DirectXCommon* dxCommon, const std::vector<VertexData>& vertices, const std::string& textureFilePath) {
+	modelData.vertices = vertices;
+	modelData.material.textureFilePath = textureFilePath;
+
+	CreateVertexBuffer(dxCommon);
+}
+
+void Model::CreateVertexBuffer(DirectXCommon* dxCommon) {
+	// 頂点リソースの作成
 	vertexResource = dxCommon->CreatBufferResource(sizeof(VertexData) * modelData.vertices.size());
 
-	// 3. 頂点バッファビューの設定
+	// 頂点バッファビューの設定
 	vertexBufferView.BufferLocation = vertexResource->GetGPUVirtualAddress();
 	vertexBufferView.SizeInBytes = UINT(sizeof(VertexData) * modelData.vertices.size());
 	vertexBufferView.StrideInBytes = sizeof(VertexData);
 
-	// 4. データを転送する
+	// データを転送する
 	VertexData* vertexData = nullptr;
 	vertexResource->Map(0, nullptr, reinterpret_cast<void**>(&vertexData));
 	std::memcpy(vertexData, modelData.vertices.data(), sizeof(VertexData) * modelData.vertices.size());

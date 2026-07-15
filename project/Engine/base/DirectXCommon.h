@@ -107,6 +107,8 @@ const D3D12_RECT& GetScissorRect() const { return scissorRect; }
     // ヘルパー関数
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE heapType, UINT numDescriptors, bool shaderVisible);
     Microsoft::WRL::ComPtr<ID3D12Resource> CreateDepthStencilTexureResource(int32_t width, int32_t height);
+    // シャドウマップ用の深度テクスチャを作成（定常状態はPIXEL_SHADER_RESOURCE。描画時のみDEPTH_WRITEに遷移）
+    Microsoft::WRL::ComPtr<ID3D12Resource> CreateShadowMapResource(int32_t width, int32_t height);
     Microsoft::WRL::ComPtr<ID3D12Resource> CreatBufferResource(size_t sizeInBytes);
     [[nodiscard]]
     Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(Microsoft::WRL::ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon);

@@ -106,7 +106,7 @@ void SpriteCommon::CreateRootSignature(){
 	descriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	descriptorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER rootParameters[4] = {};
+	D3D12_ROOT_PARAMETER rootParameters[8] = {};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b0: Material
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
@@ -120,11 +120,39 @@ void SpriteCommon::CreateRootSignature(){
 	rootParameters[2].DescriptorTable.pDescriptorRanges = descriptorRange;
 	rootParameters[2].DescriptorTable.NumDescriptorRanges = _countof(descriptorRange);
 
-	rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b2: Light
+	rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b2: DirectionalLight
 	rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[3].Descriptor.ShaderRegister = 2;
+
+	// Object3d.PS.hlslを共用しているため、PointLight(b3)/SpotLight(b4)もPSOの
+	// ルートシグネチャ検証を通すために宣言が必要（b2と同様、Spriteでは未バインドのまま）
+	rootParameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b3: PointLight
+	rootParameters[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[4].Descriptor.ShaderRegister = 3;
+
+	rootParameters[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b4: SpotLight
+	rootParameters[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[5].Descriptor.ShaderRegister = 4;
+
+	// Object3d.PS.hlslのシャドウマッピング追加(b5: ShadowData, t1: ShadowMap)にも
+	// 同様にPSOのルートシグネチャ検証を通すためのダミー宣言が必要（Spriteでは未バインドのまま）
+	rootParameters[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b5: ShadowData
+	rootParameters[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[6].Descriptor.ShaderRegister = 5;
+
+	D3D12_DESCRIPTOR_RANGE shadowDescriptorRange[1] = {};
+	shadowDescriptorRange[0].BaseShaderRegister = 1; // t1
+	shadowDescriptorRange[0].NumDescriptors = 1;
+	shadowDescriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	shadowDescriptorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	rootParameters[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; // t1: ShadowMap
+	rootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	rootParameters[7].DescriptorTable.pDescriptorRanges = shadowDescriptorRange;
+	rootParameters[7].DescriptorTable.NumDescriptorRanges = _countof(shadowDescriptorRange);
+
 	// --- サンプラーの設定 ---
-	D3D12_STATIC_SAMPLER_DESC staticSamplers[1] = {};
+	D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
 	staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
 	staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 	staticSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -133,6 +161,18 @@ void SpriteCommon::CreateRootSignature(){
 	staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
 	staticSamplers[0].ShaderRegister = 0; // s0
 	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// s1: ShadowMap用の比較サンプラー（Object3d.PS.hlslのgShadowSamplerと一致させる）
+	staticSamplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+	staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	staticSamplers[1].ShaderRegister = 1; // s1
+	staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 	// --- シリアライズと生成 ---
 	D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature{};
 	descriptionRootSignature.pParameters = rootParameters;

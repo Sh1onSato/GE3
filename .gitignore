@@ -328,6 +328,7 @@ project/logs/
 **/externals/DirectXTex/Bin/
 **/externals/DirectXTex/x64/
 project/GaminiLog/
-# Gemini CLI Logs
+# Claude Log
 project/GeminiLog/
-project/GEMINI.md
+project/.claude/
+project/CLAUDE.md

@@ -43,6 +43,14 @@ float Calculation::Dot(const Vector3& a, const Vector3& b) {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+Vector3 Calculation::Cross(const Vector3& a, const Vector3& b) {
+	return {
+		a.y * b.z - a.z * b.y,
+		a.z * b.x - a.x * b.z,
+		a.x * b.y - a.y * b.x,
+	};
+}
+
 float Calculation::Length(const Vector3& a) {
 	return std::sqrt(Dot(a, a));
 }
@@ -304,9 +312,28 @@ Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, fl
 	return result;
 }
 
+Matrix4x4 Calculation::MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up) {
+	Vector3 forward = Normalize(target - eye);
+	Vector3 right = Normalize(Cross(up, forward));
+	Vector3 newUp = Cross(forward, right);
+
+	Matrix4x4 result = {};
+	result.m[0][0] = right.x;   result.m[0][1] = newUp.x;   result.m[0][2] = forward.x;   result.m[0][3] = 0.0f;
+	result.m[1][0] = right.y;   result.m[1][1] = newUp.y;   result.m[1][2] = forward.y;   result.m[1][3] = 0.0f;
+	result.m[2][0] = right.z;   result.m[2][1] = newUp.z;   result.m[2][2] = forward.z;   result.m[2][3] = 0.0f;
+	result.m[3][0] = -Dot(right, eye);
+	result.m[3][1] = -Dot(newUp, eye);
+	result.m[3][2] = -Dot(forward, eye);
+	result.m[3][3] = 1.0f;
+	return result;
+}
+
 bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit) {
 	float tmin = 0.0f;
 	float tmax = FLT_MAX;
+
+	int hitAxis = -1;    // 入射した面の軸（0=X,1=Y,2=Z）。tmin を更新した軸を記録する
+	float hitDir = 0.0f; // その軸のレイ進行方向の符号（法線の向き判定に使う）
 
 	// X軸方向の判定
 	if (std::abs(ray.direction.x) < 1e-6f) {
@@ -316,7 +343,7 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 		float t1 = (aabb.min.x - ray.origin.x) * invD;
 		float t2 = (aabb.max.x - ray.origin.x) * invD;
 		if (t1 > t2) std::swap(t1, t2);
-		tmin = std::max(tmin, t1);
+		if (t1 > tmin) { tmin = t1; hitAxis = 0; hitDir = ray.direction.x; }
 		tmax = std::min(tmax, t2);
 		if (tmin > tmax) return false;
 	}
@@ -329,7 +356,7 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 		float t1 = (aabb.min.y - ray.origin.y) * invD;
 		float t2 = (aabb.max.y - ray.origin.y) * invD;
 		if (t1 > t2) std::swap(t1, t2);
-		tmin = std::max(tmin, t1);
+		if (t1 > tmin) { tmin = t1; hitAxis = 1; hitDir = ray.direction.y; }
 		tmax = std::min(tmax, t2);
 		if (tmin > tmax) return false;
 	}
@@ -342,7 +369,7 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 		float t1 = (aabb.min.z - ray.origin.z) * invD;
 		float t2 = (aabb.max.z - ray.origin.z) * invD;
 		if (t1 > t2) std::swap(t1, t2);
-		tmin = std::max(tmin, t1);
+		if (t1 > tmin) { tmin = t1; hitAxis = 2; hitDir = ray.direction.z; }
 		tmax = std::min(tmax, t2);
 		if (tmin > tmax) return false;
 	}
@@ -351,8 +378,19 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 	if (outHit) {
 		outHit->distance = tmin;
 		outHit->hitPoint = ray.origin + ray.direction * tmin;
-		// 本来は法線も計算するが、今回は簡略化のためゼロセット
-		outHit->normal = { 0, 0, 0 }; 
+
+		// 入射した面の外向き法線を求める。
+		// レイが正方向に進んでいれば min 側の面（法線は負）、負方向なら max 側の面（法線は正）に当たっている。
+		Vector3 n = { 0.0f, 0.0f, 0.0f };
+		if (hitAxis == 0)      n.x = (hitDir > 0.0f) ? -1.0f : 1.0f;
+		else if (hitAxis == 1) n.y = (hitDir > 0.0f) ? -1.0f : 1.0f;
+		else if (hitAxis == 2) n.z = (hitDir > 0.0f) ? -1.0f : 1.0f;
+		else {
+			// レイ始点が AABB 内部にある等で軸が確定しない場合は入射方向の逆向きで代用
+			Vector3 rev = { -ray.direction.x, -ray.direction.y, -ray.direction.z };
+			n = Normalize(rev);
+		}
+		outHit->normal = n;
 	}
 
 	return true;
@@ -397,6 +435,29 @@ Quaternion Calculation::MakeAxisAngleQuaternion(const Vector3& axis, float angle
 	Vector3 n = Normalize(axis);
 	float sinA = std::sin(angle / 2.0f);
 	return { n.x * sinA, n.y * sinA, n.z * sinA, std::cos(angle / 2.0f) };
+}
+
+Quaternion Calculation::DirectionToDirection(const Vector3& from, const Vector3& to) {
+	Vector3 f = Normalize(from);
+	Vector3 t = Normalize(to);
+	float dot = Dot(f, t);
+
+	// ほぼ同じ向き → 回転不要
+	if (dot >= 1.0f - 1e-6f) {
+		return IdentityQuaternion();
+	}
+	// ほぼ正反対（180度）→ 回転軸が定まらないので、fに垂直な任意軸で180度回す（特異点ガード）
+	if (dot <= -1.0f + 1e-6f) {
+		Vector3 axis = Cross({ 1.0f, 0.0f, 0.0f }, f);
+		if (Length(axis) < 1e-6f) {
+			axis = Cross({ 0.0f, 1.0f, 0.0f }, f);
+		}
+		return MakeAxisAngleQuaternion(Normalize(axis), 3.14159265358979323846f);
+	}
+
+	Vector3 axis = Cross(f, t);
+	float angle = std::acos((std::max)(-1.0f, (std::min)(1.0f, dot)));
+	return MakeAxisAngleQuaternion(axis, angle);
 }
 
 Matrix4x4 Calculation::MakeRotateMatrix(const Quaternion& q) {
