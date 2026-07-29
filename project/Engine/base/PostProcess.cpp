@@ -401,6 +401,14 @@ void PostProcess::CreateBlurPipeline() {
 
     hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&blurPipelineState));
     assert(SUCCEEDED(hr));
+
+    // ボックスフィルターPSO：ルートシグネチャ・頂点シェーダー・各種ステートはガウシアンと共用し、
+    // ピクセルシェーダーだけBoxBlur.PS.hlslに差し替える
+    auto boxPsBlob = CompileShader(L"Resources/shaders/BoxBlur.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
+    assert(boxPsBlob);
+    psoDesc.PS = { boxPsBlob->GetBufferPointer(), boxPsBlob->GetBufferSize() };
+    hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&boxBlurPipelineState));
+    assert(SUCCEEDED(hr));
 }
 
 void PostProcess::PreDraw() {
@@ -454,8 +462,10 @@ void PostProcess::Update(bool showDebugUI) {
     ImGui::DragFloat("Bloom Blur Strength", &blurStrength, 0.01f, 0.0f, 10.0f);
 
     ImGui::Separator();
-    ImGui::Checkbox("Screen Blur Enabled", &blurEnabled);
-    ImGui::DragFloat("Screen Blur Strength", &screenBlurStrength, 0.01f, 0.0f, 10.0f);
+    ImGui::Checkbox("Screen Blur Enabled (Gaussian)", &blurEnabled);
+    ImGui::DragFloat("Screen Blur Strength (Gaussian)", &screenBlurStrength, 0.01f, 0.0f, 10.0f);
+    ImGui::Checkbox("Screen Blur Enabled (Box)", &boxBlurEnabled);
+    ImGui::DragFloat("Screen Blur Strength (Box)", &boxBlurStrength, 0.01f, 0.0f, 10.0f);
 
     ImGui::Separator();
     ImGui::Checkbox("Vignette Enabled", &vignetteEnabled);
@@ -497,7 +507,7 @@ void PostProcess::DrawBrightnessExtractPass() {
 }
 
 void PostProcess::DrawGaussianBlurPass(bool horizontal, ID3D12Resource* srcResource, uint32_t srcSrvIndex, ID3D12Resource* dstResource, uint32_t dstRtvIndex,
-    D3D12_VIEWPORT viewport, D3D12_RECT scissorRect, float texelWidth, float texelHeight, float strength) {
+    D3D12_VIEWPORT viewport, D3D12_RECT scissorRect, float texelWidth, float texelHeight, float strength, bool useBoxFilter) {
     auto commandList = dxCommon->GetCommandList();
 
     D3D12_RESOURCE_BARRIER barrier{};
@@ -514,7 +524,7 @@ void PostProcess::DrawGaussianBlurPass(bool horizontal, ID3D12Resource* srcResou
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
     commandList->SetGraphicsRootSignature(blurRootSignature.Get());
-    commandList->SetPipelineState(blurPipelineState.Get());
+    commandList->SetPipelineState(useBoxFilter ? boxBlurPipelineState.Get() : blurPipelineState.Get());
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     commandList->IASetVertexBuffers(0, 1, &vertexBufferView);
 
@@ -539,7 +549,10 @@ void PostProcess::DrawGaussianBlurPass(bool horizontal, ID3D12Resource* srcResou
 }
 
 void PostProcess::DrawFullScreenBlurPass() {
-    if (!blurEnabled) return;
+    // ガウシアン・ボックスそれぞれ独立にON/OFFできる。両方ONの場合はボックスを優先する
+    if (!blurEnabled && !boxBlurEnabled) return;
+    bool useBox = boxBlurEnabled;
+    float strength = useBox ? boxBlurStrength : screenBlurStrength;
 
     D3D12_VIEWPORT viewport = dxCommon->GetViewport();
     D3D12_RECT scissorRect = dxCommon->GetScissorRect();
@@ -548,9 +561,9 @@ void PostProcess::DrawFullScreenBlurPass() {
 
     // シーンテクスチャ(resource) -> 水平ブラー(fullBlurHResource) -> 垂直ブラー(fullBlurVResource=最終結果)
     DrawGaussianBlurPass(true, resource.Get(), srvIndex, fullBlurHResource.Get(), kFullBlurHRtvIndex,
-        viewport, scissorRect, texelWidth, texelHeight, screenBlurStrength);
+        viewport, scissorRect, texelWidth, texelHeight, strength, useBox);
     DrawGaussianBlurPass(false, fullBlurHResource.Get(), fullBlurHSrvIndex, fullBlurVResource.Get(), kFullBlurVRtvIndex,
-        viewport, scissorRect, texelWidth, texelHeight, screenBlurStrength);
+        viewport, scissorRect, texelWidth, texelHeight, strength, useBox);
 }
 
 void PostProcess::DrawCompositePass() {
@@ -592,7 +605,7 @@ void PostProcess::DrawCompositePass() {
     float damageVignetteIntensity = damageVignetteRatio * kDamageVignetteMaxBlend;
 
     float compositeParam[7] = {
-        bloomIntensity, grayscaleBlend, sepiaEnabled ? 1.0f : 0.0f, blurEnabled ? 1.0f : 0.0f,
+        bloomIntensity, grayscaleBlend, sepiaEnabled ? 1.0f : 0.0f, (blurEnabled || boxBlurEnabled) ? 1.0f : 0.0f,
         vignetteEnabled ? vignetteIntensity : 0.0f, vignetteRadius, damageVignetteIntensity
     };
     commandList->SetGraphicsRoot32BitConstants(3, 7, compositeParam, 0);

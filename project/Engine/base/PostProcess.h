@@ -57,8 +57,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> CreateBloomTexture(uint32_t width, uint32_t height, uint32_t rtvIndex, uint32_t& outSrvIndex);
 
     void DrawBrightnessExtractPass();
+    // useBoxFilter: trueならガウシアンの代わりにボックスフィルター（均等重み平均）のPSOを使う
     void DrawGaussianBlurPass(bool horizontal, ID3D12Resource* srcResource, uint32_t srcSrvIndex, ID3D12Resource* dstResource, uint32_t dstRtvIndex,
-        D3D12_VIEWPORT viewport, D3D12_RECT scissorRect, float texelWidth, float texelHeight, float strength);
+        D3D12_VIEWPORT viewport, D3D12_RECT scissorRect, float texelWidth, float texelHeight, float strength, bool useBoxFilter = false);
     void DrawCompositePass();
     // 画面全体ぼかしパス（blurEnabled時にシーンテクスチャを水平→垂直の2パスでぼかし、fullBlurVResourceに結果を出す）
     void DrawFullScreenBlurPass();
@@ -98,6 +99,8 @@ private:
     // ガウシアンブラーパイプライン（水平/垂直共通）
     Microsoft::WRL::ComPtr<ID3D12RootSignature> blurRootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> blurPipelineState;
+    // ボックスフィルターパイプライン（blurRootSignatureを共用。画面全体ぼかしでガウシアンと切り替え比較できる）
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> boxBlurPipelineState;
 
     // 合成パイプライン（シーン + ブルーム）
     Microsoft::WRL::ComPtr<ID3D12RootSignature> compositeRootSignature;
@@ -118,9 +121,12 @@ private:
     float grayscaleFlashTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
     static constexpr float kWarpGrayscaleFlashDuration = 0.25f;
 
-    // 画面全体ぼかし（ブルームとは独立管理。Bキーでトグル）
+    // 画面全体ぼかし（ブルームとは独立管理。ガウシアン=Bキー、ボックスはImGuiでそれぞれ独立にON/OFF。
+    // 両方ONの場合はボックスを優先する。ボックスは全タップ均等重みでガウシアンより効きが強いため別々のstrengthを持つ）
     bool blurEnabled = false;
     float screenBlurStrength = 2.0f;
+    bool boxBlurEnabled = false;
+    float boxBlurStrength = 0.4f;
 
     // 画面周辺減光（ヴィネット。Vキーでトグル。調整用に常設）
     bool vignetteEnabled = false;
