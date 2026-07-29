@@ -54,6 +54,10 @@ void GameScene::Initialize() {
     hpBarFill->SetSize({ kHpBarMaxWidth, kHpBarHeight });
     hpBarFill->SetColor({ 0.85f, 0.15f, 0.15f, 1.0f });
 
+    playerHpText.Initialize(framework->GetSpriteCommon(), 3); // 最大3桁("0"-"100")
+    playerHpText.SetPosition(kHpTextPosition);
+    playerHpText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+
     // --- ボスHPバー（画面上部中央、常時表示） ---
     bossHpBarBackground = std::make_unique<Sprite>();
     bossHpBarBackground->Initialize(framework->GetSpriteCommon(), "white");
@@ -189,6 +193,45 @@ void GameScene::Initialize() {
     weaponBarrel->SetModel(cubeModel.get());
     weaponBarrel->SetScale({ 0.03f, 0.03f, 0.16f }); // 本体より細い銃身
     weaponBarrel->SetColor({ 0.05f, 0.05f, 0.05f, 1.0f });
+
+    // --- 設定メニュー（ImGui非依存。Pキーでのポーズ中にキー操作で調整できる） ---
+    {
+        PostProcess* pp = postProcess.get();
+        std::vector<SettingsMenu::Item> menuItems;
+
+        menuItems.push_back({ { 1.0f, 0.6f, 0.1f, 1.0f }, false, 0.0f, 10.0f, 0.05f,
+            [pp] { return pp->GetBloomIntensity(); }, [pp](float v) { pp->SetBloomIntensity(v); } });
+
+        menuItems.push_back({ { 0.3f, 0.7f, 1.0f, 1.0f }, true, 0.0f, 1.0f, 0.0f,
+            [pp] { return pp->IsBlurEnabled() ? 1.0f : 0.0f; },
+            [pp](float v) { if ((v > 0.5f) != pp->IsBlurEnabled()) pp->ToggleBlur(); } });
+        menuItems.push_back({ { 0.3f, 0.7f, 1.0f, 1.0f }, false, 0.0f, 10.0f, 0.05f,
+            [pp] { return pp->GetScreenBlurStrength(); }, [pp](float v) { pp->SetScreenBlurStrength(v); } });
+
+        menuItems.push_back({ { 0.2f, 0.3f, 0.8f, 1.0f }, true, 0.0f, 1.0f, 0.0f,
+            [pp] { return pp->IsBoxBlurEnabled() ? 1.0f : 0.0f; },
+            [pp](float v) { if ((v > 0.5f) != pp->IsBoxBlurEnabled()) pp->ToggleBoxBlur(); } });
+        menuItems.push_back({ { 0.2f, 0.3f, 0.8f, 1.0f }, false, 0.0f, 5.0f, 0.02f,
+            [pp] { return pp->GetBoxBlurStrength(); }, [pp](float v) { pp->SetBoxBlurStrength(v); } });
+
+        menuItems.push_back({ { 0.6f, 0.6f, 0.6f, 1.0f }, true, 0.0f, 1.0f, 0.0f,
+            [pp] { return pp->IsGrayscaleEnabled() ? 1.0f : 0.0f; },
+            [pp](float v) { if ((v > 0.5f) != pp->IsGrayscaleEnabled()) pp->ToggleGrayscale(); } });
+
+        menuItems.push_back({ { 0.55f, 0.35f, 0.15f, 1.0f }, true, 0.0f, 1.0f, 0.0f,
+            [pp] { return pp->IsSepiaEnabled() ? 1.0f : 0.0f; },
+            [pp](float v) { if ((v > 0.5f) != pp->IsSepiaEnabled()) pp->ToggleSepia(); } });
+
+        menuItems.push_back({ { 0.5f, 0.1f, 0.5f, 1.0f }, true, 0.0f, 1.0f, 0.0f,
+            [pp] { return pp->IsVignetteEnabled() ? 1.0f : 0.0f; },
+            [pp](float v) { if ((v > 0.5f) != pp->IsVignetteEnabled()) pp->ToggleVignette(); } });
+        menuItems.push_back({ { 0.5f, 0.1f, 0.5f, 1.0f }, false, 0.0f, 1.0f, 0.01f,
+            [pp] { return pp->GetVignetteIntensity(); }, [pp](float v) { pp->SetVignetteIntensity(v); } });
+        menuItems.push_back({ { 0.5f, 0.1f, 0.5f, 1.0f }, false, 0.0f, 1.0f, 0.01f,
+            [pp] { return pp->GetVignetteRadius(); }, [pp](float v) { pp->SetVignetteRadius(v); } });
+
+        settingsMenu.Initialize(framework->GetSpriteCommon(), std::move(menuItems));
+    }
 
     // 初期状態はプレイ中（マウス非表示・固定）
     isLookPaused = false;
@@ -600,6 +643,7 @@ void GameScene::Update() {
     cameraTransform.rotate.y -= shakeOffsetY;
 
     postProcess->Update(isLookPaused);
+    settingsMenu.Update(input, isLookPaused);
     particleManagerLine->Update();
     particleManagerPoint->Update();
     particleManagerTriangle->Update();
@@ -620,6 +664,8 @@ void GameScene::Update() {
     hpBarFill->SetSize({ kHpBarMaxWidth * hpRatio, kHpBarHeight });
     hpBarBackground->Update();
     hpBarFill->Update();
+    playerHpText.SetText(std::to_string(static_cast<int>(playerHP)));
+    playerHpText.Update();
 
     // ボスHPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める
     float bossHpRatio = bossHP / kBossMaxHP;
@@ -627,6 +673,9 @@ void GameScene::Update() {
     bossHpBarBackground->Update();
     bossHpBarFill->Update();
 
+#ifdef _DEBUG
+    // "FPS Debug"パネルはDebugビルドの開発用（ライト/シャドウ調整等）。
+    // Release/Developmentで調整したい項目はImGui非依存のsettingsMenuの方を使う
     if (isLookPaused) {
         ImGui::Begin("FPS Debug");
         if (ImGui::Button("RESUME GAME (P)")) {
@@ -668,6 +717,7 @@ void GameScene::Update() {
 
         ImGui::End();
     }
+#endif
 }
 
 void GameScene::Draw() {
@@ -734,10 +784,16 @@ void GameScene::Draw() {
     // --- 4. UI（プレイヤーHPバー）の描画 ---
     hpBarBackground->Draw();
     hpBarFill->Draw();
+    playerHpText.Draw();
 
     // --- 5. UI（ボスHPバー）の描画 ---
     bossHpBarBackground->Draw();
     bossHpBarFill->Draw();
+
+    // --- 6. UI（設定メニュー）の描画：Pキーでのポーズ中のみ表示 ---
+    if (isLookPaused) {
+        settingsMenu.Draw();
+    }
 }
 
 void GameScene::Finalize() {

@@ -26,9 +26,11 @@ void MyGame::Draw() {
 	// シーンマネージャ経由で現在のシーンを描画
 	sceneManager->Draw();
 
-	// ImGuiの描画
+	// ImGuiの描画（Debugビルドのみ）
+#ifdef _DEBUG
 	ImGuiManager::GetInstance()->End();
 	ImGuiManager::GetInstance()->Draw();
+#endif
 
 	// 画面表示
 	dxCommon->PostDraw();

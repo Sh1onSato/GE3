@@ -35,6 +35,25 @@ public:
     void ToggleVignette() { vignetteEnabled = !vignetteEnabled; }
     // 被弾時の一瞬赤ヴィネット演出を開始する（TakeDamage()から呼ぶ想定）
     void TriggerDamageVignette() { damageVignetteTimer = kDamageVignetteDuration; }
+    // 画面全体ぼかし（ボックスフィルター版）のON/OFFを切り替える（ガウシアン版のToggleBlur()と対称）
+    void ToggleBoxBlur() { boxBlurEnabled = !boxBlurEnabled; }
+
+    // --- 設定メニュー（SettingsMenu）から値を読み書きするためのアクセサ ---
+    float GetBloomIntensity() const { return bloomIntensity; }
+    void SetBloomIntensity(float v) { bloomIntensity = v; }
+    bool IsBlurEnabled() const { return blurEnabled; }
+    float GetScreenBlurStrength() const { return screenBlurStrength; }
+    void SetScreenBlurStrength(float v) { screenBlurStrength = v; }
+    bool IsBoxBlurEnabled() const { return boxBlurEnabled; }
+    float GetBoxBlurStrength() const { return boxBlurStrength; }
+    void SetBoxBlurStrength(float v) { boxBlurStrength = v; }
+    bool IsGrayscaleEnabled() const { return grayscaleEnabled; }
+    bool IsSepiaEnabled() const { return sepiaEnabled; }
+    bool IsVignetteEnabled() const { return vignetteEnabled; }
+    float GetVignetteIntensity() const { return vignetteIntensity; }
+    void SetVignetteIntensity(float v) { vignetteIntensity = v; }
+    float GetVignetteRadius() const { return vignetteRadius; }
+    void SetVignetteRadius(float v) { vignetteRadius = v; }
 
 private:
     // RTVインデックス（rtvDescriptorHeapの並び）

@@ -26,6 +26,12 @@ public:
 	/// </summary>
 	void CreateInternalWhiteTexture();
 
+	/// <summary>
+	/// 数字("0"-"9")・"."・"-"・空白のグリフアトラス（"digitFont"）を内部で生成する。
+	/// 既に生成済みなら何もしない
+	/// </summary>
+	void CreateInternalDigitFontTexture();
+
 	uint32_t GetTextureIndexByFilePath(const std::string& filePath);
 	uint32_t GetSrvIndex(uint32_t textureIndex) const;
 	D3D12_GPU_DESCRIPTOR_HANDLE GetSrvHandleGPU(uint32_t textureIndex);

@@ -46,7 +46,10 @@ void Framework::Initialize() {
 	input->Initialize(winApp.get());
 
 	AudioManager::GetInstance()->Initialize();
+#ifdef _DEBUG
+	// ImGuiはDebugビルドのみ初期化する（Release/Developmentでは調整UIとして使えないようにするため）
 	ImGuiManager::GetInstance()->Initialize(winApp.get(), dxCommon.get(), srvManager.get());
+#endif
 
 	TextureManager::GetInstance()->Initialize(dxCommon.get(), srvManager.get());
 	ModelManager::GetInstance()->Initialize(dxCommon.get());
@@ -70,7 +73,9 @@ void Framework::Initialize() {
 
 void Framework::Update() {
 	input->Update();
+#ifdef _DEBUG
 	ImGuiManager::GetInstance()->Begin();
+#endif
 	sceneManager->Update();
 }
 
@@ -84,7 +89,9 @@ void Framework::Finalize() {
 	// 解放処理（unique_ptr が自動で行うため delete は不要）
 	
 	AudioManager::GetInstance()->Finalize();
+#ifdef _DEBUG
 	ImGuiManager::GetInstance()->Finalize();
+#endif
 	CloseHandle(dxCommon->GetFenceEvent());
 
 	winApp->Finalize();

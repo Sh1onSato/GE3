@@ -1,6 +1,8 @@
 #pragma once
 #include "BaseScene.h"
 #include "Sprite.h"
+#include "BitmapText.h"
+#include "SettingsMenu.h"
 #include "Object3d.h"
 #include "Skybox.h"
 #include "Model.h"
@@ -156,6 +158,11 @@ private:
 	static constexpr float kHpBarMaxWidth = 300.0f;
 	static constexpr float kHpBarHeight = 24.0f;
 	static constexpr Vector2 kHpBarPosition = { 20.0f, 670.0f }; // 画面左下
+	BitmapText playerHpText; // HPバーの隣に実際の数値を表示（ImGui非依存のビットマップフォント基盤の動作確認を兼ねる）
+	static constexpr Vector2 kHpTextPosition = { kHpBarPosition.x + kHpBarMaxWidth + 12.0f, kHpBarPosition.y };
+
+	// ImGui非依存の設定メニュー（Pキーでのポーズ中のみ操作可能。Releaseビルドでもポストエフェクトを調整できる）
+	SettingsMenu settingsMenu;
 
 	std::unique_ptr<Sprite> bossHpBarBackground = nullptr;
 	std::unique_ptr<Sprite> bossHpBarFill = nullptr;

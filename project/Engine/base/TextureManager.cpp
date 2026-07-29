@@ -1,6 +1,7 @@
 #include "TextureManager.h"
 #include "Logger.h"
 #include <algorithm>
+#include <cstring>
 
 TextureManager* TextureManager::instance = nullptr;
 
@@ -37,6 +38,88 @@ void TextureManager::CreateInternalWhiteTexture() {
 	pixels[1] = 255; // G
 	pixels[2] = 255; // B
 	pixels[3] = 255; // A
+
+	// テクスチャデータを追加
+	textureDatas.resize(textureDatas.size() + 1);
+	TextureData& textureData = textureDatas.back();
+
+	textureData.filePath = name;
+	textureData.metadata = image.GetMetadata();
+	textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
+
+	// SRVの作成
+	textureData.srvIndex = srvManager->Allocate();
+	srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, 1);
+
+	// アップロード
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(), image, dxCommon);
+
+	// コマンド実行と待機
+	hr = dxCommon->GetCommandList()->Close();
+	assert(SUCCEEDED(hr));
+	ID3D12CommandList* commandLists[] = { dxCommon->GetCommandList() };
+	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
+	dxCommon->WaitForGpu();
+
+	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
+	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
+}
+
+void TextureManager::CreateInternalDigitFontTexture() {
+	const std::string name = "digitFont";
+	// 既に存在するかチェック
+	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
+	if (it != textureDatas.end()) return;
+
+	// 5x7ドットマトリクスのビットパターン（1=点灯）。"0"-"9" "." "-" 空白 の順、全13グリフ
+	constexpr int kGlyphCount = 13;
+	constexpr int kGlyphWidth = 5;
+	constexpr int kGlyphHeight = 7;
+	static const uint8_t kGlyphs[kGlyphCount][kGlyphHeight] = {
+		{0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110}, // 0
+		{0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110}, // 1
+		{0b01110,0b10001,0b00001,0b00010,0b00100,0b01000,0b11111}, // 2
+		{0b11111,0b00010,0b00100,0b00010,0b00001,0b10001,0b01110}, // 3
+		{0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010}, // 4
+		{0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110}, // 5
+		{0b00110,0b01000,0b10000,0b11110,0b10001,0b10001,0b01110}, // 6
+		{0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000}, // 7
+		{0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110}, // 8
+		{0b01110,0b10001,0b10001,0b01111,0b00001,0b00010,0b01100}, // 9
+		{0b00000,0b00000,0b00000,0b00000,0b00000,0b01100,0b01100}, // .
+		{0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000}, // -
+		{0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000}, // (空白)
+	};
+
+	// 各グリフは7x9セル（5x7の実体＋周囲1pxの透明パディング）に配置。
+	// パディングはサンプラーが線形補間のため、隣接グリフのにじみ（バイリニアブリーディング）を防ぐ目的
+	constexpr int kCellWidth = kGlyphWidth + 2;
+	constexpr int kCellHeight = kGlyphHeight + 2;
+	const int width = kCellWidth * kGlyphCount;
+	const int height = kCellHeight;
+
+	DirectX::ScratchImage image{};
+	HRESULT hr = image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1);
+	assert(SUCCEEDED(hr));
+
+	uint8_t* pixels = image.GetPixels();
+	std::memset(pixels, 0, static_cast<size_t>(width) * height * 4); // 全体を透明で初期化
+
+	for (int g = 0; g < kGlyphCount; ++g) {
+		for (int row = 0; row < kGlyphHeight; ++row) {
+			for (int col = 0; col < kGlyphWidth; ++col) {
+				bool lit = (kGlyphs[g][row] >> (kGlyphWidth - 1 - col)) & 1;
+				if (!lit) continue;
+				int px = g * kCellWidth + 1 + col; // 1pxパディング
+				int py = 1 + row;
+				int idx = (py * width + px) * 4;
+				pixels[idx + 0] = 255;
+				pixels[idx + 1] = 255;
+				pixels[idx + 2] = 255;
+				pixels[idx + 3] = 255;
+			}
+		}
+	}
 
 	// テクスチャデータを追加
 	textureDatas.resize(textureDatas.size() + 1);

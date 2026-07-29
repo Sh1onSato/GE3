@@ -456,6 +456,9 @@ void PostProcess::Update(bool showDebugUI) {
 
     if (!showDebugUI) return;
 
+#ifdef _DEBUG
+    // Release/DevelopmentではImGuiコンテキスト自体を生成しない（Framework::Initialize参照）ため、
+    // ここに到達するとBegin()がコンテキスト無しで呼ばれてしまう。Debugビルドのみに限定する
     ImGui::Begin("PostProcess");
     ImGui::DragFloat("Bloom Threshold", &bloomThreshold, 0.01f, 0.0f, 5.0f);
     ImGui::DragFloat("Bloom Intensity", &bloomIntensity, 0.01f, 0.0f, 10.0f);
@@ -473,6 +476,7 @@ void PostProcess::Update(bool showDebugUI) {
     ImGui::DragFloat("Vignette Radius", &vignetteRadius, 0.01f, 0.0f, 1.0f);
 
     ImGui::End();
+#endif
 }
 
 void PostProcess::DrawBrightnessExtractPass() {
