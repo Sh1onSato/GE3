@@ -29,6 +29,12 @@ public:
     void ToggleSepia() { sepiaEnabled = !sepiaEnabled; }
     // 画面全体ぼかしのON/OFFを切り替える（キー入力等から呼び出す想定。ブルームとは独立して重ねがけ可能）
     void ToggleBlur() { blurEnabled = !blurEnabled; }
+    // ワープ通過時などに一瞬だけグレースケールを掛ける演出を開始する（手動トグルのgrayscaleEnabledとは独立）
+    void TriggerGrayscaleFlash() { grayscaleFlashTimer = kWarpGrayscaleFlashDuration; }
+    // 画面周辺減光（ヴィネット）のON/OFFを切り替える（キー入力等から呼び出す想定）
+    void ToggleVignette() { vignetteEnabled = !vignetteEnabled; }
+    // 被弾時の一瞬赤ヴィネット演出を開始する（TakeDamage()から呼ぶ想定）
+    void TriggerDamageVignette() { damageVignetteTimer = kDamageVignetteDuration; }
 
 private:
     // RTVインデックス（rtvDescriptorHeapの並び）
@@ -108,9 +114,23 @@ private:
     bool grayscaleEnabled = false; // 合成パスで画面全体をグレースケール化するかどうか
     bool sepiaEnabled = false;     // 合成パスで画面全体をセピア調にするかどうか（グレースケールより優先）
 
+    // ワープ通過時の一瞬グレースケール演出（三角波：前半でフェードイン、後半でフェードアウト）
+    float grayscaleFlashTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
+    static constexpr float kWarpGrayscaleFlashDuration = 0.25f;
+
     // 画面全体ぼかし（ブルームとは独立管理。Bキーでトグル）
     bool blurEnabled = false;
     float screenBlurStrength = 2.0f;
+
+    // 画面周辺減光（ヴィネット。Vキーでトグル。調整用に常設）
+    bool vignetteEnabled = false;
+    float vignetteIntensity = 0.8f; // 0=効果なし、1で端が真っ黒
+    float vignetteRadius = 0.5f;    // ここより中心側は減光しない範囲（0=中心から、1で端のみ）
+
+    // 被弾時の一瞬赤ヴィネット演出（三角波：前半でフェードイン、後半でフェードアウト。上のvignetteとは独立）
+    float damageVignetteTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
+    static constexpr float kDamageVignetteDuration = 0.4f;
+    static constexpr float kDamageVignetteMaxBlend = 0.4f; // 頂点時でも画面が完全な赤一色にならないよう上限を設ける
 
     // 頂点データ (画面全体を覆う板ポリ用)
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource;

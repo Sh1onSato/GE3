@@ -41,6 +41,32 @@ void GameScene::Initialize() {
     // 赤い壁の上でも見えるように「緑色」にする
     reticle->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f });
 
+    // --- プレイヤーHPバー（画面左下、常時表示） ---
+    hpBarBackground = std::make_unique<Sprite>();
+    hpBarBackground->Initialize(framework->GetSpriteCommon(), "white");
+    hpBarBackground->SetPosition(kHpBarPosition);
+    hpBarBackground->SetSize({ kHpBarMaxWidth, kHpBarHeight });
+    hpBarBackground->SetColor({ 0.1f, 0.1f, 0.1f, 0.8f });
+
+    hpBarFill = std::make_unique<Sprite>();
+    hpBarFill->Initialize(framework->GetSpriteCommon(), "white");
+    hpBarFill->SetPosition(kHpBarPosition);
+    hpBarFill->SetSize({ kHpBarMaxWidth, kHpBarHeight });
+    hpBarFill->SetColor({ 0.85f, 0.15f, 0.15f, 1.0f });
+
+    // --- ボスHPバー（画面上部中央、常時表示） ---
+    bossHpBarBackground = std::make_unique<Sprite>();
+    bossHpBarBackground->Initialize(framework->GetSpriteCommon(), "white");
+    bossHpBarBackground->SetPosition(kBossHpBarPosition);
+    bossHpBarBackground->SetSize({ kBossHpBarMaxWidth, kBossHpBarHeight });
+    bossHpBarBackground->SetColor({ 0.1f, 0.1f, 0.1f, 0.8f });
+
+    bossHpBarFill = std::make_unique<Sprite>();
+    bossHpBarFill->Initialize(framework->GetSpriteCommon(), "white");
+    bossHpBarFill->SetPosition(kBossHpBarPosition);
+    bossHpBarFill->SetSize({ kBossHpBarMaxWidth, kBossHpBarHeight });
+    bossHpBarFill->SetColor({ 0.6f, 0.05f, 0.5f, 1.0f });
+
     std::unique_ptr<Camera> newCamera = std::make_unique<Camera>();
     CameraManager::GetInstance()->AddCamera("MainCamera", std::move(newCamera));
     camera = CameraManager::GetInstance()->GetActiveCamera();
@@ -58,19 +84,34 @@ void GameScene::Initialize() {
     floor = std::make_unique<Object3d>();
     floor->Initialize(framework->GetObject3dCommon());
     floor->SetModel(cubeModel.get());
-    floor->SetScale({ 20.0f, 1.0f, 20.0f });
+    floor->SetScale({ 30.0f, 1.0f, 30.0f });
     floor->SetTranslate({ 0.0f, -1.0f, 0.0f });
     floor->SetColor({ 0.5f, 0.5f, 0.5f, 1.0f });
 
     struct WallData { Vector3 pos; Vector3 scale; };
     std::vector<WallData> wallDatas = {
-        { { 0.0f, 1.0f, 20.0f }, { 20.0f, 2.0f, 1.0f } },
-        { { 0.0f, 1.0f, -20.0f }, { 20.0f, 2.0f, 1.0f } },
-        { { 20.0f, 1.0f, 0.0f }, { 1.0f, 2.0f, 20.0f } },
-        { { -20.0f, 1.0f, 0.0f }, { 1.0f, 2.0f, 20.0f } },
-        { { 5.0f, 1.0f, 5.0f }, { 2.0f, 2.0f, 2.0f } },
-        { { -8.0f, 1.0f, -5.0f }, { 3.0f, 2.0f, 1.0f } },
-        { { 0.0f, 1.0f, 0.0f }, { 1.0f, 2.0f, 1.0f } },
+        // --- 外壁（閉じた箱型アリーナの四方。±30に拡張し、1v1ボス戦を見据えた構成） ---
+        // 上下移動(四隅の上段プラットフォーム高さ5.0＋ジャンプ最大加算高さ約3.61=最大到達約8.6)を考慮し、
+        // 場外に出られないよう上端をy=15.0まで引き上げ（下端y=-1.0は床への埋め込みのため変更なし）
+        { { 0.0f, 7.0f, 30.0f }, { 30.0f, 8.0f, 1.0f } },
+        { { 0.0f, 7.0f, -30.0f }, { 30.0f, 8.0f, 1.0f } },
+        { { 30.0f, 7.0f, 0.0f }, { 1.0f, 8.0f, 30.0f } },
+        { { -30.0f, 7.0f, 0.0f }, { 1.0f, 8.0f, 30.0f } },
+        // --- 中央のカバー（十字型に対称配置。中心は空けて見通しを確保しつつ、物陰に隠れられるようにする） ---
+        { { 12.0f, 1.0f, 0.0f }, { 1.5f, 2.0f, 1.5f } },
+        { { -12.0f, 1.0f, 0.0f }, { 1.5f, 2.0f, 1.5f } },
+        { { 0.0f, 1.0f, 12.0f }, { 1.5f, 2.0f, 1.5f } },
+        { { 0.0f, 1.0f, -12.0f }, { 1.5f, 2.0f, 1.5f } },
+        // --- 四隅の2段プラットフォーム（上下を使った戦い用。ジャンプ1回で下段(高さ2.5)、
+        //     さらにもう1回ジャンプで上段(高さ5.0)に登れる高低差にしている） ---
+        { { 14.0f, 1.25f, 14.0f }, { 3.0f, 1.25f, 3.0f } },
+        { { 14.0f, 3.75f, 14.0f }, { 1.5f, 1.25f, 1.5f } },
+        { { -14.0f, 1.25f, 14.0f }, { 3.0f, 1.25f, 3.0f } },
+        { { -14.0f, 3.75f, 14.0f }, { 1.5f, 1.25f, 1.5f } },
+        { { 14.0f, 1.25f, -14.0f }, { 3.0f, 1.25f, 3.0f } },
+        { { 14.0f, 3.75f, -14.0f }, { 1.5f, 1.25f, 1.5f } },
+        { { -14.0f, 1.25f, -14.0f }, { 3.0f, 1.25f, 3.0f } },
+        { { -14.0f, 3.75f, -14.0f }, { 1.5f, 1.25f, 1.5f } },
     };
 
     for (const auto& data : wallDatas) {
@@ -81,6 +122,37 @@ void GameScene::Initialize() {
         wall->SetScale(data.scale);
         walls.push_back(std::move(wall));
     }
+
+    // 敵キャラクター（第一段階：静的な的）を、既存の壁・障害物・プラットフォームと重ならない位置に配置する
+    std::vector<Vector3> enemyPositions = {
+        { 20.0f, 0.75f, 20.0f },
+        { -20.0f, 0.75f, 20.0f },
+        { 20.0f, 0.75f, -20.0f },
+        { -20.0f, 0.75f, -20.0f },
+    };
+    for (const auto& pos : enemyPositions) {
+        EnemyTarget enemy;
+        enemy.object = std::make_unique<Object3d>();
+        enemy.object->Initialize(framework->GetObject3dCommon());
+        enemy.object->SetModel(cubeModel.get());
+        enemy.object->SetTranslate(pos);
+        enemy.object->SetScale({ 0.5f, 0.75f, 0.5f });
+        enemy.object->SetColor({ 1.0f, 0.5f, 0.0f, 1.0f }); // オレンジ色で壁と区別する
+        enemy.isActive = true;
+        enemy.respawnTimer = 0.0f;
+        enemies.push_back(std::move(enemy));
+    }
+
+    // ボス（1v1ボス戦フェーズ2：HP/UIの土台。移動・攻撃AIは次フェーズ）
+    // 中央カバー(±12)・角プラットフォーム(±14)と被らない開けた位置に配置
+    boss = std::make_unique<Object3d>();
+    boss->Initialize(framework->GetObject3dCommon());
+    boss->SetModel(cubeModel.get());
+    // 底面が床(y=0)にちょうど乗るよう、bossPosの足元基準にkBossHalfHeightを足した高さに配置する
+    // （前フェーズではy=1.5決め打ちで底面が1ユニット埋まっていたため、ここで修正）
+    boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
+    boss->SetScale({ 2.0f, 2.5f, 2.0f });
+    boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 紫系でプレイヤー・的と区別する
 
     planeModel = std::make_unique<Model>();
     // plane.obj相当のXY平面(法線+Z、2x2サイズ)をコード内で生成し、外部リソースファイルへの依存をなくす
@@ -124,14 +196,17 @@ void GameScene::Initialize() {
     framework->GetWinApp()->SetClipCursor(true);
 }
 
-bool GameScene::CheckCollision(const Vector3& pos, float* outMaxY) {
-    Vector3 center = { pos.x, pos.y + collisionRadius, pos.z };
+bool GameScene::CheckCollision(const Vector3& pos, float* outMaxY, float radius, Vector3* outPushDir) {
+    float effectiveRadius = (radius > 0.0f) ? radius : collisionRadius;
+    Vector3 center = { pos.x, pos.y + effectiveRadius, pos.z };
     std::vector<Object3d*> colliders;
     if (floor) colliders.push_back(floor.get());
     for (auto& w : walls) colliders.push_back(w.get());
 
     bool isHit = false;
     float highestY = -10000.0f; // 十分低い値
+    float closestDistanceSq = FLT_MAX; // outPushDir用：最もめり込みが深い（＝距離が近い）障害物を探す
+    Vector3 bestPushDir = { 0.0f, 0.0f, 0.0f };
 
     for (Object3d* wall : colliders) {
         if (!wall) continue;
@@ -155,13 +230,26 @@ bool GameScene::CheckCollision(const Vector3& pos, float* outMaxY) {
         float dz = center.z - closestZ;
         float distanceSq = dx * dx + dy * dy + dz * dz;
 
-        if (distanceSq <= collisionRadius * collisionRadius) {
+        if (distanceSq <= effectiveRadius * effectiveRadius) {
             isHit = true;
             if (maxY > highestY) {
                 highestY = maxY;
             }
+
+            if (outPushDir && distanceSq < closestDistanceSq) {
+                closestDistanceSq = distanceSq;
+                if (distanceSq > 0.0001f) {
+                    float dist = std::sqrt(distanceSq);
+                    bestPushDir = { dx / dist, dy / dist, dz / dist };
+                } else {
+                    // 中心がちょうど面/辺/角の真上にある特異点。呼び出し側でゼロ扱いにする
+                    bestPushDir = { 0.0f, 0.0f, 0.0f };
+                }
+            }
         }
     }
+
+    if (outPushDir) *outPushDir = bestPushDir;
 
     if (outMaxY) *outMaxY = highestY;
     return isHit;
@@ -200,10 +288,15 @@ void GameScene::Update() {
         postProcess->ToggleBlur();
     }
 
+    // --- 画面周辺減光（ヴィネット）の切り替え（Vキー） ---
+    if (input->TriggerKey(DIK_V)) {
+        postProcess->ToggleVignette();
+    }
+
     // --- ポーズ切り替え（Pキー） ---
     if (input->TriggerKey(DIK_P)) {
         isLookPaused = !isLookPaused;
-        
+
         // 状態に合わせてマウスの表示・固定を切り替え
         if (isLookPaused) {
             winApp->ShowCursor(true);
@@ -214,9 +307,38 @@ void GameScene::Update() {
         }
     }
 
+    // --- プレイヤーHPのテストダメージ（Nキー。ボス未実装のため動作確認用の仮トリガー） ---
+    if (input->TriggerKey(DIK_N)) {
+        TakeDamage(kTestDamageAmount);
+    }
+
+    // --- 武器モード切り替え（1:ライフル／2:ポータルガン） ---
+    if (input->TriggerKey(DIK_1)) {
+        weaponMode = WeaponMode::kRifle;
+    }
+    if (input->TriggerKey(DIK_2)) {
+        weaponMode = WeaponMode::kPortalGun;
+    }
+
+    // --- ポータルガンの操作（左クリック:青ポータル／右クリック:オレンジポータル／R:リセット） ---
+    if (!isLookPaused && weaponMode == WeaponMode::kPortalGun) {
+        if (input->TriggerMouseButton(0) && !portalA.isPlaced) {
+            PlacePortal(portalA);
+        }
+        if (input->TriggerMouseButton(1) && !portalB.isPlaced) {
+            PlacePortal(portalB);
+        }
+        if (input->TriggerKey(DIK_R)) {
+            portalA.isPlaced = false;
+            portalB.isPlaced = false;
+            if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+            if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+        }
+    }
+
     // 移動方向の計算
     const float moveSpeed = 0.15f;
-    Vector3 moveDir = { 0, 0, 0 };
+    moveDir = { 0, 0, 0 };
     Vector3 forward = { std::sin(cameraTransform.rotate.y), 0.0f, std::cos(cameraTransform.rotate.y) };
     Vector3 right = { std::cos(cameraTransform.rotate.y), 0.0f, -std::sin(cameraTransform.rotate.y) };
 
@@ -227,6 +349,13 @@ void GameScene::Update() {
 
     if (Calculation::Length(moveDir) > 0) {
         moveDir = Calculation::Normalize(moveDir) * moveSpeed;
+    }
+
+    // テレポート直後の勢いを、減衰させながら移動方向へ加算する
+    if (portalExitVelocityTimer > 0.0f) {
+        moveDir += portalExitVelocity * (portalExitVelocityTimer / kPortalExitVelocityDuration);
+        portalExitVelocityTimer -= 1.0f / 60.0f;
+        if (portalExitVelocityTimer < 0.0f) portalExitVelocityTimer = 0.0f;
     }
 
     const float kGravity = -0.02f;
@@ -283,6 +412,9 @@ void GameScene::Update() {
     Vector3 nextPosY = playerPos;
     nextPosY.y += velocity.y;
     float hitHeight = 0.0f;
+    // ポータルのテレポートに使う「勢いの継承」は、Y軸の衝突判定でvelocity.yが
+    // 0にリセットされる前の値（重力・ジャンプ適用後の値）を使いたいので、ここで確保しておく
+    float preCollisionVelocityY = velocity.y;
     if (!CheckCollision(nextPosY, &hitHeight)) {
         playerPos.y = nextPosY.y;
     } else {
@@ -297,6 +429,10 @@ void GameScene::Update() {
         velocity.y = 0;
     }
 
+    // --- ポータルのテレポート判定 ---
+    // X/Y/Z全ての移動・衝突判定が終わりplayerPosが確定した後に呼ぶ
+    UpdatePortalTeleport(preCollisionVelocityY);
+
     // --- ヒットフラッシュの更新 ---
     for (auto it = hitFlashes.begin(); it != hitFlashes.end(); ) {
         it->timer -= 1.0f / 60.0f;
@@ -307,6 +443,119 @@ void GameScene::Update() {
         } else {
             ++it;
         }
+    }
+
+    // --- 敵ターゲットの復活タイマー更新 ---
+    for (auto& enemy : enemies) {
+        if (!enemy.isActive) {
+            enemy.respawnTimer -= 1.0f / 60.0f;
+            if (enemy.respawnTimer <= 0.0f) {
+                enemy.isActive = true;
+            }
+        }
+    }
+
+    // --- ボスの移動AI（常に追いかける。距離が遠いほど速く、HPが減るほど怒り状態で速くなる） ---
+    // playerPosがポータル移動も含めて確定した後（UpdatePortalTeleport済み）に計算する
+    {
+        Vector3 toPlayer = { playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z };
+        float distance = Calculation::Length(toPlayer);
+
+        if (distance > kBossStopDistance) {
+            float distanceT = std::clamp((distance - kBossStopDistance) / (kBossFarDistance - kBossStopDistance), 0.0f, 1.0f);
+            float baseSpeed = kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
+
+            float hpRatio = bossHP / kBossMaxHP;
+            float enrageMultiplier = 1.0f + (kBossEnrageMaxMultiplier - 1.0f) * (1.0f - hpRatio);
+
+            float bossMoveSpeed = baseSpeed * enrageMultiplier;
+            Vector3 dir = Calculation::Normalize(toPlayer);
+            Vector3 moveDelta = { dir.x * bossMoveSpeed, 0.0f, dir.z * bossMoveSpeed };
+
+            const float kGroundOffset = 0.05f; // 床との判定を避けるためのオフセット（プレイヤー側と同じ手法）
+
+            // まずは直進を試す
+            Vector3 nextBossPos = bossPos;
+            nextBossPos.x += moveDelta.x;
+            nextBossPos.z += moveDelta.z;
+            Vector3 checkBossPos = nextBossPos;
+            checkBossPos.y += kGroundOffset;
+
+            bool bossMoved = false;
+            Vector3 pushDir{};
+            if (!CheckCollision(checkBossPos, nullptr, kBossCollisionRadius, &pushDir)) {
+                // 直進が通る＝障害物との接触が途切れたので、回避方向の保持を解除して直進に戻る
+                bossAvoiding = false;
+                bossPos = nextBossPos;
+                bossMoved = true;
+            } else {
+                // 直進すると衝突する場合、実際に当たっている面の法線(pushDir)を使って壁沿いに滑らせる。
+                // 直進方向から法線成分を取り除く（平面へ射影する）ことで、当たっている方向"以外"の
+                // 成分だけが残り、具体的にどの障害物のどの面に当たっているかに応じて自然に回り込める
+                // （左右をプレイヤーの位置関係だけで決め打ちする方式は、たまたま選んだ側が塞がっている
+                // 袋小路で永久に詰んでしまう問題があったため、実際の衝突面を見る方式に変更した）
+                // ただし衝突が続いている間、毎フレーム滑り方向を再計算すると角でガクつくため、
+                // 塞がった最初のフレームだけ計算してbossAvoidDirに保持し、以後はそれを使い続ける。
+                if (!bossAvoiding && (pushDir.x != 0.0f || pushDir.z != 0.0f)) {
+                    Vector3 normal = { pushDir.x, 0.0f, pushDir.z };
+                    float normalLen = Calculation::Length(normal);
+                    if (normalLen > 0.0001f) {
+                        normal = { normal.x / normalLen, 0.0f, normal.z / normalLen };
+                        float dot = dir.x * normal.x + dir.z * normal.z;
+                        Vector3 slideDir = { dir.x - dot * normal.x, 0.0f, dir.z - dot * normal.z };
+                        float slideLen = Calculation::Length(slideDir);
+                        if (slideLen > 0.0001f) {
+                            slideDir = { slideDir.x / slideLen, 0.0f, slideDir.z / slideLen };
+                            bossAvoidDir = slideDir;
+                            bossAvoiding = true;
+                        }
+                    }
+                }
+
+                if (bossAvoiding) {
+                    Vector3 slidePos = bossPos;
+                    slidePos.x += bossAvoidDir.x * bossMoveSpeed;
+                    slidePos.z += bossAvoidDir.z * bossMoveSpeed;
+                    Vector3 checkSlidePos = slidePos;
+                    checkSlidePos.y += kGroundOffset;
+                    if (!CheckCollision(checkSlidePos, nullptr, kBossCollisionRadius)) {
+                        bossPos = slidePos;
+                        bossMoved = true;
+                    } else {
+                        // 保持していた回避方向が別の障害物に塞がれて進めなかった場合、
+                        // そのまま保持し続けると恒久的に詰むため、保持を解除して次フレームで再計算させる
+                        bossAvoiding = false;
+                    }
+                }
+            }
+
+            // 詰み検出＆後退フォールバック：直進もスライドも失敗する状態が一定時間続いたら、
+            // プレイヤーから離れる方向へ後退を試みて角・隅の膠着から抜け出す（試行4の常時左右交互とは異なり、
+            // あくまで最終手段としてのみ発動する）
+            if (!bossMoved) {
+                bossStuckTimer += 1.0f / 60.0f;
+                if (bossStuckTimer > kBossStuckRetreatDelay) {
+                    Vector3 retreatPos = bossPos;
+                    retreatPos.x -= dir.x * bossMoveSpeed;
+                    retreatPos.z -= dir.z * bossMoveSpeed;
+                    Vector3 checkRetreatPos = retreatPos;
+                    checkRetreatPos.y += kGroundOffset;
+                    if (!CheckCollision(checkRetreatPos, nullptr, kBossCollisionRadius)) {
+                        bossPos = retreatPos;
+                        bossAvoiding = false;   // 後退後は仕切り直して直進から再判定させる
+                        bossMoved = true;       // 動けたので詰み扱いを解除する
+                        bossStuckTimer = 0.0f;  // このifブロックはbossMoved=false時にしか実行されないため明示的にリセットが必要
+                    }
+                }
+            } else {
+                bossStuckTimer = 0.0f;
+            }
+
+            // 移動方向へ向きを合わせる（プレイヤーのforwardベクトルと同じsin/cos規約）
+            boss->SetRotate({ 0.0f, std::atan2(dir.x, dir.z), 0.0f });
+        }
+
+        boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
     }
 
     cameraTransform.translate = { playerPos.x, playerPos.y + eyeHeight, playerPos.z };
@@ -338,8 +587,8 @@ void GameScene::Update() {
     // このフレームのカメラ位置に対応したビュー行列を参照できるようにするため）
     camera->Update();
 
-    // --- 射撃処理 ---
-    if (!isLookPaused && input->TriggerMouseButton(0)) {
+    // --- 射撃処理（ライフルモードの時のみ。ポータルガンモードの左右クリックは上で処理済み） ---
+    if (!isLookPaused && weaponMode == WeaponMode::kRifle && input->TriggerMouseButton(0)) {
         FireShot();
     }
 
@@ -357,8 +606,26 @@ void GameScene::Update() {
     skybox->Update();
     floor->Update();
     for (auto& wall : walls) { wall->Update(); }
+    for (auto& enemy : enemies) { enemy.object->Update(); }
+    boss->Update();
     for (auto& decal : bulletDecals) { decal->Update(); }
+    // 過去に敵ターゲットでUpdate()呼び忘れによりWVP行列が更新されず巨大に固定表示された
+    // バグがあったため、ポータルの見た目も他のObject3dと同様に毎フレームUpdate()を呼ぶ
+    if (portalA.visual) portalA.visual->Update();
+    if (portalB.visual) portalB.visual->Update();
     reticle->Update();
+
+    // HPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める（背景は常にフル幅のまま）
+    float hpRatio = playerHP / kPlayerMaxHP;
+    hpBarFill->SetSize({ kHpBarMaxWidth * hpRatio, kHpBarHeight });
+    hpBarBackground->Update();
+    hpBarFill->Update();
+
+    // ボスHPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める
+    float bossHpRatio = bossHP / kBossMaxHP;
+    bossHpBarFill->SetSize({ kBossHpBarMaxWidth * bossHpRatio, kBossHpBarHeight });
+    bossHpBarBackground->Update();
+    bossHpBarFill->Update();
 
     if (isLookPaused) {
         ImGui::Begin("FPS Debug");
@@ -413,6 +680,8 @@ void GameScene::Draw() {
     Matrix4x4 lightViewProjection = object3dCommon->GetLightViewProjection();
     floor->DrawShadow(lightViewProjection);
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
+    for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->DrawShadow(lightViewProjection); }
+    if (boss) boss->DrawShadow(lightViewProjection);
     object3dCommon->PostDrawShadow();
 
     // --- 1. ポストプロセス用のオフスクリーンレンダリング開始 ---
@@ -427,7 +696,12 @@ void GameScene::Draw() {
     framework->GetObject3dCommon()->PreDraw();
     floor->Draw();
     for (auto& wall : walls) { wall->Draw(); }
+    for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->Draw(); }
+    if (boss) boss->Draw();
     for (auto& decal : bulletDecals) { decal->Draw(); }
+    // ワープポータル（薄い板なのでシャドウパスには含めない）
+    if (portalA.isPlaced) portalA.visual->Draw();
+    if (portalB.isPlaced) portalB.visual->Draw();
 
     // パーティクルの描画（点・線・面、それぞれ別のPSOで描画する）
     framework->GetParticleCommon()->PreDraw(particleManagerLine->GetDrawType());
@@ -456,6 +730,14 @@ void GameScene::Draw() {
     // スプライトを描く前にもう一度 SpriteCommon::PreDraw を呼ぶ必要がある
     framework->GetSpriteCommon()->PreDraw();
     reticle->Draw();
+
+    // --- 4. UI（プレイヤーHPバー）の描画 ---
+    hpBarBackground->Draw();
+    hpBarFill->Draw();
+
+    // --- 5. UI（ボスHPバー）の描画 ---
+    bossHpBarBackground->Draw();
+    bossHpBarFill->Draw();
 }
 
 void GameScene::Finalize() {
@@ -468,6 +750,22 @@ void GameScene::TriggerCameraShake(float duration, float strength) {
     cameraShakeTimer = duration;
     cameraShakeDuration = duration;
     cameraShakeStrength = strength;
+}
+
+void GameScene::TakeDamage(float amount) {
+    playerHP -= amount;
+    if (playerHP < 0.0f) {
+        playerHP = 0.0f;
+    }
+    TriggerCameraShake(kPlayerDamageShakeDuration, kPlayerDamageShakeStrength);
+    postProcess->TriggerDamageVignette();
+}
+
+void GameScene::DamageBoss(float amount) {
+    bossHP -= amount;
+    if (bossHP < 0.0f) {
+        bossHP = 0.0f;
+    }
 }
 
 void GameScene::FireShot() {
@@ -613,24 +911,15 @@ void GameScene::FireShot() {
     std::vector<Object3d*> targets;
     if (floor) targets.push_back(floor.get());
     for (auto& w : walls) targets.push_back(w.get());
+    for (auto& enemy : enemies) {
+        if (enemy.isActive) targets.push_back(enemy.object.get());
+    }
+    if (boss) targets.push_back(boss.get());
 
-    Object3d* closestObject = nullptr;
-    float minDistance = FLT_MAX;
-    RaycastHit hit;
     RaycastHit closestHit;
     AABB closestAABB{};
-
-    for (Object3d* obj : targets) {
-        AABB aabb = GetAABB(*obj);
-        if (Calculation::TestRayAABB(ray, aabb, &hit)) {
-            if (hit.distance < minDistance) {
-                minDistance = hit.distance;
-                closestObject = obj;
-                closestHit = hit;
-                closestAABB = aabb;
-            }
-        }
-    }
+    Object3d* closestObject = nullptr;
+    RaycastClosest(ray, targets, &closestHit, &closestAABB, &closestObject);
 
     if (closestObject) {
         // ヒットした場合の演出
@@ -807,31 +1096,51 @@ void GameScene::FireShot() {
             }
         }
 
-        SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
-
-        // 2. 壁の色を一時的に変える
-        auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
-            return f.object == closestObject;
+        // 敵ターゲット（的）へのヒットかどうかを判定する
+        auto enemyIt = std::find_if(enemies.begin(), enemies.end(), [&](const EnemyTarget& e) {
+            return e.object.get() == closestObject;
         });
 
-        if (it != hitFlashes.end()) {
-            // 既にフラッシュ中ならタイマーをリセット
-            it->timer = 0.2f;
+        if (enemyIt != enemies.end()) {
+            // 的にヒットした場合：弾痕デカール・赤フラッシュは行わず、非アクティブ化して復活待ちにする
+            enemyIt->isActive = false;
+            enemyIt->respawnTimer = kEnemyRespawnDelay;
+
+            // カメラシェイク：的でも命中の「重み」を出す
+            TriggerCameraShake(kHitShakeDuration, kHitShakeStrength);
+
+            Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         } else {
-            // 新しくフラッシュを開始
-            HitFlash flash;
-            flash.object = closestObject;
-            flash.timer = 0.2f;
-            flash.originalColor = closestObject->GetColor();
-            hitFlashes.push_back(flash);
+            if (closestObject == boss.get()) {
+                DamageBoss(kBossDamagePerShot);
+            }
+
+            SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
+
+            // 2. 壁の色を一時的に変える
+            auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
+                return f.object == closestObject;
+            });
+
+            if (it != hitFlashes.end()) {
+                // 既にフラッシュ中ならタイマーをリセット
+                it->timer = 0.2f;
+            } else {
+                // 新しくフラッシュを開始
+                HitFlash flash;
+                flash.object = closestObject;
+                flash.timer = 0.2f;
+                flash.originalColor = closestObject->GetColor();
+                hitFlashes.push_back(flash);
+            }
+
+            closestObject->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 赤くする
+
+            // 3. カメラシェイク：発砲時より少し大きく揺らして命中の「重み」を出す
+            TriggerCameraShake(kHitShakeDuration, kHitShakeStrength);
+
+            Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         }
-
-        closestObject->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 赤くする
-
-        // 3. カメラシェイク：発砲時より少し大きく揺らして命中の「重み」を出す
-        TriggerCameraShake(kHitShakeDuration, kHitShakeStrength);
-
-        Logger::Log("Hit! Distance: " + std::to_string(minDistance) + "\n");
     } else {
         Logger::Log("Miss...\n");
     }
@@ -938,4 +1247,185 @@ AABB GameScene::GetAABB(const Object3d& object) {
     aabb.min = { t.translate.x - t.scale.x, t.translate.y - t.scale.y, t.translate.z - t.scale.z };
     aabb.max = { t.translate.x + t.scale.x, t.translate.y + t.scale.y, t.translate.z + t.scale.z };
     return aabb;
+}
+
+bool GameScene::RaycastClosest(const Ray& ray, const std::vector<Object3d*>& targets, RaycastHit* outHit, AABB* outAABB, Object3d** outObject) {
+    Object3d* closestObject = nullptr;
+    float minDistance = FLT_MAX;
+    RaycastHit hit;
+    RaycastHit closestHit;
+    AABB closestAABB{};
+
+    for (Object3d* obj : targets) {
+        AABB aabb = GetAABB(*obj);
+        if (Calculation::TestRayAABB(ray, aabb, &hit)) {
+            if (hit.distance < minDistance) {
+                minDistance = hit.distance;
+                closestObject = obj;
+                closestHit = hit;
+                closestAABB = aabb;
+            }
+        }
+    }
+
+    if (!closestObject) {
+        return false;
+    }
+
+    if (outHit) *outHit = closestHit;
+    if (outAABB) *outAABB = closestAABB;
+    if (outObject) *outObject = closestObject;
+    return true;
+}
+
+void GameScene::PlacePortal(Portal& portal) {
+    Transform camTrans = camera->GetTransform();
+
+    // カメラの回転から前方ベクトルを計算（FireShot()と同じ計算式）
+    Vector3 direction;
+    direction.x = std::cos(camTrans.rotate.x) * std::sin(camTrans.rotate.y);
+    direction.y = std::sin(-camTrans.rotate.x);
+    direction.z = std::cos(camTrans.rotate.x) * std::cos(camTrans.rotate.y);
+    direction = Calculation::Normalize(direction);
+
+    Ray ray = { camTrans.translate, direction };
+
+    // ポータルは床・壁にのみ設置できる（的は対象外）。
+    // ボスは設置面にはしないが、視線を遮る遮蔽物としてはレイキャスト対象に含める必要がある
+    // （含めないと、ボスに照準を合わせた時にボスの奥の壁まで貫通判定されてしまい、
+    //   ボスの陰に隠れて見えない位置にポータルが設置＝isPlacedだけtrueになる不具合が起きる）
+    std::vector<Object3d*> targets;
+    if (floor) targets.push_back(floor.get());
+    for (auto& w : walls) targets.push_back(w.get());
+    if (boss) targets.push_back(boss.get());
+
+    RaycastHit hit;
+    AABB hitAABB{};
+    Object3d* hitObject = nullptr;
+    if (!RaycastClosest(ray, targets, &hit, &hitAABB, &hitObject)) {
+        return; // 何もヒットしなければ設置しない
+    }
+    if (hitObject == boss.get()) {
+        return; // ボスは遮蔽物としてレイを止めるだけで、設置面にはしない
+    }
+
+    Vector3 normal = hit.normal;
+    if (normal.x == 0.0f && normal.y == 0.0f && normal.z == 0.0f) {
+        // 法線が取れていない場合は入射方向の逆向きで代用（FireShot()と同じフォールバック）
+        normal = { -direction.x, -direction.y, -direction.z };
+    }
+    normal = Calculation::Normalize(normal);
+
+    // Zファイティング回避のため法線方向に少しオフセット（SpawnBulletDecalと同じ手法）
+    portal.position = {
+        hit.hitPoint.x + normal.x * 0.02f,
+        hit.hitPoint.y + normal.y * 0.02f,
+        hit.hitPoint.z + normal.z * 0.02f,
+    };
+    portal.normal = normal;
+    portal.orientation = Calculation::DirectionToDirection({ 0.0f, 0.0f, 1.0f }, normal);
+    portal.isPlaced = true;
+
+    if (!portal.visual) {
+        Framework* framework = Framework::GetInstance();
+        portal.visual = std::make_unique<Object3d>();
+        portal.visual->Initialize(framework->GetObject3dCommon());
+        portal.visual->SetModel(planeModel.get());
+    }
+
+    portal.visual->SetRotateQuaternion(portal.orientation);
+
+    // SpawnBulletDecalと同じ要領で、当たった面(AABB)の端からはみ出す分だけスケールを縮小する。
+    // デカール(0.15)よりずっと大きく、プレイヤーが通れるサイズ感にする。
+    const float kPortalHalfSize = 1.5f;
+
+    auto EdgeScale = [](float pos, float minV, float maxV, float halfSize) {
+        float availableHalf = (std::min)(pos - minV, maxV - pos);
+        return std::clamp(availableHalf / halfSize, 0.25f, 1.0f);
+    };
+
+    float scaleLocalX;
+    float scaleLocalY;
+    if (std::abs(normal.x) > 0.5f) {
+        scaleLocalX = EdgeScale(portal.position.z, hitAABB.min.z, hitAABB.max.z, kPortalHalfSize);
+        scaleLocalY = EdgeScale(portal.position.y, hitAABB.min.y, hitAABB.max.y, kPortalHalfSize);
+    } else if (std::abs(normal.y) > 0.5f) {
+        scaleLocalX = EdgeScale(portal.position.x, hitAABB.min.x, hitAABB.max.x, kPortalHalfSize);
+        scaleLocalY = EdgeScale(portal.position.z, hitAABB.min.z, hitAABB.max.z, kPortalHalfSize);
+    } else {
+        scaleLocalX = EdgeScale(portal.position.x, hitAABB.min.x, hitAABB.max.x, kPortalHalfSize);
+        scaleLocalY = EdgeScale(portal.position.y, hitAABB.min.y, hitAABB.max.y, kPortalHalfSize);
+    }
+    portal.visual->SetScale({ kPortalHalfSize * scaleLocalX, kPortalHalfSize * scaleLocalY, kPortalHalfSize });
+    portal.visual->SetTranslate(portal.position);
+
+    // portalAは青、portalBはオレンジで区別する
+    Vector4 color = (&portal == &portalA)
+        ? Vector4{ 0.2f, 0.5f, 1.0f, 1.0f }
+        : Vector4{ 1.0f, 0.55f, 0.1f, 1.0f };
+    portal.visual->SetColor(color);
+}
+
+Vector3 GameScene::TransformThroughPortal(const Portal& from, const Portal& to, const Vector3& v) {
+    // 1. fromの姿勢を打ち消して正規化空間（法線+Z基準）に戻す
+    Quaternion undoFrom = Calculation::Conjugate(from.orientation);
+    // 2. 正規化空間内でY軸まわりに180度回転させる（ポータルの表裏を反転させ、
+    //    入ってきた勢いを出口の向こう側へ抜けるように反転させる）
+    Quaternion flip180 = Calculation::MakeAxisAngleQuaternion({ 0.0f, 1.0f, 0.0f }, 3.14159265358979323846f);
+    // 3. toの姿勢でワールド空間に戻す
+    // Calculation::Multiply(a, b) は「bを先に適用してからaを適用する」合成になる
+    // （Object3d::SetRotate()のオイラー→クォータニオン合成と同じ規則）ため、
+    // 適用したい順（undoFrom→flip180→to.orientation）と逆の並びで呼び出す。
+    Quaternion combined = Calculation::Multiply(to.orientation, Calculation::Multiply(flip180, undoFrom));
+
+    Matrix4x4 rotateMatrix = Calculation::MakeRotateMatrix(combined);
+    return Calculation::Transform(v, rotateMatrix);
+}
+
+void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
+    if (portalCooldownTimer > 0.0f) {
+        portalCooldownTimer -= 1.0f / 60.0f;
+        return;
+    }
+
+    if (!(portalA.isPlaced && portalB.isPlaced)) {
+        return;
+    }
+
+    const Portal* entry = nullptr;
+    const Portal* exit = nullptr;
+    // playerPosは足元の座標のため、目線の高さ付近など体の途中に設置されたポータルとの距離を
+    // 単純に測ると立っているだけでは届かない（ジャンプで足元が浮いた時だけ偶然届いてしまう）。
+    // 足元(playerPos.y)〜頭(playerPos.y+eyeHeight)の区間上でポータルに最も近い点を求めて判定する。
+    auto ClosestPointOnBody = [this](const Vector3& portalPos) {
+        float clampedY = std::clamp(portalPos.y, playerPos.y, playerPos.y + eyeHeight);
+        return Vector3{ playerPos.x, clampedY, playerPos.z };
+    };
+    if (Calculation::Length(ClosestPointOnBody(portalA.position) - portalA.position) < kPortalRadius) {
+        entry = &portalA;
+        exit = &portalB;
+    } else if (Calculation::Length(ClosestPointOnBody(portalB.position) - portalB.position) < kPortalRadius) {
+        entry = &portalB;
+        exit = &portalA;
+    }
+
+    if (!entry) {
+        return;
+    }
+
+    Vector3 intent = { moveDir.x, preCollisionVelocityY, moveDir.z };
+    Vector3 exitVector = TransformThroughPortal(*entry, *exit, intent);
+
+    playerPos = {
+        exit->position.x + exit->normal.x * (collisionRadius + 0.1f),
+        exit->position.y + exit->normal.y * (collisionRadius + 0.1f),
+        exit->position.z + exit->normal.z * (collisionRadius + 0.1f),
+    };
+    velocity.y = exitVector.y;
+    portalExitVelocity = { exitVector.x, 0.0f, exitVector.z };
+    portalExitVelocityTimer = kPortalExitVelocityDuration;
+    portalCooldownTimer = kPortalTeleportCooldown;
+
+    // ワープ通過の瞬間、Apex/Titanfallのフェイズ移動のような一瞬のグレースケール演出を入れる
+    postProcess->TriggerGrayscaleFlash();
 }

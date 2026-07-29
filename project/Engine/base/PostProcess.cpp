@@ -166,8 +166,8 @@ void PostProcess::CreateGraphicsPipeline() {
 
     rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    rootParameters[3].Constants.ShaderRegister = 0; // b0: bloomIntensity, grayscaleフラグ, sepiaフラグ, blurEnabledフラグ
-    rootParameters[3].Constants.Num32BitValues = 4;
+    rootParameters[3].Constants.ShaderRegister = 0; // b0: bloomIntensity, grayscaleフラグ, sepiaフラグ, blurEnabledフラグ, vignetteIntensity, vignetteRadius, damageVignetteIntensity
+    rootParameters[3].Constants.Num32BitValues = 7;
 
     D3D12_STATIC_SAMPLER_DESC staticSamplers[1] = {};
     staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -436,6 +436,16 @@ void PostProcess::PostDraw() {
 }
 
 void PostProcess::Update(bool showDebugUI) {
+    // グレースケール・フラッシュ／被弾ヴィネットのタイマーはデバッグUI表示状態に関係なく常に進める
+    if (grayscaleFlashTimer > 0.0f) {
+        grayscaleFlashTimer -= 1.0f / 60.0f;
+        if (grayscaleFlashTimer < 0.0f) grayscaleFlashTimer = 0.0f;
+    }
+    if (damageVignetteTimer > 0.0f) {
+        damageVignetteTimer -= 1.0f / 60.0f;
+        if (damageVignetteTimer < 0.0f) damageVignetteTimer = 0.0f;
+    }
+
     if (!showDebugUI) return;
 
     ImGui::Begin("PostProcess");
@@ -446,6 +456,11 @@ void PostProcess::Update(bool showDebugUI) {
     ImGui::Separator();
     ImGui::Checkbox("Screen Blur Enabled", &blurEnabled);
     ImGui::DragFloat("Screen Blur Strength", &screenBlurStrength, 0.01f, 0.0f, 10.0f);
+
+    ImGui::Separator();
+    ImGui::Checkbox("Vignette Enabled", &vignetteEnabled);
+    ImGui::DragFloat("Vignette Intensity", &vignetteIntensity, 0.01f, 0.0f, 1.0f);
+    ImGui::DragFloat("Vignette Radius", &vignetteRadius, 0.01f, 0.0f, 1.0f);
 
     ImGui::End();
 }
@@ -562,8 +577,25 @@ void PostProcess::DrawCompositePass() {
     commandList->SetGraphicsRootDescriptorTable(1, srvManager->GetGPUDescriptorHandle(blurVSrvIndex));
     commandList->SetGraphicsRootDescriptorTable(2, srvManager->GetGPUDescriptorHandle(fullBlurVSrvIndex));
 
-    float compositeParam[4] = { bloomIntensity, grayscaleEnabled ? 1.0f : 0.0f, sepiaEnabled ? 1.0f : 0.0f, blurEnabled ? 1.0f : 0.0f };
-    commandList->SetGraphicsRoot32BitConstants(3, 4, compositeParam, 0);
+    // グレースケール・フラッシュは三角波（前半0→1でフェードイン、後半1→0でフェードアウト）で強さを求め、
+    // 手動トグル(grayscaleEnabled)とは独立させつつ、どちらか強い方を採用する
+    float grayscaleFlashRatio = 0.0f;
+    if (grayscaleFlashTimer > 0.0f) {
+        float t = 1.0f - (grayscaleFlashTimer / kWarpGrayscaleFlashDuration); // 0(開始)→1(終了)
+        grayscaleFlashRatio = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
+    }
+    float grayscaleBase = grayscaleEnabled ? 1.0f : 0.0f;
+    float grayscaleBlend = (grayscaleFlashRatio > grayscaleBase) ? grayscaleFlashRatio : grayscaleBase;
+
+    // 被弾ヴィネットはグレースケール・フラッシュ（三角波）とは異なり、被弾直後に最大→時間経過で薄くなる単純な減衰
+    float damageVignetteRatio = damageVignetteTimer / kDamageVignetteDuration; // 1(開始)→0(終了)
+    float damageVignetteIntensity = damageVignetteRatio * kDamageVignetteMaxBlend;
+
+    float compositeParam[7] = {
+        bloomIntensity, grayscaleBlend, sepiaEnabled ? 1.0f : 0.0f, blurEnabled ? 1.0f : 0.0f,
+        vignetteEnabled ? vignetteIntensity : 0.0f, vignetteRadius, damageVignetteIntensity
+    };
+    commandList->SetGraphicsRoot32BitConstants(3, 7, compositeParam, 0);
 
     commandList->DrawInstanced(4, 1, 0, 0);
 }

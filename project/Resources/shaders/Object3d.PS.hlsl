@@ -57,9 +57,51 @@ Texture2D<float> gShadowMap : register(t1);
 SamplerComparisonState gShadowSampler : register(s1);
 
 // ディレクショナルライトのシャドウ係数を計算する（1.0=影なし、0.0=完全に影）
-static const float kShadowMapTexelSize = 1.0f / 4096.0f;
+// PCSS(Percentage-Closer Soft Shadows)風に、遮蔽物と受光面の距離が離れているほど影の輪郭をぼかす
+static const float kShadowMapResolution = 4096.0f;
+static const float kShadowMapTexelSize = 1.0f / kShadowMapResolution;
 // 法線方向のオフセット量（壁のように光に対してほぼ真横を向く面でのシャドウアクネ対策）
 static const float kNormalOffsetScale = 0.05f;
+// Object3dCommon.cpp の UpdateLightViewProjection() 内の定数と一致させること
+// （正射影の全幅・深度レンジをワールド距離⇔UV距離の換算に使うため）
+static const float kOrthoExtentWorld = 55.0f;     // kOrthoExtent
+static const float kOrthoDepthRangeWorld = 79.9f; // kFarClip - kNearClip
+// 影のぼかしやすさ（大きいほど、遮蔽物から受光面までの距離に対してペナンブラが広がりやすい）
+static const float kPenumbraSlope = 0.3f;
+static const float kMinFilterRadiusUV = kShadowMapTexelSize;      // 接触影は硬く保つための下限
+static const float kMaxFilterRadiusUV = kShadowMapTexelSize * 13.0f; // ボケすぎ・負荷増大の防止用の上限
+
+static const int kPcssSampleCount = 16;
+static const float2 kPoissonDisk[16] = {
+    float2(-0.94201624, -0.39906216), float2(0.94558609, -0.76890725),
+    float2(-0.094184101, -0.92938870), float2(0.34495938, 0.29387760),
+    float2(-0.91588581, 0.45771432), float2(-0.81544232, -0.87912464),
+    float2(-0.38277543, 0.27676845), float2(0.97484398, 0.75648379),
+    float2(0.44323325, -0.97511554), float2(0.53742981, -0.47373420),
+    float2(-0.26496911, -0.41893023), float2(0.79197514, 0.19090188),
+    float2(-0.24188840, 0.99706507), float2(-0.81409955, 0.91437590),
+    float2(0.19984126, 0.78641367), float2(0.14383161, -0.14100790)
+};
+
+// 受光点周辺を探索し、光源側にある遮蔽物(receiverZより手前=値が小さい)の平均深度を求める
+// SampleCmpLevelZeroは比較結果(0/1)しか返さないため、生の深度が必要なここではLoadで直接テクセルを読む
+float SearchAverageBlockerDepth(float2 shadowUV, float receiverZ, out int blockerCount)
+{
+    float blockerSum = 0.0f;
+    blockerCount = 0;
+    [unroll]
+    for (int i = 0; i < kPcssSampleCount; ++i) {
+        float2 offsetUV = shadowUV + kPoissonDisk[i] * kMaxFilterRadiusUV;
+        int2 texel = clamp(int2(offsetUV * kShadowMapResolution), int2(0, 0), int2(kShadowMapResolution - 1, kShadowMapResolution - 1));
+        float sampleDepth = gShadowMap.Load(int3(texel, 0));
+        if (sampleDepth < receiverZ) {
+            blockerSum += sampleDepth;
+            blockerCount += 1;
+        }
+    }
+    return (blockerCount > 0) ? (blockerSum / blockerCount) : 0.0f;
+}
+
 float CalculateDirectionalShadow(float3 worldPosition, float3 normal, float NdotL)
 {
     // 法線方向に少しずらしてからライト空間へ変換することで、グレージング角での自己遮蔽誤判定を抑える
@@ -76,17 +118,29 @@ float CalculateDirectionalShadow(float3 worldPosition, float3 normal, float Ndot
 
     // 光に対して面が斜めになるほどバイアスを強める（スロープスケールバイアス）
     float slopeScaledBias = gShadowData.bias * max(1.0f, (1.0f - saturate(NdotL)) * 4.0f);
+    float receiverZ = ndc.z - slopeScaledBias;
 
+    // 1. ブロッカー探索：遮蔽物が見つからなければ影なし（直交投影なので探索半径は深度によらず固定でよい）
+    int blockerCount = 0;
+    float avgBlockerZ = SearchAverageBlockerDepth(shadowUV, receiverZ, blockerCount);
+    if (blockerCount == 0) {
+        return 1.0f;
+    }
+
+    // 2. ペナンブラ幅の推定：遮蔽物と受光面のギャップ(ワールド距離)が大きいほど輪郭を広くぼかす
+    //    正射影(平行光線)は遠近除算が不要なため、ギャップ距離に比例させるだけでよい
+    float gapWorld = (receiverZ - avgBlockerZ) * kOrthoDepthRangeWorld;
+    float penumbraWorld = kPenumbraSlope * gapWorld;
+    float filterRadiusUV = clamp(penumbraWorld / (2.0f * kOrthoExtentWorld), kMinFilterRadiusUV, kMaxFilterRadiusUV);
+
+    // 3. 可変半径のPCF（ペナンブラ幅に応じてサンプリング範囲を広げ、ぼかし具合を距離に応じて変える）
     float shadowFactor = 0.0f;
     [unroll]
-    for (int y = -1; y <= 1; ++y) {
-        [unroll]
-        for (int x = -1; x <= 1; ++x) {
-            float2 offset = float2(x, y) * kShadowMapTexelSize;
-            shadowFactor += gShadowMap.SampleCmpLevelZero(gShadowSampler, shadowUV + offset, ndc.z - slopeScaledBias);
-        }
+    for (int j = 0; j < kPcssSampleCount; ++j) {
+        float2 offsetUV = kPoissonDisk[j] * filterRadiusUV;
+        shadowFactor += gShadowMap.SampleCmpLevelZero(gShadowSampler, shadowUV + offsetUV, receiverZ);
     }
-    shadowFactor /= 9.0f;
+    shadowFactor /= (float)kPcssSampleCount;
 
     return shadowFactor;
 }

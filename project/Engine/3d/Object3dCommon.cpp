@@ -29,20 +29,20 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
     directionalLightData->direction = Calculation::Normalize(Vector3{ -0.5f, -1.0f, 0.3f }); // 斜め上からの太陽光
     directionalLightData->intensity = 1.0f;
 
-    // PointLight用のリソース（{-8,1,-5}の障害物ボックス上空に配置）
+    // PointLight用のリソース（{-12,1,0}のカバー上空に配置）
     pointLightResource = dxCommon->CreatBufferResource(sizeof(PointLight));
     pointLightResource->Map(0, nullptr, reinterpret_cast<void**>(&pointLightData));
     pointLightData->color = { 1.0f, 0.85f, 0.6f, 1.0f };
-    pointLightData->position = { -8.0f, 3.0f, -5.0f };
+    pointLightData->position = { -12.0f, 3.0f, 0.0f };
     pointLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(2.0fが元の値)
     pointLightData->radius = 8.0f;
     pointLightData->decay = 1.0f;
 
-    // SpotLight用のリソース（{5,1,5}の障害物ボックスを真上から照らすダウンライト）
+    // SpotLight用のリソース（{0,1,-12}のカバーを真上から照らすダウンライト）
     spotLightResource = dxCommon->CreatBufferResource(sizeof(SpotLight));
     spotLightResource->Map(0, nullptr, reinterpret_cast<void**>(&spotLightData));
     spotLightData->color = { 0.6f, 0.8f, 1.0f, 1.0f };
-    spotLightData->position = { 5.0f, 4.0f, 5.0f };
+    spotLightData->position = { 0.0f, 4.0f, -12.0f };
     spotLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(6.0fが元の値)
     spotLightData->direction = Calculation::Normalize(Vector3{ 0.0f, -1.0f, 0.0f });
     spotLightData->distance = 6.0f;
@@ -347,12 +347,14 @@ void Object3dCommon::PreDraw(Object3dBlendMode blendMode) {
 void Object3dCommon::UpdateLightViewProjection() {
     // ディレクショナルライトの向きから、ライト視点の正射影ビュープロジェクション行列を再計算する
     // （ImGuiでの向き変更にリアルタイム追従させるため）
-    const float kLightDistance = 30.0f;
+    // 外壁を高くした際に一番遠い壁角の深度がニアクリップを割り込まないよう30→40に拡大
+    const float kLightDistance = 40.0f;
     // 光源が斜めのため、この左右/上下軸はワールドのX・Zが混ざった向きになる。
-    // 部屋の角(x,z=±20付近)をこの傾いた軸に投影すると約28まで達するため、35まで余裕を持たせる
-    const float kOrthoExtent = 35.0f;
+    // 部屋の角(x,z=±30付近、アリーナ拡張後)をこの傾いた軸に投影すると約42まで達するため、55まで余裕を持たせる
+    // ※この値を変える場合はObject3d.PS.hlslのkOrthoExtentWorldも同じ値に合わせること
+    const float kOrthoExtent = 55.0f;
     const float kNearClip = 0.1f;
-    const float kFarClip = 60.0f;
+    const float kFarClip = 80.0f; // アリーナ拡張に合わせて余裕を持たせる。変更時はkOrthoDepthRangeWorld(HLSL側)も追従させること
 
     Vector3 lightDirection = Calculation::Normalize(directionalLightData->direction);
     Vector3 lightPosition = Vector3{ 0.0f, 0.0f, 0.0f } - lightDirection * kLightDistance;
