@@ -4,14 +4,19 @@
 #include <assert.h>
 #include <stdint.h>
 #include <iostream>
+#include <numbers>
 
 class Calculation {
 public:
 	// インスタンス化を禁止
 	Calculation() = delete;
 
-	static const int kColumnWidth = 1280;
-	static const int kRowHeight = 720;
+	// 円周率（各所で桁数の違う値がバラバラに直書きされていたのをここに集約）
+	static constexpr float kPi = std::numbers::pi_v<float>;
+
+	// 固定フレームレート前提の暫定デルタタイム（本来は実フレーム時間を受け取るのが望ましいが、
+	// 現状複数箇所が「暫定60FPS」を個別にハードコードしていたためここに集約）
+	static constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
 	// ベクトル演算
 	static Vector3 Add(const Vector3& a, const Vector3& b) { return a + b; }
@@ -51,6 +56,11 @@ public:
 
 	// 当たり判定
 	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);
+	// 球 vs AABB（最近接点法）。outPushDirにはAABB内の最近接点から球の中心へ向かう正規化方向（めり込み解消・スライド移動に使う押し出し方向）を返す
+	static bool TestSphereAABB(const Sphere& sphere, const AABB& aabb, Vector3* outPushDir = nullptr);
+	// Transformからaxis-aligned AABBを作る（translateを中心、scaleを各軸の半辺長とみなす。箱型のObject3dのTransformをそのまま渡せる）
+	// ※クラス内に同名の関数Transform()が既にあるため、型のTransformと区別するためstructを明示している
+	static AABB MakeAABBFromTransform(const struct Transform& transform);
 
 	// クォータニオン演算
 	static Quaternion Multiply(const Quaternion& q, const Quaternion& r);

@@ -32,8 +32,8 @@ private:
 	// メンバ変数として保持する
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature = nullptr;
 
-	// InputLayoutの設定
-	D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = { };
+	// InputLayoutの設定（Object3d.VS/PS.hlslを使い回すため、スキニング属性(BLENDWEIGHT0/BLENDINDICES0)も追従させる）
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = { };
 	D3D12_INPUT_LAYOUT_DESC inputLayoutDesc{};
 	// BlendStateの設定
 	D3D12_BLEND_DESC blendDesc{};
@@ -49,5 +49,7 @@ private:
 	Microsoft::WRL::ComPtr <IDxcBlob> vertexShaderBlob = nullptr;
 	Microsoft::WRL::ComPtr < IDxcBlob> pixelShaderBlob = nullptr;
 
-	
+	// Object3d.VS.hlslのt2(gSkinMatrices)向けダミーパレット（単位行列1個）。
+	// Spriteは常にこれをバインドすることで実質ノーオペレーションのスキニングになる。
+	Microsoft::WRL::ComPtr<ID3D12Resource> defaultBonePaletteResource = nullptr;
 };

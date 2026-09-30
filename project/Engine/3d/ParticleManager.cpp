@@ -100,7 +100,7 @@ void ParticleManager::Update() {
     instanceCount = 0;
     for (auto it = particles.begin(); it != particles.end(); ) {
         // 寿命チェック
-        it->currentTime += 1.0f / 60.0f; // 暫定 60FPS
+        it->currentTime += Calculation::kFixedDeltaTime; // 暫定固定フレームレート前提（本来は実フレーム時間を受け取るべき）
         if (it->currentTime >= it->lifeTime) {
             it = particles.erase(it);
             continue;
@@ -185,7 +185,7 @@ void ParticleManager::Update() {
                     // defaultUpとtargetDirがほぼ同じ（または正反対）の場合
                     if (Calculation::Dot(defaultUp, targetDir) < 0.0f) {
                         // 正反対（速度がY-方向）: Z軸で180度回転
-                        Quaternion q = Calculation::MakeAxisAngleQuaternion({ 0.0f, 0.0f, 1.0f }, 3.14159265f);
+                        Quaternion q = Calculation::MakeAxisAngleQuaternion({ 0.0f, 0.0f, 1.0f }, Calculation::kPi);
                         rotMatrix = Calculation::MakeRotateMatrix(q);
                     } else {
                         // 同じ方向: 単位行列

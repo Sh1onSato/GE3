@@ -22,20 +22,16 @@ void BitmapText::Initialize(SpriteCommon* spriteCommon, size_t maxChars) {
 }
 
 int BitmapText::GlyphIndex(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c == '.') return 10;
-    if (c == '-') return 11;
-    switch (c) {
-        case 'W': return 13;
-        case 'I': return 14;
-        case 'N': return 15;
-        case 'L': return 16;
-        case 'O': return 17;
-        case 'S': return 18;
-        case 'E': return 19;
-        case 'Q': return 20;
-        case 'U': return 21;
-        case 'T': return 22;
+    // 小文字は大文字にフォールバック（小文字専用のビットパターンは持たない）
+    if (c >= 'a' && c <= 'z') {
+        c = static_cast<char>(c - 'a' + 'A');
+    }
+    // TextureManager::kBitmapFontGlyphs（文字→ビットパターンの一覧テーブル）を線形探索し、
+    // 一致した文字のインデックス＝グリフアトラス上の並び順を返す
+    for (int i = 0; i < TextureManager::kBitmapFontGlyphCount; ++i) {
+        if (TextureManager::kBitmapFontGlyphs[i].character == c) {
+            return i;
+        }
     }
     return kBlankGlyphIndex;
 }

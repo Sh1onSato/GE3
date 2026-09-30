@@ -71,36 +71,11 @@ void TextureManager::CreateInternalDigitFontTexture() {
 	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
 	if (it != textureDatas.end()) return;
 
-	// 5x7ドットマトリクスのビットパターン（1=点灯）。"0"-"9" "." "-" 空白 に続き、
-	// 勝敗演出（WIN/LOSE）・終了確認（QUIT）表示のためW/I/N/L/O/S/E/Q/U/Tのみ追加、全23グリフ
-	constexpr int kGlyphCount = 23;
+	// 5x7ドットマトリクスのビットパターン（1=点灯）。文字とビットパターンの対応表本体は
+	// TextureManager::kBitmapFontGlyphs（TextureManager.h）に一覧化してまとめてある。
+	const int kGlyphCount = kBitmapFontGlyphCount;
 	constexpr int kGlyphWidth = 5;
 	constexpr int kGlyphHeight = 7;
-	static const uint8_t kGlyphs[kGlyphCount][kGlyphHeight] = {
-		{0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110}, // 0
-		{0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110}, // 1
-		{0b01110,0b10001,0b00001,0b00010,0b00100,0b01000,0b11111}, // 2
-		{0b11111,0b00010,0b00100,0b00010,0b00001,0b10001,0b01110}, // 3
-		{0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010}, // 4
-		{0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110}, // 5
-		{0b00110,0b01000,0b10000,0b11110,0b10001,0b10001,0b01110}, // 6
-		{0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000}, // 7
-		{0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110}, // 8
-		{0b01110,0b10001,0b10001,0b01111,0b00001,0b00010,0b01100}, // 9
-		{0b00000,0b00000,0b00000,0b00000,0b00000,0b01100,0b01100}, // .
-		{0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000}, // -
-		{0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000}, // (空白)
-		{0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001}, // W
-		{0b01110,0b00100,0b00100,0b00100,0b00100,0b00100,0b01110}, // I
-		{0b10001,0b11001,0b10101,0b10101,0b10011,0b10001,0b10001}, // N
-		{0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111}, // L
-		{0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // O
-		{0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110}, // S
-		{0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111}, // E
-		{0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101}, // Q
-		{0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // U
-		{0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100}, // T
-	};
 
 	// 各グリフは7x9セル（5x7の実体＋周囲1pxの透明パディング）に配置。
 	// パディングはサンプラーが線形補間のため、隣接グリフのにじみ（バイリニアブリーディング）を防ぐ目的
@@ -119,7 +94,7 @@ void TextureManager::CreateInternalDigitFontTexture() {
 	for (int g = 0; g < kGlyphCount; ++g) {
 		for (int row = 0; row < kGlyphHeight; ++row) {
 			for (int col = 0; col < kGlyphWidth; ++col) {
-				bool lit = (kGlyphs[g][row] >> (kGlyphWidth - 1 - col)) & 1;
+				bool lit = (kBitmapFontGlyphs[g].rows[row] >> (kGlyphWidth - 1 - col)) & 1;
 				if (!lit) continue;
 				int px = g * kCellWidth + 1 + col; // 1pxパディング
 				int py = 1 + row;

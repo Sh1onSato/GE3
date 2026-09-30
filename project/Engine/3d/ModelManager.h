@@ -1,5 +1,6 @@
 #pragma once
 #include "Model.h"
+#include "GltfTypes.h"
 #include <map>
 #include <string>
 #include <memory>
@@ -17,6 +18,9 @@ public:
 	// モデルのロード（すでに読み込み済みならそれを返す）
 	Model* LoadModel(const std::string& directoryPath, const std::string& filename);
 
+	// glTFモデルのロード（すでに読み込み済みならそれを返す）。SkinnedObject3d::SetGltfData()に渡して使う。
+	GltfModelData* LoadGltfModel(const std::string& directoryPath, const std::string& filename);
+
 private:
 	ModelManager() = default;
 	~ModelManager() = default;
@@ -27,4 +31,6 @@ private:
 
 	// モデルのキャッシュ
 	std::map<std::string, std::unique_ptr<Model>> models;
+	// glTFモデルのキャッシュ
+	std::map<std::string, std::unique_ptr<GltfModelData>> gltfModels;
 };

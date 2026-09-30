@@ -175,6 +175,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\scene\GameSettings.cpp" />
     <ClCompile Include="Engine\scene\SceneFactory.cpp" />
     <ClCompile Include="Engine\scene\SceneManager.cpp" />
+    <ClCompile Include="Engine\scene\SkinningTestScene.cpp" />
     <ClCompile Include="Engine\scene\TitleScene.cpp" />
     <ClCompile Include="externals\imgui\imgui.cpp" />
     <ClCompile Include="externals\imgui\imgui_demo.cpp" />
@@ -203,6 +204,12 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\3d\SkyboxCommon.cpp" />
     <ClCompile Include="Engine\3d\Model.cpp" />
     <ClCompile Include="Engine\3d\ModelManager.cpp" />
+    <ClCompile Include="Engine\3d\GltfLoader.cpp" />
+    <ClCompile Include="Engine\3d\Skeleton.cpp" />
+    <ClCompile Include="Engine\3d\Animation.cpp" />
+    <ClCompile Include="Engine\3d\SkinCluster.cpp" />
+    <ClCompile Include="Engine\3d\SkinnedObject3d.cpp" />
+    <ClCompile Include="Engine\base\JsonParser.cpp" />
     <ClCompile Include="Engine\base\Framework.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -252,6 +259,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\scene\GameSettings.h" />
     <ClInclude Include="Engine\scene\SceneFactory.h" />
     <ClInclude Include="Engine\scene\SceneManager.h" />
+    <ClInclude Include="Engine\scene\SkinningTestScene.h" />
     <ClInclude Include="Engine\scene\TitleScene.h" />
     <ClInclude Include="externals\imgui\imconfig.h" />
     <ClInclude Include="externals\imgui\imgui.h" />
@@ -278,6 +286,14 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\3d\SkyboxCommon.h" />
     <ClInclude Include="Engine\3d\Model.h" />
     <ClInclude Include="Engine\3d\ModelManager.h" />
+    <ClInclude Include="Engine\3d\GltfTypes.h" />
+    <ClInclude Include="Engine\3d\GltfLoader.h" />
+    <ClInclude Include="Engine\3d\Skeleton.h" />
+    <ClInclude Include="Engine\3d\Animation.h" />
+    <ClInclude Include="Engine\3d\SkinCluster.h" />
+    <ClInclude Include="Engine\3d\SkinnedObject3d.h" />
+    <ClInclude Include="Engine\base\JsonValue.h" />
+    <ClInclude Include="Engine\base\JsonParser.h" />
     <ClInclude Include="Engine\base\Framework.h" />
   </ItemGroup>
   <ItemGroup>

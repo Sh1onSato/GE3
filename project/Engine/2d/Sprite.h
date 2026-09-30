@@ -1,5 +1,6 @@
 #pragma once
 #include"Structs.h"
+#include "WinApp.h"
 #include <d3d12.h>
 #include <wrl.h>
 class SpriteCommon;
@@ -57,8 +58,8 @@ private:
 
 	// --- 数値を直接打たずに変数で管理する ---
 	Vector2 size = { 640.0f, 360.0f };
-	// 画面解像度も変数にしておくと、あとで変更が楽
-	Vector2 screenResolution = { 1280.0f, 720.0f };
+	// 画面解像度（WinAppのクライアント領域サイズを参照。1箇所直せば追従する）
+	Vector2 screenResolution = { static_cast<float>(WinApp::KclientWidth), static_cast<float>(WinApp::KclientHeight) };
 	// テクスチャ番号
 	uint32_t textureIndex = 0;
 	// デバッグ用にファイル名を保存しておく変数

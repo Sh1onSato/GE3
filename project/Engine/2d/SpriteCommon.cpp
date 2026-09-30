@@ -1,4 +1,5 @@
 #include "SpriteCommon.h"
+#include "Calculation.h"
 using namespace ShaderCompiler;
 void SpriteCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 	this->dxCommon = dxCommon; // 受け取ったポインタをメンバ変数に保存
@@ -40,6 +41,16 @@ void SpriteCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 	inputElementDescs[2].SemanticIndex = 0;
 	inputElementDescs[2].Format = DXGI_FORMAT_R32G32B32_FLOAT; // フォーマット
 	inputElementDescs[2].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	// Object3d.VS.hlslのスキニング属性に追従（Spriteでは実データは持たないが、VertexDataが
+	// デフォルト値を持つ集成体のため頂点バッファ側は無修正で動く。PSOの入力レイアウト検証のために宣言のみ必要）
+	inputElementDescs[3].SemanticName = "BLENDWEIGHT";
+	inputElementDescs[3].SemanticIndex = 0;
+	inputElementDescs[3].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	inputElementDescs[3].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+	inputElementDescs[4].SemanticName = "BLENDINDICES";
+	inputElementDescs[4].SemanticIndex = 0;
+	inputElementDescs[4].Format = DXGI_FORMAT_R32G32B32A32_UINT;
+	inputElementDescs[4].AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
 
 	inputLayoutDesc.pInputElementDescs = inputElementDescs; // 入力要素の配列
 	inputLayoutDesc.NumElements = _countof(inputElementDescs); // 入力要素の数
@@ -95,6 +106,14 @@ void SpriteCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 	);
 	assert(SUCCEEDED(hr));
 
+	// --- t2(gSkinMatrices)用のダミーパレット（単位行列1個）を作成 ---
+	// Spriteはスキニングしないが、Object3d.VS.hlslを共用しているため常時何かをバインドする必要がある
+	defaultBonePaletteResource = dxCommon->CreatBufferResource(sizeof(Matrix4x4));
+	Matrix4x4* defaultBonePaletteData = nullptr;
+	hr = defaultBonePaletteResource->Map(0, nullptr, reinterpret_cast<void**>(&defaultBonePaletteData));
+	assert(SUCCEEDED(hr));
+	*defaultBonePaletteData = Calculation::MakeIdentity4x4();
+	defaultBonePaletteResource->Unmap(0, nullptr);
 }
 
 void SpriteCommon::CreateRootSignature(){
@@ -106,7 +125,7 @@ void SpriteCommon::CreateRootSignature(){
 	descriptorRange[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	descriptorRange[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER rootParameters[8] = {};
+	D3D12_ROOT_PARAMETER rootParameters[9] = {};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b0: Material
 	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
@@ -150,6 +169,12 @@ void SpriteCommon::CreateRootSignature(){
 	rootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	rootParameters[7].DescriptorTable.pDescriptorRanges = shadowDescriptorRange;
 	rootParameters[7].DescriptorTable.NumDescriptorRanges = _countof(shadowDescriptorRange);
+
+	// Object3d.VS.hlslのスキニング追加(t2: gSkinMatrices)にも同様にPSOのルートシグネチャ検証を
+	// 通すためのダミー宣言が必要（Spriteは常に単位行列1個のデフォルトパレットをバインドする＝実質ノーオペレーション）
+	rootParameters[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; // t2: SkinMatrices
+	rootParameters[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	rootParameters[8].Descriptor.ShaderRegister = 2;
 
 	// --- サンプラーの設定 ---
 	D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
@@ -202,4 +227,7 @@ void SpriteCommon::PreDraw(){
 	// 4. デスクリプタヒープをセット
 	ID3D12DescriptorHeap* descriptorHeaps[] = { srvManager->GetDescriptorHeap() };
 	dxCommon->GetCommandList()->SetDescriptorHeaps(1, descriptorHeaps);
+
+	// 5. t2(gSkinMatrices)に常時ダミーの単位行列パレットをバインド（実質ノーオペレーション）
+	dxCommon->GetCommandList()->SetGraphicsRootShaderResourceView(8, defaultBonePaletteResource->GetGPUVirtualAddress());
 }

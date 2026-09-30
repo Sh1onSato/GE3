@@ -80,8 +80,8 @@ void DirectXCommon::Initialize(WinApp* winApp) {
     assert(SUCCEEDED(hr));
 
     // ヒープ作成
-    rtvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxSrvCount, false);
-    dsvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxSrvCount, false);
+    rtvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxRtvCount, false);
+    dsvDescriptorHeap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxDsvCount, false);
 
     // RTV作成
     rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -192,8 +192,7 @@ void DirectXCommon::PreDraw(){
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
     // 画面全体をクリア
-    float clearColor[] = { 0.1f, 0.25f, 0.5f, 1.0f }; // 背景色
-    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    commandList->ClearRenderTargetView(rtvHandle, kClearColor, 0, nullptr);
     // 深度とステンシルの両方をクリア
     commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
@@ -419,4 +418,7 @@ void DirectXCommon::UpdateFixFPS(){
 	reference_ = std::chrono::steady_clock::now();
 }
 
-const uint32_t DirectXCommon::kMaxSrvCount = 512;
+// スワップチェーン(2) + PostProcessのオフスクリーンRTV(現状6枚、インデックス2-7)で計8枚使用。将来のパス追加分の余裕を持たせた値
+const uint32_t DirectXCommon::kMaxRtvCount = 16;
+// メイン深度(1) + シャドウマップ(1)で計2枚使用。将来の複数シャドウマップ等に備えた余裕を持たせた値
+const uint32_t DirectXCommon::kMaxDsvCount = 8;

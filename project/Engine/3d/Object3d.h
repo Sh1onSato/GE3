@@ -17,6 +17,9 @@ public:
 
     // Setter
     void SetModel(Model* model) { this->model = model; }
+    // スキニング用ボーン行列パレットのセット（非所有ポインタ。SetModel()と同じ方針）
+    // 未設定の場合はObject3dCommonのデフォルト単位行列パレットが使われる
+    void SetBonePalette(ID3D12Resource* paletteResource) { this->bonePaletteResource = paletteResource; }
     void SetScale(const Vector3& scale) { transform.scale = scale; }
     void SetRotate(const Vector3& rotate);
     void SetRotateQuaternion(const Quaternion& rotate) { quaternionRotation = rotate; }
@@ -32,6 +35,8 @@ public:
 private:
     Object3dCommon* common = nullptr;
     Model* model = nullptr;
+    // スキニング用ボーン行列パレット（非所有）。nullptrならcommonのデフォルト単位行列パレットを使う
+    ID3D12Resource* bonePaletteResource = nullptr;
 
     // 行列計算用のリソース
     Microsoft::WRL::ComPtr<ID3D12Resource> wvpResource;

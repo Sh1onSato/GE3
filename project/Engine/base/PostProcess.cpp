@@ -25,7 +25,7 @@ void PostProcess::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
 
     D3D12_CLEAR_VALUE clearValue{};
     clearValue.Format = desc.Format;
-    for (int i = 0; i < 4; ++i) clearValue.Color[i] = clearColor[i];
+    for (int i = 0; i < 4; ++i) clearValue.Color[i] = DirectXCommon::kClearColor[i];
 
     HRESULT hr = dxCommon->GetDevice()->CreateCommittedResource(
         &heapProps, D3D12_HEAP_FLAG_NONE, &desc,
@@ -104,7 +104,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> PostProcess::CreateBloomTexture(uint32_t 
 
     D3D12_CLEAR_VALUE clearValue{};
     clearValue.Format = desc.Format;
-    for (int i = 0; i < 4; ++i) clearValue.Color[i] = clearColor[i];
+    for (int i = 0; i < 4; ++i) clearValue.Color[i] = DirectXCommon::kClearColor[i];
 
     Microsoft::WRL::ComPtr<ID3D12Resource> texture;
     HRESULT hr = dxCommon->GetDevice()->CreateCommittedResource(
@@ -424,7 +424,7 @@ void PostProcess::PreDraw() {
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dxCommon->GetDsvHandle();
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
-    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    commandList->ClearRenderTargetView(rtvHandle, DirectXCommon::kClearColor, 0, nullptr);
     commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 }
 
@@ -598,15 +598,15 @@ void PostProcess::DrawCompositePass() {
     // 手動トグル(grayscaleEnabled)とは独立させつつ、どちらか強い方を採用する
     float grayscaleFlashRatio = 0.0f;
     if (grayscaleFlashTimer > 0.0f) {
-        float t = 1.0f - (grayscaleFlashTimer / kWarpGrayscaleFlashDuration); // 0(開始)→1(終了)
+        float t = 1.0f - (grayscaleFlashTimer / kFlashDuration); // 0(開始)→1(終了)
         grayscaleFlashRatio = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
     }
     float grayscaleBase = grayscaleEnabled ? 1.0f : 0.0f;
     float grayscaleBlend = (grayscaleFlashRatio > grayscaleBase) ? grayscaleFlashRatio : grayscaleBase;
 
     // 被弾ヴィネットはグレースケール・フラッシュ（三角波）とは異なり、被弾直後に最大→時間経過で薄くなる単純な減衰
-    float damageVignetteRatio = damageVignetteTimer / kDamageVignetteDuration; // 1(開始)→0(終了)
-    float damageVignetteIntensity = damageVignetteRatio * kDamageVignetteMaxBlend;
+    float damageVignetteRatio = damageVignetteTimer / kImpactVignetteDuration; // 1(開始)→0(終了)
+    float damageVignetteIntensity = damageVignetteRatio * kImpactVignetteMaxBlend;
 
     float compositeParam[7] = {
         bloomIntensity, grayscaleBlend, sepiaEnabled ? 1.0f : 0.0f, (blurEnabled || boxBlurEnabled) ? 1.0f : 0.0f,

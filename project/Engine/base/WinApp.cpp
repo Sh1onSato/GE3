@@ -9,7 +9,7 @@ void WinApp::Initialize() {
 	// ウィンドウプロシージャ
 	wc.lpfnWndProc = WindowProc;
 	// ウィンドウクラス名
-	wc.lpszClassName = L"CG2WindowClass";
+	wc.lpszClassName = L"EngineWindowClass";
 	// インスタンスハンドル
 	wc.hInstance = GetModuleHandle(nullptr);
 	//　カーソル
@@ -25,7 +25,7 @@ void WinApp::Initialize() {
 	//ウィンドウサイズの生成
 	hwnd = CreateWindow(
 		wc.lpszClassName, // ウィンドウクラス名
-		L"CG2", // ウィンドウ名
+		L"DirectX12 Engine", // ウィンドウ名（ゲーム側で変更する場合はここを差し替える）
 		WS_OVERLAPPEDWINDOW, // ウィンドウスタイル
 		CW_USEDEFAULT, // x座標
 		CW_USEDEFAULT, // y座標

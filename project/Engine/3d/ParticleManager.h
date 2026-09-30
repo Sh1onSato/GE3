@@ -7,6 +7,14 @@
 #include <list>
 #include <wrl.h>
 
+// 線(Line)専用パラメータの既定値（Particle/ParticleEmitParams/EmitterSettingの3構造体で
+// 同じ値がそれぞれ独立に書かれていたのをここに集約）
+namespace ParticleLineDefaults {
+    constexpr float kLineWidth = 0.05f;
+    constexpr float kLineLengthMultiplier = 10.0f;
+    constexpr float kMaxLineLength = 1000.0f;
+}
+
 /// <summary>
 /// 個々のパーティクル（粒）のデータ
 /// </summary>
@@ -34,9 +42,9 @@ struct Particle {
     float drag = 0.0f;                      // 空気抵抗(0〜1)
 
     // --- 線(Line)専用パラメータ ---
-    float lineWidth = 0.05f;            // 線の太さ
-    float lineLengthMultiplier = 10.0f; // 線の長さ = その時点の速さ × この値
-    float maxLineLength = 1000.0f;      // 線の長さの上限（速すぎて伸びすぎるのを防ぐ）
+    float lineWidth = ParticleLineDefaults::kLineWidth;                       // 線の太さ
+    float lineLengthMultiplier = ParticleLineDefaults::kLineLengthMultiplier; // 線の長さ = その時点の速さ × この値
+    float maxLineLength = ParticleLineDefaults::kMaxLineLength;               // 線の長さの上限（速すぎて伸びすぎるのを防ぐ）
 
     // --- 点・面(ビルボード)専用パラメータ ---
     float roll = 0.0f;  // ビルボード面内での回転角（ラジアン）。粒ごとに向きをばらつかせたい時に使う
@@ -65,9 +73,9 @@ struct ParticleEmitParams {
     Vector3 gravity = { 0.0f, 0.0f, 0.0f };
     float drag = 0.0f;
 
-    float lineWidth = 0.05f;
-    float lineLengthMultiplier = 10.0f;
-    float maxLineLength = 1000.0f;
+    float lineWidth = ParticleLineDefaults::kLineWidth;
+    float lineLengthMultiplier = ParticleLineDefaults::kLineLengthMultiplier;
+    float maxLineLength = ParticleLineDefaults::kMaxLineLength;
 
     float roll = 0.0f;
     float shear = 0.0f;

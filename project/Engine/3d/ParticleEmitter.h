@@ -58,9 +58,9 @@ public:
         float sizeVarianceMax = 1.0f; // 個体ごとのサイズ倍率の最大値（point/triangleは全体サイズ、lineは太さに反映）
 
         // --- 線(Line)専用パラメータ ---
-        float lineWidth = 0.05f;           // 線の太さ（X/Z方向のスケール基準値）
-        float lineLengthMultiplier = 10.0f; // 線の長さ = その時点の速さ × この値。速度が変化すると長さも追従して変わる
-        float maxLineLength = 1000.0f;      // 線の長さの上限
+        float lineWidth = ParticleLineDefaults::kLineWidth;                       // 線の太さ（X/Z方向のスケール基準値）
+        float lineLengthMultiplier = ParticleLineDefaults::kLineLengthMultiplier; // 線の長さ = その時点の速さ × この値。速度が変化すると長さも追従して変わる
+        float maxLineLength = ParticleLineDefaults::kMaxLineLength;               // 線の長さの上限
     };
 
     void Initialize(const std::string& name, ParticleManager* manager, const EmitterSetting& setting);

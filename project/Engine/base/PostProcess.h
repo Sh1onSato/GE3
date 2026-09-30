@@ -30,11 +30,11 @@ public:
     // 画面全体ぼかしのON/OFFを切り替える（キー入力等から呼び出す想定。ブルームとは独立して重ねがけ可能）
     void ToggleBlur() { blurEnabled = !blurEnabled; }
     // ワープ通過時などに一瞬だけグレースケールを掛ける演出を開始する（手動トグルのgrayscaleEnabledとは独立）
-    void TriggerGrayscaleFlash() { grayscaleFlashTimer = kWarpGrayscaleFlashDuration; }
+    void TriggerFlash() { grayscaleFlashTimer = kFlashDuration; }
     // 画面周辺減光（ヴィネット）のON/OFFを切り替える（キー入力等から呼び出す想定）
     void ToggleVignette() { vignetteEnabled = !vignetteEnabled; }
     // 被弾時の一瞬赤ヴィネット演出を開始する（TakeDamage()から呼ぶ想定）
-    void TriggerDamageVignette() { damageVignetteTimer = kDamageVignetteDuration; }
+    void TriggerImpactVignette() { damageVignetteTimer = kImpactVignetteDuration; }
     // 画面全体ぼかし（ボックスフィルター版）のON/OFFを切り替える（ガウシアン版のToggleBlur()と対称）
     void ToggleBoxBlur() { boxBlurEnabled = !boxBlurEnabled; }
 
@@ -138,7 +138,7 @@ private:
 
     // ワープ通過時の一瞬グレースケール演出（三角波：前半でフェードイン、後半でフェードアウト）
     float grayscaleFlashTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
-    static constexpr float kWarpGrayscaleFlashDuration = 0.25f;
+    static constexpr float kFlashDuration = 0.25f;
 
     // 画面全体ぼかし（ブルームとは独立管理。ガウシアン=Bキー、ボックスはImGuiでそれぞれ独立にON/OFF。
     // 両方ONの場合はボックスを優先する。ボックスは全タップ均等重みでガウシアンより効きが強いため別々のstrengthを持つ）
@@ -154,13 +154,11 @@ private:
 
     // 被弾時の一瞬赤ヴィネット演出（三角波：前半でフェードイン、後半でフェードアウト。上のvignetteとは独立）
     float damageVignetteTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
-    static constexpr float kDamageVignetteDuration = 0.4f;
-    static constexpr float kDamageVignetteMaxBlend = 0.4f; // 頂点時でも画面が完全な赤一色にならないよう上限を設ける
+    static constexpr float kImpactVignetteDuration = 0.4f;
+    static constexpr float kImpactVignetteMaxBlend = 0.4f; // 発生時でも画面が完全な赤一色にならないよう上限を設ける
 
     // 頂点データ (画面全体を覆う板ポリ用)
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource;
     D3D12_VERTEX_BUFFER_VIEW vertexBufferView{};
 
-    // クリアカラー（背景色）
-    const float clearColor[4] = { 0.1f, 0.25f, 0.5f, 1.0f };
 };

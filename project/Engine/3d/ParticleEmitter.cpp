@@ -2,10 +2,6 @@
 #include <random>
 #include <cmath>
 
-namespace {
-constexpr float kPi = 3.14159265358979323846f;
-}
-
 void ParticleEmitter::Initialize(const std::string& name, ParticleManager* manager, const EmitterSetting& setting) {
     this->name = name;
     this->manager = manager;
@@ -18,7 +14,7 @@ void ParticleEmitter::Initialize(const std::string& name, ParticleManager* manag
 }
 
 void ParticleEmitter::Update() {
-    timer += 1.0f / 60.0f; // 暫定 60FPS
+    timer += Calculation::kFixedDeltaTime; // 暫定固定フレームレート前提（本来は実フレーム時間を受け取るべき）
 
     if (timer >= setting.frequency) {
         timer -= setting.frequency;
@@ -81,7 +77,7 @@ Vector3 ParticleEmitter::GeneratePosition() {
     case EmitShape::kSphere: {
         // 球内部のランダムな点（一様分布）
         std::uniform_real_distribution<float> distR(0.0f, 1.0f);
-        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * kPi);
+        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * Calculation::kPi);
         std::uniform_real_distribution<float> distZ(-1.0f, 1.0f);
 
         float u = distR(randomEngine);
@@ -100,7 +96,7 @@ Vector3 ParticleEmitter::GeneratePosition() {
     case EmitShape::kCircle: {
         // XZ平面上の円内のランダムな点
         std::uniform_real_distribution<float> distR(0.0f, 1.0f);
-        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * kPi);
+        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * Calculation::kPi);
 
         float r = setting.radius * std::sqrt(distR(randomEngine)); // 面積一様分布
         float theta = distAngle(randomEngine);
@@ -121,7 +117,7 @@ Vector3 ParticleEmitter::GenerateVelocity() {
     switch (setting.shape) {
     case EmitShape::kSphere: {
         // 中心から外向きにランダムな方向＋ランダムな速さ
-        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * kPi);
+        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * Calculation::kPi);
         std::uniform_real_distribution<float> distZ(-1.0f, 1.0f);
         std::uniform_real_distribution<float> distSpeed(setting.minSpeed, setting.maxSpeed);
 
@@ -134,7 +130,7 @@ Vector3 ParticleEmitter::GenerateVelocity() {
     }
     case EmitShape::kCircle: {
         // XZ平面上で中心から外向き
-        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * kPi);
+        std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * Calculation::kPi);
         std::uniform_real_distribution<float> distSpeed(setting.minSpeed, setting.maxSpeed);
 
         float theta = distAngle(randomEngine);
@@ -161,7 +157,7 @@ Vector3 ParticleEmitter::GenerateVelocity() {
         };
 
         std::uniform_real_distribution<float> distCosAngle(std::cos(setting.coneAngle), 1.0f);
-        std::uniform_real_distribution<float> distPhi(0.0f, 2.0f * kPi);
+        std::uniform_real_distribution<float> distPhi(0.0f, 2.0f * Calculation::kPi);
         std::uniform_real_distribution<float> distSpeed(setting.minSpeed, setting.maxSpeed);
 
         float cosAngle = distCosAngle(randomEngine); // コーン角内で一様に分布させた軸とのなす角の余弦

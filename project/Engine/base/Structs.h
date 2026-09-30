@@ -79,6 +79,9 @@ struct VertexData {
 	Vector4 position;
 	Vector2 texcoord;
 	Vector3 normal;
+	// --- スキニング用（フェーズ1で追加。デフォルト値により既存の初期化箇所は無修正で動作する） ---
+	Vector4 boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+	uint32_t boneIndices[4] = { 0, 0, 0, 0 };
 };
 
 struct Material {
@@ -125,7 +128,9 @@ static_assert(sizeof(SpotLight) == 64);
 struct ShadowData {
 	Matrix4x4 lightViewProjection;
 	float bias;
-	float padding[3];
+	float orthoExtentWorld;     // 正射影の片側半幅（PS側のPCSS計算でワールド距離⇔UV距離の換算に使用）
+	float orthoDepthRangeWorld; // ファークリップ - ニアクリップ
+	float padding;
 };
 static_assert(sizeof(ShadowData) == 80);
 

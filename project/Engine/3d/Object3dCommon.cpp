@@ -29,26 +29,26 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
     directionalLightData->direction = Calculation::Normalize(Vector3{ -0.5f, -1.0f, 0.3f }); // 斜め上からの太陽光
     directionalLightData->intensity = 1.0f;
 
-    // PointLight用のリソース（{-12,1,0}のカバー上空に配置）
+    // PointLight用のリソース（デフォルトでは無効。呼び出し側(GetPointLightData()経由)で位置・intensityを設定して有効化する想定）
     pointLightResource = dxCommon->CreatBufferResource(sizeof(PointLight));
     pointLightResource->Map(0, nullptr, reinterpret_cast<void**>(&pointLightData));
-    pointLightData->color = { 1.0f, 0.85f, 0.6f, 1.0f };
-    pointLightData->position = { -12.0f, 3.0f, 0.0f };
-    pointLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(2.0fが元の値)
+    pointLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    pointLightData->position = { 0.0f, 0.0f, 0.0f };
+    pointLightData->intensity = 0.0f; // デフォルトは無効(0)。シーン側で用途に応じて設定する
     pointLightData->radius = 8.0f;
     pointLightData->decay = 1.0f;
 
-    // SpotLight用のリソース（{0,1,-12}のカバーを真上から照らすダウンライト）
+    // SpotLight用のリソース（デフォルトでは無効。呼び出し側(GetSpotLightData()経由)で位置・向き・intensityを設定して有効化する想定）
     spotLightResource = dxCommon->CreatBufferResource(sizeof(SpotLight));
     spotLightResource->Map(0, nullptr, reinterpret_cast<void**>(&spotLightData));
-    spotLightData->color = { 0.6f, 0.8f, 1.0f, 1.0f };
-    spotLightData->position = { 0.0f, 4.0f, -12.0f };
-    spotLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(6.0fが元の値)
+    spotLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    spotLightData->position = { 0.0f, 0.0f, 0.0f };
+    spotLightData->intensity = 0.0f; // デフォルトは無効(0)。シーン側で用途に応じて設定する
     spotLightData->direction = Calculation::Normalize(Vector3{ 0.0f, -1.0f, 0.0f });
     spotLightData->distance = 6.0f;
     spotLightData->decay = 2.0f;
-    spotLightData->cosAngle = cosf(3.14159265f / 3.0f);       // 外側角(60度)
-    spotLightData->cosFalloffStart = cosf(3.14159265f / 4.0f); // 内側角(45度、cosAngleより大きい値)
+    spotLightData->cosAngle = cosf(Calculation::kPi / 3.0f);       // 外側角(60度)
+    spotLightData->cosFalloffStart = cosf(Calculation::kPi / 4.0f); // 内側角(45度、cosAngleより大きい値)
 
     // --- シャドウマップ（ディレクショナルライト用、正射影 + PCF） ---
     shadowMapResource = dxCommon->CreateShadowMapResource(kShadowMapSize, kShadowMapSize);
@@ -69,14 +69,29 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
     shadowDataResource->Map(0, nullptr, reinterpret_cast<void**>(&shadowData));
     shadowData->lightViewProjection = Calculation::MakeIdentity4x4();
     shadowData->bias = 0.0025f;
+    shadowData->orthoExtentWorld = shadowOrthoExtent;
+    shadowData->orthoDepthRangeWorld = shadowFarClip - shadowNearClip;
 
     // シャドウ用ルートシグネチャ・パイプラインの作成
     CreateShadowRootSignature();
     CreateShadowPipeline();
+
+    // --- スキニング未使用のObject3d用デフォルトボーンパレット（単位行列1個） ---
+    // SetBonePalette()を呼ばないObject3dは常にこれをt2にバインドすることで、
+    // ルートSRV未バインドによる「ゴミ変形」を防ぐ（頂点シェーダー側は必ずgSkinMatrices[0]等を参照するため）。
+    defaultBonePaletteResource = dxCommon->CreatBufferResource(sizeof(Matrix4x4));
+    Matrix4x4* defaultBonePaletteData = nullptr;
+    HRESULT hrPalette = defaultBonePaletteResource->Map(0, nullptr, reinterpret_cast<void**>(&defaultBonePaletteData));
+    if (FAILED(hrPalette)) {
+        Log("Object3dCommon: defaultBonePaletteResource Map failed.\n");
+        assert(false);
+    }
+    *defaultBonePaletteData = Calculation::MakeIdentity4x4();
+    defaultBonePaletteResource->Unmap(0, nullptr);
 }
 
 void Object3dCommon::CreateRootSignature() {
-    D3D12_ROOT_PARAMETER rootParameters[8] = {};
+    D3D12_ROOT_PARAMETER rootParameters[9] = {};
 
     // CBV: Material (b0)
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -131,6 +146,12 @@ void Object3dCommon::CreateRootSignature() {
     rootParameters[7].DescriptorTable.NumDescriptorRanges = 1;
     rootParameters[7].DescriptorTable.pDescriptorRanges = shadowDescriptorRange;
     rootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    // SRV: スキニング用ボーン行列パレット (t2、StructuredBuffer<float4x4>)
+    // ParticleCommon::CreateRootSignature()のt0直接バインドと同じ「ディスクリプタヒープ経由不要」の方式
+    rootParameters[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[8].Descriptor.ShaderRegister = 2; // t2
+    rootParameters[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
     D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature = {};
     descriptionRootSignature.pParameters = rootParameters;
@@ -201,11 +222,14 @@ void Object3dCommon::CreateGraphicsPipeline() {
     psoDesc.VS = { vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize() };
     psoDesc.PS = { pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize() };
 
-    // InputLayout設定（3D頂点用：POSITION, TEXCOORD, NORMAL）
-    D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+    // InputLayout設定（3D頂点用：POSITION, TEXCOORD, NORMAL, BLENDWEIGHT0, BLENDINDICES0）
+    // VertexDataのフィールド順(position,texcoord,normal,boneWeights,boneIndices)と一致させること
+    D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
     inputElementDescs[0] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[1] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[2] = { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[3] = { "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[4] = { "BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     psoDesc.InputLayout.pInputElementDescs = inputElementDescs;
     psoDesc.InputLayout.NumElements = _countof(inputElementDescs);
 
@@ -253,11 +277,15 @@ void Object3dCommon::CreateGraphicsPipeline() {
 }
 
 void Object3dCommon::CreateShadowRootSignature() {
-    // b0（WVPのみ）・VSのみの最小ルートシグネチャ
-    D3D12_ROOT_PARAMETER rootParameters[1] = {};
+    // b0（WVPのみ）・t2（スキニング用ボーン行列パレット）・VSのみの最小ルートシグネチャ
+    D3D12_ROOT_PARAMETER rootParameters[2] = {};
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
     rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[1].Descriptor.ShaderRegister = 2; // t2
+    rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
     D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature = {};
     descriptionRootSignature.pParameters = rootParameters;
@@ -291,11 +319,13 @@ void Object3dCommon::CreateShadowPipeline() {
     psoDesc.VS = { shadowVertexShaderBlob->GetBufferPointer(), shadowVertexShaderBlob->GetBufferSize() };
     // PSは使用しない（深度のみ書き込む）
 
-    // InputLayoutはメインと同じ頂点バッファを使い回すため同一（POSITIONのみ使用）
-    D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+    // InputLayoutはメインと同じ頂点バッファを使い回すため同一（POSITIONとスキニング属性のみ使用）
+    D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
     inputElementDescs[0] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[1] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[2] = { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[3] = { "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[4] = { "BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     psoDesc.InputLayout.pInputElementDescs = inputElementDescs;
     psoDesc.InputLayout.NumElements = _countof(inputElementDescs);
 
@@ -347,22 +377,28 @@ void Object3dCommon::PreDraw(Object3dBlendMode blendMode) {
 void Object3dCommon::UpdateLightViewProjection() {
     // ディレクショナルライトの向きから、ライト視点の正射影ビュープロジェクション行列を再計算する
     // （ImGuiでの向き変更にリアルタイム追従させるため）
-    // 外壁を高くした際に一番遠い壁角の深度がニアクリップを割り込まないよう30→40に拡大
-    const float kLightDistance = 40.0f;
-    // 光源が斜めのため、この左右/上下軸はワールドのX・Zが混ざった向きになる。
-    // 部屋の角(x,z=±30付近、アリーナ拡張後)をこの傾いた軸に投影すると約42まで達するため、55まで余裕を持たせる
-    // ※この値を変える場合はObject3d.PS.hlslのkOrthoExtentWorldも同じ値に合わせること
-    const float kOrthoExtent = 55.0f;
-    const float kNearClip = 0.1f;
-    const float kFarClip = 80.0f; // アリーナ拡張に合わせて余裕を持たせる。変更時はkOrthoDepthRangeWorld(HLSL側)も追従させること
-
+    // 正射影範囲(shadowLightDistance/shadowOrthoExtent/shadowNearClip/shadowFarClip)は
+    // シーンのスケール（マップの広さ・高さ）に依存する値。デフォルトは従来のマジックナンバーと同値。
+    // 外部から変更する場合はSetShadowOrthoRange()を呼ぶこと（PS側のkOrthoExtentWorld等は
+    // 定数バッファ経由で自動的に同期されるため、シェーダーの手動修正は不要）。
     Vector3 lightDirection = Calculation::Normalize(directionalLightData->direction);
-    Vector3 lightPosition = Vector3{ 0.0f, 0.0f, 0.0f } - lightDirection * kLightDistance;
+    Vector3 lightPosition = Vector3{ 0.0f, 0.0f, 0.0f } - lightDirection * shadowLightDistance;
     Vector3 up = (std::abs(lightDirection.y) > 0.99f) ? Vector3{ 0.0f, 0.0f, 1.0f } : Vector3{ 0.0f, 1.0f, 0.0f };
 
     Matrix4x4 lightViewMatrix = Calculation::MakeLookAtMatrix(lightPosition, Vector3{ 0.0f, 0.0f, 0.0f }, up);
-    Matrix4x4 lightProjectionMatrix = Calculation::MakeOrthographicMatrix(-kOrthoExtent, kOrthoExtent, kOrthoExtent, -kOrthoExtent, kNearClip, kFarClip);
+    Matrix4x4 lightProjectionMatrix = Calculation::MakeOrthographicMatrix(-shadowOrthoExtent, shadowOrthoExtent, shadowOrthoExtent, -shadowOrthoExtent, shadowNearClip, shadowFarClip);
     shadowData->lightViewProjection = lightViewMatrix * lightProjectionMatrix;
+
+    // PS側のPCSS計算がワールド距離⇔UV距離の換算に使う値を定数バッファ経由で渡す
+    shadowData->orthoExtentWorld = shadowOrthoExtent;
+    shadowData->orthoDepthRangeWorld = shadowFarClip - shadowNearClip;
+}
+
+void Object3dCommon::SetShadowOrthoRange(float lightDistance, float orthoExtent, float nearClip, float farClip) {
+    shadowLightDistance = lightDistance;
+    shadowOrthoExtent = orthoExtent;
+    shadowNearClip = nearClip;
+    shadowFarClip = farClip;
 }
 
 void Object3dCommon::PreDrawShadow() {

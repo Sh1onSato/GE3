@@ -41,7 +41,9 @@ struct ShadowData
 {
     float4x4 lightViewProjection;
     float bias;
-    float3 padding;
+    float orthoExtentWorld;     // 正射影の片側半幅（C++側Object3dCommon::SetShadowOrthoRange()で設定）
+    float orthoDepthRangeWorld; // ファークリップ - ニアクリップ
+    float padding;
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
@@ -58,14 +60,14 @@ SamplerComparisonState gShadowSampler : register(s1);
 
 // ディレクショナルライトのシャドウ係数を計算する（1.0=影なし、0.0=完全に影）
 // PCSS(Percentage-Closer Soft Shadows)風に、遮蔽物と受光面の距離が離れているほど影の輪郭をぼかす
+// ※HLSLの制約上cbuffer経由の値から静的定数を導出できないため直書き。変更時はC++側
+//   Object3dCommon::kShadowMapSizeも同じ値に手動で合わせること
 static const float kShadowMapResolution = 4096.0f;
 static const float kShadowMapTexelSize = 1.0f / kShadowMapResolution;
 // 法線方向のオフセット量（壁のように光に対してほぼ真横を向く面でのシャドウアクネ対策）
 static const float kNormalOffsetScale = 0.05f;
-// Object3dCommon.cpp の UpdateLightViewProjection() 内の定数と一致させること
-// （正射影の全幅・深度レンジをワールド距離⇔UV距離の換算に使うため）
-static const float kOrthoExtentWorld = 55.0f;     // kOrthoExtent
-static const float kOrthoDepthRangeWorld = 79.9f; // kFarClip - kNearClip
+// 正射影の全幅・深度レンジ（ワールド距離⇔UV距離の換算に使用）は
+// C++側Object3dCommon::SetShadowOrthoRange()から定数バッファ(gShadowData)経由で渡される
 // 影のぼかしやすさ（大きいほど、遮蔽物から受光面までの距離に対してペナンブラが広がりやすい）
 static const float kPenumbraSlope = 0.3f;
 static const float kMinFilterRadiusUV = kShadowMapTexelSize;      // 接触影は硬く保つための下限
@@ -129,9 +131,9 @@ float CalculateDirectionalShadow(float3 worldPosition, float3 normal, float Ndot
 
     // 2. ペナンブラ幅の推定：遮蔽物と受光面のギャップ(ワールド距離)が大きいほど輪郭を広くぼかす
     //    正射影(平行光線)は遠近除算が不要なため、ギャップ距離に比例させるだけでよい
-    float gapWorld = (receiverZ - avgBlockerZ) * kOrthoDepthRangeWorld;
+    float gapWorld = (receiverZ - avgBlockerZ) * gShadowData.orthoDepthRangeWorld;
     float penumbraWorld = kPenumbraSlope * gapWorld;
-    float filterRadiusUV = clamp(penumbraWorld / (2.0f * kOrthoExtentWorld), kMinFilterRadiusUV, kMaxFilterRadiusUV);
+    float filterRadiusUV = clamp(penumbraWorld / (2.0f * gShadowData.orthoExtentWorld), kMinFilterRadiusUV, kMaxFilterRadiusUV);
 
     // 3. 可変半径のPCF（ペナンブラ幅に応じてサンプリング範囲を広げ、ぼかし具合を距離に応じて変える）
     float shadowFactor = 0.0f;

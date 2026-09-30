@@ -76,6 +76,11 @@ void Object3d::Draw() {
     // WVPバッファをセット (b1)
     commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 
+    // スキニング用ボーン行列パレットをセット (t2、ルートSRV)
+    // 未設定ならObject3dCommon側のデフォルト単位行列パレットにフォールバックする
+    D3D12_GPU_VIRTUAL_ADDRESS paletteAddress = bonePaletteResource ? bonePaletteResource->GetGPUVirtualAddress() : common->GetDefaultBonePaletteGPUAddress();
+    commandList->SetGraphicsRootShaderResourceView(8, paletteAddress);
+
     // モデル自身の描画処理
     model->Draw(commandList);
 }
@@ -88,8 +93,13 @@ void Object3d::DrawShadow(const Matrix4x4& lightViewProjection) {
     // ライト視点のWVP行列を計算して転送
     *shadowWvpData = worldMatrix * lightViewProjection;
 
-    // WVPバッファをセット (b0、シャドウ用ルートシグネチャはこれのみ)
+    // WVPバッファをセット (b0、シャドウ用ルートシグネチャの構成は[0]=b0, [1]=t2)
     commandList->SetGraphicsRootConstantBufferView(0, shadowWvpResource->GetGPUVirtualAddress());
+
+    // スキニング用ボーン行列パレットをセット (t2、ルートSRV、index1)
+    // ここを忘れると影だけバインドポーズのまま焼き付くので注意
+    D3D12_GPU_VIRTUAL_ADDRESS shadowPaletteAddress = bonePaletteResource ? bonePaletteResource->GetGPUVirtualAddress() : common->GetDefaultBonePaletteGPUAddress();
+    commandList->SetGraphicsRootShaderResourceView(1, shadowPaletteAddress);
 
     // 深度のみの描画（Model::Drawはテクスチャ用のディスクリプタテーブルをb2にセットするため、
     // シャドウ用ルートシグネチャ(b0のみ)では使えない。頂点バッファのバインドとDrawInstancedのみ直接発行する）

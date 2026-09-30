@@ -1,6 +1,7 @@
 #include "Calculation.h"
-#include <cmath> 
-#include <numbers> 
+#include <cmath>
+#include <numbers>
+#include <algorithm>
 
 // --- Matrix4x4 演算子オーバーロード ---
 
@@ -396,6 +397,40 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 	return true;
 }
 
+bool Calculation::TestSphereAABB(const Sphere& sphere, const AABB& aabb, Vector3* outPushDir) {
+	// AABB内で球の中心に最も近い点（各軸ごとにAABBの範囲内へクランプするだけで求まる）
+	float closestX = (std::max)(aabb.min.x, (std::min)(sphere.center.x, aabb.max.x));
+	float closestY = (std::max)(aabb.min.y, (std::min)(sphere.center.y, aabb.max.y));
+	float closestZ = (std::max)(aabb.min.z, (std::min)(sphere.center.z, aabb.max.z));
+
+	float dx = sphere.center.x - closestX;
+	float dy = sphere.center.y - closestY;
+	float dz = sphere.center.z - closestZ;
+	float distanceSq = dx * dx + dy * dy + dz * dz;
+
+	if (distanceSq > sphere.radius * sphere.radius) {
+		return false;
+	}
+
+	if (outPushDir) {
+		if (distanceSq > 0.0001f) {
+			float dist = std::sqrt(distanceSq);
+			*outPushDir = { dx / dist, dy / dist, dz / dist };
+		} else {
+			// 球の中心がAABBの面/辺/角の真上にある特異点。呼び出し側でゼロ扱いにして個別に対処すること
+			*outPushDir = { 0.0f, 0.0f, 0.0f };
+		}
+	}
+	return true;
+}
+
+AABB Calculation::MakeAABBFromTransform(const struct Transform& transform) {
+	AABB aabb;
+	aabb.min = { transform.translate.x - transform.scale.x, transform.translate.y - transform.scale.y, transform.translate.z - transform.scale.z };
+	aabb.max = { transform.translate.x + transform.scale.x, transform.translate.y + transform.scale.y, transform.translate.z + transform.scale.z };
+	return aabb;
+}
+
 Quaternion Calculation::Multiply(const Quaternion& q, const Quaternion& r) {
 	return {
 		q.w * r.x + q.x * r.w + q.y * r.z - q.z * r.y,
@@ -452,7 +487,7 @@ Quaternion Calculation::DirectionToDirection(const Vector3& from, const Vector3&
 		if (Length(axis) < 1e-6f) {
 			axis = Cross({ 0.0f, 1.0f, 0.0f }, f);
 		}
-		return MakeAxisAngleQuaternion(Normalize(axis), 3.14159265358979323846f);
+		return MakeAxisAngleQuaternion(Normalize(axis), kPi);
 	}
 
 	Vector3 axis = Cross(f, t);

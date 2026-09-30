@@ -10,6 +10,7 @@ void MyGame::Initialize() {
 	sceneManager->SetSceneFactory(sceneFactory.get());
 
 	// 最初のアクティブシーンを設定
+	// ※スキニング検証(SkinningTestScene)を試す場合は、ここを一時的に"SKINNING_TEST"に変更してください（恒久変更はしないこと）
 	sceneManager->ChangeScene("TITLE");
 }
 

@@ -41,7 +41,14 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
 
     // 頂点データの書き込み
+    // ※Map()で取得するのはGPUバッファの生メモリで、C++のデフォルトメンバ初期化子は適用されない
+    //   （VertexDataのboneWeights/boneIndicesがゴミ値のままだとObject3d.VS.hlslのスキニング計算で
+    //   意図しない変形になるため、Spriteでは常に「ボーン0を全重み」で明示的に初期化する）
     vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    for (int i = 0; i < 4; ++i) {
+        VertexDataSprite[i].boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+        VertexDataSprite[i].boneIndices[0] = VertexDataSprite[i].boneIndices[1] = VertexDataSprite[i].boneIndices[2] = VertexDataSprite[i].boneIndices[3] = 0;
+    }
     VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
     VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
     VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };
@@ -103,8 +110,12 @@ void Sprite::Update() {
     float tex_top = texLeftTop.y / static_cast<float>(metadate.height);
     float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
 
-    // 頂点データの書き込み
+    // 頂点データの書き込み（boneWeights/boneIndicesの明示初期化についてはInitialize()側のコメント参照）
     vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    for (int i = 0; i < 4; ++i) {
+        VertexDataSprite[i].boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+        VertexDataSprite[i].boneIndices[0] = VertexDataSprite[i].boneIndices[1] = VertexDataSprite[i].boneIndices[2] = VertexDataSprite[i].boneIndices[3] = 0;
+    }
     VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
     VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
     VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };

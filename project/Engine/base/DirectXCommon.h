@@ -113,8 +113,12 @@ const D3D12_RECT& GetScissorRect() const { return scissorRect; }
     [[nodiscard]]
     Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(Microsoft::WRL::ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon);
 
-    // 最大SRV数(最大テクスチャ数)
-    static const uint32_t kMaxSrvCount;
+    // RTV/DSVヒープのサイズ上限（用途別に分離。SRV用の上限はSrvManager::kMaxSRVCountを参照）
+    static const uint32_t kMaxRtvCount;
+    static const uint32_t kMaxDsvCount;
+
+    // 画面クリアカラー（背景色）。PostProcessのオフスクリーンRTVクリアもこの値を共用する
+    static constexpr float kClearColor[4] = { 0.1f, 0.25f, 0.5f, 1.0f };
 private:
     // --- 基盤系 ---
     WinApp* winApp = nullptr;

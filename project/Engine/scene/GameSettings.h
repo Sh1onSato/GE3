@@ -1,7 +1,7 @@
 #pragma once
 
-// タイトル画面で調整し、GameScene開始時に引き継ぐ設定値のシングルトン。
-// シーンをまたいで値を保持するための最小限のプロセス内メモリ保持（ファイル永続化はしない）。
+// シーンをまたいで値を保持するための最小限のプロセス内メモリ保持シングルトン（ファイル永続化はしない）。
+// 現状はFPS視点ゲーム向けの項目（マウス感度・目線の高さ）のみ保持。他ジャンルで使う場合は項目自体を見直すこと。
 class GameSettings {
 public:
 	static GameSettings* GetInstance();
@@ -12,7 +12,7 @@ public:
 	float GetEyeHeight() const { return eyeHeight; }
 	void SetEyeHeight(float value) { eyeHeight = value; }
 
-	// GameSceneのFPS Debugパネルと同じ範囲に揃える
+	// UI（SettingsMenu等）の入力範囲として使う想定の定数
 	static constexpr float kMouseSensitivityMin = 0.0001f;
 	static constexpr float kMouseSensitivityMax = 0.01f;
 	static constexpr float kEyeHeightMin = 0.1f;
