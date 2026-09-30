@@ -71,8 +71,9 @@ void TextureManager::CreateInternalDigitFontTexture() {
 	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
 	if (it != textureDatas.end()) return;
 
-	// 5x7ドットマトリクスのビットパターン（1=点灯）。"0"-"9" "." "-" 空白 の順、全13グリフ
-	constexpr int kGlyphCount = 13;
+	// 5x7ドットマトリクスのビットパターン（1=点灯）。"0"-"9" "." "-" 空白 に続き、
+	// 勝敗演出（WIN/LOSE）・終了確認（QUIT）表示のためW/I/N/L/O/S/E/Q/U/Tのみ追加、全23グリフ
+	constexpr int kGlyphCount = 23;
 	constexpr int kGlyphWidth = 5;
 	constexpr int kGlyphHeight = 7;
 	static const uint8_t kGlyphs[kGlyphCount][kGlyphHeight] = {
@@ -89,6 +90,16 @@ void TextureManager::CreateInternalDigitFontTexture() {
 		{0b00000,0b00000,0b00000,0b00000,0b00000,0b01100,0b01100}, // .
 		{0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000}, // -
 		{0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000}, // (空白)
+		{0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001}, // W
+		{0b01110,0b00100,0b00100,0b00100,0b00100,0b00100,0b01110}, // I
+		{0b10001,0b11001,0b10101,0b10101,0b10011,0b10001,0b10001}, // N
+		{0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111}, // L
+		{0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // O
+		{0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110}, // S
+		{0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111}, // E
+		{0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101}, // Q
+		{0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // U
+		{0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100}, // T
 	};
 
 	// 各グリフは7x9セル（5x7の実体＋周囲1pxの透明パディング）に配置。

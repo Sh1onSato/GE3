@@ -21,6 +21,10 @@ public:
         float step = 0.05f; // bool項目では未使用
         std::function<float()> getValue;      // bool項目は0.0/1.0を返す
         std::function<void(float)> setValue;  // bool項目は0.5を閾値にON/OFF判定
+        // 値テキストの小数点以下桁数（例：感度のような小さい値は桁数を増やす）。
+        // 末尾に追加しているのは、GameScene.cpp側の既存コードが{color, isBool, min, max, step, getValue, setValue}の
+        // 位置指定の集成体初期化（aggregate initialization）を使っているため、途中に挿入すると型が合わずビルドエラーになるのを避けるため
+        int displayDecimals = 2;
     };
 
     void Initialize(SpriteCommon* spriteCommon, std::vector<Item> items);

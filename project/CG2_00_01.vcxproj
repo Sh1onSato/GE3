@@ -172,6 +172,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\math\Calculation.cpp" />
     <ClCompile Include="Engine\base\DirectXCommon.cpp" />
     <ClCompile Include="Engine\scene\GameScene.cpp" />
+    <ClCompile Include="Engine\scene\GameSettings.cpp" />
     <ClCompile Include="Engine\scene\SceneFactory.cpp" />
     <ClCompile Include="Engine\scene\SceneManager.cpp" />
     <ClCompile Include="Engine\scene\TitleScene.cpp" />
@@ -248,6 +249,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\scene\AbstractSceneFactory.h" />
     <ClInclude Include="Engine\scene\BaseScene.h" />
     <ClInclude Include="Engine\scene\GameScene.h" />
+    <ClInclude Include="Engine\scene\GameSettings.h" />
     <ClInclude Include="Engine\scene\SceneFactory.h" />
     <ClInclude Include="Engine\scene\SceneManager.h" />
     <ClInclude Include="Engine\scene\TitleScene.h" />

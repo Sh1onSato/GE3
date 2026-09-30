@@ -5,11 +5,16 @@
 #include "CameraManager.h"
 #include "ParticleManager.h"
 #include "ParticleEmitter.h"
+#include "GameSettings.h"
 #include "externals/imgui/imgui.h"
 #include <algorithm>
 
 void GameScene::Initialize() {
     Framework* framework = Framework::GetInstance();
+
+    // タイトル画面で調整された値を引き継ぐ
+    mouseSensitivity = GameSettings::GetInstance()->GetMouseSensitivity();
+    eyeHeight = GameSettings::GetInstance()->GetEyeHeight();
 
     TextureManager::GetInstance()->LoadTexture("Resources/uvChecker.png");
     TextureManager::GetInstance()->LoadTexture("Resources/monsterBall.png");
@@ -71,11 +76,37 @@ void GameScene::Initialize() {
     bossHpBarFill->SetSize({ kBossHpBarMaxWidth, kBossHpBarHeight });
     bossHpBarFill->SetColor({ 0.6f, 0.05f, 0.5f, 1.0f });
 
+    // --- 勝敗演出用の全画面オーバーレイ（仮：初期状態は透明） ---
+    gameOverOverlay = std::make_unique<Sprite>();
+    gameOverOverlay->Initialize(framework->GetSpriteCommon(), "white");
+    gameOverOverlay->SetPosition({ 0.0f, 0.0f });
+    gameOverOverlay->SetSize({ (float)WinApp::KclientWidth, (float)WinApp::KclientHeight });
+    gameOverOverlay->SetColor({ 0.0f, 0.0f, 0.0f, 0.0f });
+
+    gameOverText.Initialize(framework->GetSpriteCommon(), 4); // "LOSE"が最大4文字
+    gameOverText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+
+    // --- 終了確認オーバーレイ（フェード無し、確認中は常に一定の暗さで即表示） ---
+    quitConfirmOverlay = std::make_unique<Sprite>();
+    quitConfirmOverlay->Initialize(framework->GetSpriteCommon(), "white");
+    quitConfirmOverlay->SetPosition({ 0.0f, 0.0f });
+    quitConfirmOverlay->SetSize({ (float)WinApp::KclientWidth, (float)WinApp::KclientHeight });
+    quitConfirmOverlay->SetColor({ 0.0f, 0.0f, 0.0f, 0.6f });
+
+    quitConfirmText.Initialize(framework->GetSpriteCommon(), 4); // "QUIT"固定4文字
+    quitConfirmText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    quitConfirmText.SetText("QUIT");
+    float quitTextWidth = kGameOverTextCharWidth * 4.0f;
+    quitConfirmText.SetPosition({ ((float)WinApp::KclientWidth - quitTextWidth) / 2.0f, kGameOverTextPositionY });
+
     std::unique_ptr<Camera> newCamera = std::make_unique<Camera>();
     CameraManager::GetInstance()->AddCamera("MainCamera", std::move(newCamera));
     camera = CameraManager::GetInstance()->GetActiveCamera();
     
-    playerPos = { 0.0f, 0.0f, -10.0f };
+    // z=-10だと南側中央カバー({0,1.0,-12}, half-extent{1.5,2.0,1.5} → z範囲[-13.5,-10.5])との
+    // 距離がcollisionRadius(0.5)とちょうど境界一致し、接地判定がこのカバーの天面(y=3)を
+    // 拾ってプレイヤーがブロックの上に立った状態でスポーンしてしまうため、余裕を持って離す
+    playerPos = { 0.0f, 0.0f, -8.0f };
     camera->SetTranslate({ playerPos.x, playerPos.y + eyeHeight, playerPos.z });
 
     cubeModel = std::make_unique<Model>();
@@ -157,6 +188,19 @@ void GameScene::Initialize() {
     boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
     boss->SetScale({ 2.0f, 2.5f, 2.0f });
     boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 紫系でプレイヤー・的と区別する
+
+    // ボスの遠距離攻撃（グレネード）用のプール
+    grenades.reserve(kMaxGrenades);
+    for (int i = 0; i < kMaxGrenades; ++i) {
+        Grenade grenade;
+        grenade.object = std::make_unique<Object3d>();
+        grenade.object->Initialize(framework->GetObject3dCommon());
+        grenade.object->SetModel(cubeModel.get());
+        grenade.object->SetScale({ 0.2f, 0.2f, 0.2f });
+        grenade.object->SetColor({ 0.2f, 0.35f, 0.15f, 1.0f }); // 暗緑色
+        grenade.active = false;
+        grenades.push_back(std::move(grenade));
+    }
 
     planeModel = std::make_unique<Model>();
     // plane.obj相当のXY平面(法線+Z、2x2サイズ)をコード内で生成し、外部リソースファイルへの依存をなくす
@@ -304,6 +348,46 @@ void GameScene::Update() {
     Input* input = framework->GetInput();
     Transform& cameraTransform = camera->GetTransform();
 
+    // --- 終了確認中は他の更新を全て止め、Enter(終了確定)/ESC(キャンセル)の入力のみ受け付ける ---
+    if (quitConfirming) {
+        if (input->TriggerKey(DIK_RETURN)) {
+            framework->RequestEnd();
+        } else if (input->TriggerKey(DIK_ESCAPE)) {
+            quitConfirming = false;
+            // 確認画面を開く前の状態（プレイ中）に戻す。ポーズ中・ゲームオーバー中に開いた場合はマウス表示のまま
+            if (!isLookPaused && !gameOver) {
+                winApp->ShowCursor(false);
+                winApp->SetClipCursor(true);
+            }
+        }
+        quitConfirmOverlay->Update();
+        quitConfirmText.Update();
+        return;
+    }
+
+    // --- ESCキーで終了確認を開始（プレイ中・設定メニュー中・ゲームオーバー中いずれからでも） ---
+    if (input->TriggerKey(DIK_ESCAPE)) {
+        quitConfirming = true;
+        winApp->ShowCursor(true);
+        winApp->SetClipCursor(false);
+        return;
+    }
+
+    // --- 勝敗が決した後は完全に停止し、オーバーレイのフェードインだけ進める ---
+    if (gameOver) {
+        gameOverFadeTimer = (std::min)(gameOverFadeTimer + 1.0f / 60.0f, kGameOverFadeDuration);
+        float alpha = (gameOverFadeTimer / kGameOverFadeDuration) * 0.6f;
+        gameOverOverlay->SetColor(playerWon ? Vector4{ 0.75f, 0.6f, 0.15f, alpha } : Vector4{ 0.6f, 0.05f, 0.05f, alpha });
+        gameOverOverlay->Update();
+        gameOverText.Update();
+
+        // フェードが終わってから（演出の途中で誤爆しないように）Enterキーでリスタート
+        if (gameOverFadeTimer >= kGameOverFadeDuration && input->TriggerKey(DIK_RETURN)) {
+            RestartGame();
+        }
+        return;
+    }
+
     // --- マウス操作（プレイ中のみ） ---
     if (!isLookPaused) {
         Input::MouseMove mouseMove = input->GetMouseMove();
@@ -350,11 +434,6 @@ void GameScene::Update() {
         }
     }
 
-    // --- プレイヤーHPのテストダメージ（Nキー。ボス未実装のため動作確認用の仮トリガー） ---
-    if (input->TriggerKey(DIK_N)) {
-        TakeDamage(kTestDamageAmount);
-    }
-
     // --- 武器モード切り替え（1:ライフル／2:ポータルガン） ---
     if (input->TriggerKey(DIK_1)) {
         weaponMode = WeaponMode::kRifle;
@@ -399,6 +478,13 @@ void GameScene::Update() {
         moveDir += portalExitVelocity * (portalExitVelocityTimer / kPortalExitVelocityDuration);
         portalExitVelocityTimer -= 1.0f / 60.0f;
         if (portalExitVelocityTimer < 0.0f) portalExitVelocityTimer = 0.0f;
+    }
+
+    // ボスの近接突進がヒットした時のノックバックを、減衰させながら移動方向へ加算する（上と同じ方式）
+    if (knockbackVelocityTimer > 0.0f) {
+        moveDir += knockbackVelocity * (knockbackVelocityTimer / kKnockbackDuration);
+        knockbackVelocityTimer -= 1.0f / 60.0f;
+        if (knockbackVelocityTimer < 0.0f) knockbackVelocityTimer = 0.0f;
     }
 
     const float kGravity = -0.02f;
@@ -498,107 +584,228 @@ void GameScene::Update() {
         }
     }
 
-    // --- ボスの移動AI（常に追いかける。距離が遠いほど速く、HPが減るほど怒り状態で速くなる） ---
-    // playerPosがポータル移動も含めて確定した後（UpdatePortalTeleport済み）に計算する
+    // --- ボスの攻撃AI／移動AI ---
+    // playerPosがポータル移動も含めて確定した後（UpdatePortalTeleport済み）に計算する。
+    // kChasing中は既存の追跡・障害物回避ロジックで動き続けながらbossAttackTimerを減算し、
+    // 0以下になったらその時点の距離で近接突進／遠距離グレネードを自動選択する
+    // （＝クールダウン中もボスは棒立ちにならず、既存の追跡AIをそのまま活かす設計）
     {
         Vector3 toPlayer = { playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z };
         float distance = Calculation::Length(toPlayer);
+        Vector3 dirToPlayer = (distance > 0.0001f) ? Calculation::Normalize(toPlayer) : Vector3{ 0.0f, 0.0f, 1.0f };
 
-        if (distance > kBossStopDistance) {
-            float distanceT = std::clamp((distance - kBossStopDistance) / (kBossFarDistance - kBossStopDistance), 0.0f, 1.0f);
-            float baseSpeed = kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
+        switch (bossAttackState) {
+        case BossAttackState::kChasing: {
+            if (distance > kBossStopDistance) {
+                float distanceT = std::clamp((distance - kBossStopDistance) / (kBossFarDistance - kBossStopDistance), 0.0f, 1.0f);
+                float baseSpeed = kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
 
-            float hpRatio = bossHP / kBossMaxHP;
-            float enrageMultiplier = 1.0f + (kBossEnrageMaxMultiplier - 1.0f) * (1.0f - hpRatio);
+                float hpRatio = bossHP / kBossMaxHP;
+                float enrageMultiplier = 1.0f + (kBossEnrageMaxMultiplier - 1.0f) * (1.0f - hpRatio);
 
-            float bossMoveSpeed = baseSpeed * enrageMultiplier;
-            Vector3 dir = Calculation::Normalize(toPlayer);
-            Vector3 moveDelta = { dir.x * bossMoveSpeed, 0.0f, dir.z * bossMoveSpeed };
+                float bossMoveSpeed = baseSpeed * enrageMultiplier;
+                Vector3 dir = dirToPlayer;
+                Vector3 moveDelta = { dir.x * bossMoveSpeed, 0.0f, dir.z * bossMoveSpeed };
 
-            const float kGroundOffset = 0.05f; // 床との判定を避けるためのオフセット（プレイヤー側と同じ手法）
+                const float kGroundOffset = 0.05f; // 床との判定を避けるためのオフセット（プレイヤー側と同じ手法）
 
-            // まずは直進を試す
-            Vector3 nextBossPos = bossPos;
-            nextBossPos.x += moveDelta.x;
-            nextBossPos.z += moveDelta.z;
-            Vector3 checkBossPos = nextBossPos;
-            checkBossPos.y += kGroundOffset;
+                // まずは直進を試す
+                Vector3 nextBossPos = bossPos;
+                nextBossPos.x += moveDelta.x;
+                nextBossPos.z += moveDelta.z;
+                Vector3 checkBossPos = nextBossPos;
+                checkBossPos.y += kGroundOffset;
 
-            bool bossMoved = false;
-            Vector3 pushDir{};
-            if (!CheckCollision(checkBossPos, nullptr, kBossCollisionRadius, &pushDir)) {
-                // 直進が通る＝障害物との接触が途切れたので、回避方向の保持を解除して直進に戻る
-                bossAvoiding = false;
-                bossPos = nextBossPos;
-                bossMoved = true;
-            } else {
-                // 直進すると衝突する場合、実際に当たっている面の法線(pushDir)を使って壁沿いに滑らせる。
-                // 直進方向から法線成分を取り除く（平面へ射影する）ことで、当たっている方向"以外"の
-                // 成分だけが残り、具体的にどの障害物のどの面に当たっているかに応じて自然に回り込める
-                // （左右をプレイヤーの位置関係だけで決め打ちする方式は、たまたま選んだ側が塞がっている
-                // 袋小路で永久に詰んでしまう問題があったため、実際の衝突面を見る方式に変更した）
-                // ただし衝突が続いている間、毎フレーム滑り方向を再計算すると角でガクつくため、
-                // 塞がった最初のフレームだけ計算してbossAvoidDirに保持し、以後はそれを使い続ける。
-                if (!bossAvoiding && (pushDir.x != 0.0f || pushDir.z != 0.0f)) {
-                    Vector3 normal = { pushDir.x, 0.0f, pushDir.z };
-                    float normalLen = Calculation::Length(normal);
-                    if (normalLen > 0.0001f) {
-                        normal = { normal.x / normalLen, 0.0f, normal.z / normalLen };
-                        float dot = dir.x * normal.x + dir.z * normal.z;
-                        Vector3 slideDir = { dir.x - dot * normal.x, 0.0f, dir.z - dot * normal.z };
-                        float slideLen = Calculation::Length(slideDir);
-                        if (slideLen > 0.0001f) {
-                            slideDir = { slideDir.x / slideLen, 0.0f, slideDir.z / slideLen };
-                            bossAvoidDir = slideDir;
-                            bossAvoiding = true;
+                bool bossMoved = false;
+                Vector3 pushDir{};
+                if (!CheckCollision(checkBossPos, nullptr, kBossCollisionRadius, &pushDir)) {
+                    // 直進が通る＝障害物との接触が途切れたので、回避方向の保持を解除して直進に戻る
+                    bossAvoiding = false;
+                    bossPos = nextBossPos;
+                    bossMoved = true;
+                } else {
+                    // 直進すると衝突する場合、実際に当たっている面の法線(pushDir)を使って壁沿いに滑らせる。
+                    // 直進方向から法線成分を取り除く（平面へ射影する）ことで、当たっている方向"以外"の
+                    // 成分だけが残り、具体的にどの障害物のどの面に当たっているかに応じて自然に回り込める
+                    // （左右をプレイヤーの位置関係だけで決め打ちする方式は、たまたま選んだ側が塞がっている
+                    // 袋小路で永久に詰んでしまう問題があったため、実際の衝突面を見る方式に変更した）
+                    // ただし衝突が続いている間、毎フレーム滑り方向を再計算すると角でガクつくため、
+                    // 塞がった最初のフレームだけ計算してbossAvoidDirに保持し、以後はそれを使い続ける。
+                    if (!bossAvoiding && (pushDir.x != 0.0f || pushDir.z != 0.0f)) {
+                        Vector3 normal = { pushDir.x, 0.0f, pushDir.z };
+                        float normalLen = Calculation::Length(normal);
+                        if (normalLen > 0.0001f) {
+                            normal = { normal.x / normalLen, 0.0f, normal.z / normalLen };
+                            float dot = dir.x * normal.x + dir.z * normal.z;
+                            Vector3 slideDir = { dir.x - dot * normal.x, 0.0f, dir.z - dot * normal.z };
+                            float slideLen = Calculation::Length(slideDir);
+                            if (slideLen > 0.0001f) {
+                                slideDir = { slideDir.x / slideLen, 0.0f, slideDir.z / slideLen };
+                                bossAvoidDir = slideDir;
+                                bossAvoiding = true;
+                            }
+                        }
+                    }
+
+                    if (bossAvoiding) {
+                        Vector3 slidePos = bossPos;
+                        slidePos.x += bossAvoidDir.x * bossMoveSpeed;
+                        slidePos.z += bossAvoidDir.z * bossMoveSpeed;
+                        Vector3 checkSlidePos = slidePos;
+                        checkSlidePos.y += kGroundOffset;
+                        if (!CheckCollision(checkSlidePos, nullptr, kBossCollisionRadius)) {
+                            bossPos = slidePos;
+                            bossMoved = true;
+                        } else {
+                            // 保持していた回避方向が別の障害物に塞がれて進めなかった場合、
+                            // そのまま保持し続けると恒久的に詰むため、保持を解除して次フレームで再計算させる
+                            bossAvoiding = false;
                         }
                     }
                 }
 
-                if (bossAvoiding) {
-                    Vector3 slidePos = bossPos;
-                    slidePos.x += bossAvoidDir.x * bossMoveSpeed;
-                    slidePos.z += bossAvoidDir.z * bossMoveSpeed;
-                    Vector3 checkSlidePos = slidePos;
-                    checkSlidePos.y += kGroundOffset;
-                    if (!CheckCollision(checkSlidePos, nullptr, kBossCollisionRadius)) {
-                        bossPos = slidePos;
-                        bossMoved = true;
-                    } else {
-                        // 保持していた回避方向が別の障害物に塞がれて進めなかった場合、
-                        // そのまま保持し続けると恒久的に詰むため、保持を解除して次フレームで再計算させる
-                        bossAvoiding = false;
+                // 詰み検出＆後退フォールバック：直進もスライドも失敗する状態が一定時間続いたら、
+                // プレイヤーから離れる方向へ後退を試みて角・隅の膠着から抜け出す（試行4の常時左右交互とは異なり、
+                // あくまで最終手段としてのみ発動する）
+                if (!bossMoved) {
+                    bossStuckTimer += 1.0f / 60.0f;
+                    if (bossStuckTimer > kBossStuckRetreatDelay) {
+                        Vector3 retreatPos = bossPos;
+                        retreatPos.x -= dir.x * bossMoveSpeed;
+                        retreatPos.z -= dir.z * bossMoveSpeed;
+                        Vector3 checkRetreatPos = retreatPos;
+                        checkRetreatPos.y += kGroundOffset;
+                        if (!CheckCollision(checkRetreatPos, nullptr, kBossCollisionRadius)) {
+                            bossPos = retreatPos;
+                            bossAvoiding = false;   // 後退後は仕切り直して直進から再判定させる
+                            bossMoved = true;       // 動けたので詰み扱いを解除する
+                            bossStuckTimer = 0.0f;  // このifブロックはbossMoved=false時にしか実行されないため明示的にリセットが必要
+                        }
                     }
+                } else {
+                    bossStuckTimer = 0.0f;
                 }
-            }
 
-            // 詰み検出＆後退フォールバック：直進もスライドも失敗する状態が一定時間続いたら、
-            // プレイヤーから離れる方向へ後退を試みて角・隅の膠着から抜け出す（試行4の常時左右交互とは異なり、
-            // あくまで最終手段としてのみ発動する）
-            if (!bossMoved) {
-                bossStuckTimer += 1.0f / 60.0f;
-                if (bossStuckTimer > kBossStuckRetreatDelay) {
-                    Vector3 retreatPos = bossPos;
-                    retreatPos.x -= dir.x * bossMoveSpeed;
-                    retreatPos.z -= dir.z * bossMoveSpeed;
-                    Vector3 checkRetreatPos = retreatPos;
-                    checkRetreatPos.y += kGroundOffset;
-                    if (!CheckCollision(checkRetreatPos, nullptr, kBossCollisionRadius)) {
-                        bossPos = retreatPos;
-                        bossAvoiding = false;   // 後退後は仕切り直して直進から再判定させる
-                        bossMoved = true;       // 動けたので詰み扱いを解除する
-                        bossStuckTimer = 0.0f;  // このifブロックはbossMoved=false時にしか実行されないため明示的にリセットが必要
-                    }
-                }
+                // 移動方向へ向きを合わせる（プレイヤーのforwardベクトルと同じsin/cos規約）
+                boss->SetRotate({ 0.0f, std::atan2(dir.x, dir.z), 0.0f });
             } else {
-                bossStuckTimer = 0.0f;
+                // 間合いに入って停止中も、常にプレイヤーの方を向く
+                boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
             }
 
-            // 移動方向へ向きを合わせる（プレイヤーのforwardベクトルと同じsin/cos規約）
-            boss->SetRotate({ 0.0f, std::atan2(dir.x, dir.z), 0.0f });
+            // 攻撃判定：クールダウン(bossAttackTimer)が明けたら、距離しきい値で近接突進／遠距離グレネードを自動選択する
+            if (bossAttackTimer > 0.0f) {
+                bossAttackTimer -= 1.0f / 60.0f;
+            } else if (distance <= kBossMeleeRange) {
+                bossAttackState = BossAttackState::kMeleeWindup;
+                bossAttackTimer = kBossMeleeWindupDuration;
+                boss->SetColor({ 1.0f, 0.2f, 0.1f, 1.0f }); // 突進予備動作：警告色（赤）
+            } else {
+                bossAttackState = BossAttackState::kRangedWindup;
+                bossAttackTimer = kBossRangedWindupDuration;
+                boss->SetColor({ 1.0f, 0.6f, 0.1f, 1.0f }); // 投擲予備動作：警告色（橙）
+            }
+            break;
+        }
+        case BossAttackState::kMeleeWindup: {
+            // 予備動作中はプレイヤーの方を向いたまま停止し、突進の狙いを最後まで追従させる
+            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
+            bossAttackTimer -= 1.0f / 60.0f;
+            if (bossAttackTimer <= 0.0f) {
+                bossDashDir = dirToPlayer; // 突進方向はここで固定し、以後は追尾しない
+                bossAttackState = BossAttackState::kMeleeDash;
+                bossAttackTimer = kBossMeleeDashDuration;
+                bossDashCurrentSpeed = kBossDashStartSpeed; // 突進開始時は遅めから、加速しながら距離を詰める
+                boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 通常色に戻す
+            }
+            break;
+        }
+        case BossAttackState::kMeleeDash: {
+            const float kGroundOffset = 0.05f;
+            bossDashCurrentSpeed = (std::min)(bossDashCurrentSpeed + kBossDashAcceleration, kBossDashMaxSpeed);
+
+            Vector3 nextBossPos = bossPos;
+            nextBossPos.x += bossDashDir.x * bossDashCurrentSpeed;
+            nextBossPos.z += bossDashDir.z * bossDashCurrentSpeed;
+            Vector3 checkBossPos = nextBossPos;
+            checkBossPos.y += kGroundOffset;
+
+            bool hitWall = CheckCollision(checkBossPos, nullptr, kBossCollisionRadius);
+            if (!hitWall) {
+                bossPos = nextBossPos;
+            }
+
+            float hitDistance = Calculation::Length(Vector3{ playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z });
+            bool hitPlayer = hitDistance <= (kBossCollisionRadius + collisionRadius);
+
+            bossAttackTimer -= 1.0f / 60.0f;
+
+            if (hitPlayer) {
+                TakeDamage(kBossMeleeDamage);
+                // ノックバック方向はボス→プレイヤー方向（ユーザー指定）
+                Vector3 knockDir = (hitDistance > 0.0001f)
+                    ? Vector3{ (playerPos.x - bossPos.x) / hitDistance, 0.0f, (playerPos.z - bossPos.z) / hitDistance }
+                    : bossDashDir;
+                knockbackVelocity = { knockDir.x * kKnockbackSpeed, 0.0f, knockDir.z * kKnockbackSpeed };
+                knockbackVelocityTimer = kKnockbackDuration;
+
+                bossAttackState = BossAttackState::kChasing;
+                bossAttackTimer = kBossAttackCooldown;
+            } else if (hitWall || bossAttackTimer <= 0.0f) {
+                bossAttackState = BossAttackState::kChasing;
+                bossAttackTimer = kBossAttackCooldown;
+            }
+            break;
+        }
+        case BossAttackState::kRangedWindup: {
+            // 予備動作中はプレイヤーの方を向いたまま停止する
+            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
+            bossAttackTimer -= 1.0f / 60.0f;
+            if (bossAttackTimer <= 0.0f) {
+                boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 通常色に戻す
+                bossGrenadeBurstRemaining = kBossGrenadeBurstCount;
+                bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
+                bossAttackState = BossAttackState::kRangedBurst;
+            }
+            break;
+        }
+        case BossAttackState::kRangedBurst: {
+            // 3連射の間もプレイヤーを狙い続ける
+            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
+            bossGrenadeBurstTimer -= 1.0f / 60.0f;
+            if (bossGrenadeBurstTimer <= 0.0f) {
+                FireGrenade();
+                --bossGrenadeBurstRemaining;
+                if (bossGrenadeBurstRemaining > 0) {
+                    bossGrenadeBurstTimer = kBossGrenadeBurstInterval;
+                } else {
+                    bossAttackState = BossAttackState::kChasing;
+                    bossAttackTimer = kBossAttackCooldown;
+                }
+            }
+            break;
+        }
         }
 
         boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
+    }
+
+    // --- ボスのグレネードの更新（重力を受けながら飛び、床・壁に着弾すると爆発する） ---
+    for (auto& grenade : grenades) {
+        if (!grenade.active) continue;
+
+        grenade.velocity.y += kGrenadeGravity;
+        grenade.position.x += grenade.velocity.x;
+        grenade.position.y += grenade.velocity.y;
+        grenade.position.z += grenade.velocity.z;
+
+        if (CheckCollision(grenade.position, nullptr, kGrenadeRadius) || grenade.position.y < -5.0f) {
+            ExplodeGrenade(grenade);
+            continue;
+        }
+
+        grenade.object->SetTranslate(grenade.position);
+        grenade.object->Update();
     }
 
     cameraTransform.translate = { playerPos.x, playerPos.y + eyeHeight, playerPos.z };
@@ -630,9 +837,16 @@ void GameScene::Update() {
     // このフレームのカメラ位置に対応したビュー行列を参照できるようにするため）
     camera->Update();
 
+    // --- 射撃間隔クールダウンの減衰 ---
+    if (fireCooldownTimer > 0.0f) {
+        fireCooldownTimer -= 1.0f / 60.0f;
+        if (fireCooldownTimer < 0.0f) fireCooldownTimer = 0.0f;
+    }
+
     // --- 射撃処理（ライフルモードの時のみ。ポータルガンモードの左右クリックは上で処理済み） ---
-    if (!isLookPaused && weaponMode == WeaponMode::kRifle && input->TriggerMouseButton(0)) {
+    if (!isLookPaused && weaponMode == WeaponMode::kRifle && fireCooldownTimer <= 0.0f && input->TriggerMouseButton(0)) {
         FireShot();
+        fireCooldownTimer = kFireCooldownDuration;
     }
 
     // 視点武器の追従・リコイル更新（FireShot後に置き、当フレームからキックを反映する）
@@ -672,6 +886,22 @@ void GameScene::Update() {
     bossHpBarFill->SetSize({ kBossHpBarMaxWidth * bossHpRatio, kBossHpBarHeight });
     bossHpBarBackground->Update();
     bossHpBarFill->Update();
+
+    // --- 勝敗判定：HPが0になった瞬間に一度だけ確定させる ---
+    if (playerHP <= 0.0f) {
+        gameOver = true;
+        playerWon = false;
+        gameOverText.SetText("LOSE");
+    } else if (bossHP <= 0.0f) {
+        gameOver = true;
+        playerWon = true;
+        gameOverText.SetText("WIN");
+    }
+    if (gameOver) {
+        // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
+        float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
+        gameOverText.SetPosition({ ((float)WinApp::KclientWidth - textWidth) / 2.0f, kGameOverTextPositionY });
+    }
 
 #ifdef _DEBUG
     // "FPS Debug"パネルはDebugビルドの開発用（ライト/シャドウ調整等）。
@@ -732,6 +962,7 @@ void GameScene::Draw() {
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->DrawShadow(lightViewProjection); }
     if (boss) boss->DrawShadow(lightViewProjection);
+    for (auto& grenade : grenades) { if (grenade.active) grenade.object->DrawShadow(lightViewProjection); }
     object3dCommon->PostDrawShadow();
 
     // --- 1. ポストプロセス用のオフスクリーンレンダリング開始 ---
@@ -748,6 +979,7 @@ void GameScene::Draw() {
     for (auto& wall : walls) { wall->Draw(); }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->Draw(); }
     if (boss) boss->Draw();
+    for (auto& grenade : grenades) { if (grenade.active) grenade.object->Draw(); }
     for (auto& decal : bulletDecals) { decal->Draw(); }
     // ワープポータル（薄い板なのでシャドウパスには含めない）
     if (portalA.isPlaced) portalA.visual->Draw();
@@ -794,6 +1026,18 @@ void GameScene::Draw() {
     if (isLookPaused) {
         settingsMenu.Draw();
     }
+
+    // --- 7. UI（勝敗演出の全画面オーバーレイ）：決着後のみ、フェードインしながら表示 ---
+    if (gameOver) {
+        gameOverOverlay->Draw();
+        gameOverText.Draw();
+    }
+
+    // --- 8. UI（終了確認オーバーレイ）：ESCキーで確認中のみ最前面に表示 ---
+    if (quitConfirming) {
+        quitConfirmOverlay->Draw();
+        quitConfirmText.Draw();
+    }
 }
 
 void GameScene::Finalize() {
@@ -821,6 +1065,178 @@ void GameScene::DamageBoss(float amount) {
     bossHP -= amount;
     if (bossHP < 0.0f) {
         bossHP = 0.0f;
+    }
+}
+
+void GameScene::RestartGame() {
+    playerHP = kPlayerMaxHP;
+    bossHP = kBossMaxHP;
+    gameOver = false;
+    playerWon = false;
+    gameOverFadeTimer = 0.0f;
+    gameOverOverlay->SetColor({ 0.0f, 0.0f, 0.0f, 0.0f });
+
+    // プレイヤーをスポーン地点へ戻す（Initialize()の初期値と同じ）
+    playerPos = { 0.0f, 0.0f, -8.0f };
+    velocity = { 0.0f, 0.0f, 0.0f };
+    isOnGround = false;
+    Transform& cameraTransform = camera->GetTransform();
+    cameraTransform.translate = { playerPos.x, playerPos.y + eyeHeight, playerPos.z };
+    cameraTransform.rotate = { 0.0f, 0.0f, 0.0f };
+
+    knockbackVelocity = { 0.0f, 0.0f, 0.0f };
+    knockbackVelocityTimer = 0.0f;
+    portalExitVelocity = { 0.0f, 0.0f, 0.0f };
+    portalExitVelocityTimer = 0.0f;
+    cameraShakeTimer = 0.0f;
+    weaponRecoilTimer = 0.0f;
+    fireCooldownTimer = 0.0f;
+
+    // ボスをスポーン地点・追跡状態へ戻す
+    bossPos = { 0.0f, 0.0f, 20.0f };
+    bossAttackState = BossAttackState::kChasing;
+    bossAttackTimer = 0.0f;
+    bossAvoiding = false;
+    bossAvoidDir = {};
+    bossStuckTimer = 0.0f;
+    bossGrenadeBurstRemaining = 0;
+    bossGrenadeBurstTimer = 0.0f;
+    bossDashCurrentSpeed = 0.0f;
+    boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f });
+
+    // グレネードは全て非アクティブ化して隠す
+    for (auto& grenade : grenades) {
+        grenade.active = false;
+        grenade.object->SetTranslate({ 0.0f, -1000.0f, 0.0f });
+    }
+
+    // 的・ヒットフラッシュ・ポータル・武器モードもクリアして、まっさらな状態から再プレイできるようにする
+    for (auto& enemy : enemies) {
+        enemy.isActive = true;
+        enemy.respawnTimer = 0.0f;
+    }
+    for (auto& flash : hitFlashes) {
+        flash.object->SetColor(flash.originalColor);
+    }
+    hitFlashes.clear();
+
+    weaponMode = WeaponMode::kRifle;
+    portalA.isPlaced = false;
+    portalB.isPlaced = false;
+    if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+    if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+}
+
+void GameScene::FireGrenade() {
+    // 非アクティブなグレネードを1つ探して発射する
+    for (auto& grenade : grenades) {
+        if (grenade.active) continue;
+
+        Vector3 launchPos = { bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z }; // 胸の高さから発射
+
+        // 着弾狙い位置：プレイヤーそのものではなく、周囲kGrenadeAimSpread以内にランダムでずらす。
+        // これにより毎回同じ場所に落ちず、3連射で着弾点が散らばり、プレイヤーにも回避の余地が生まれる
+        std::random_device seed_gen;
+        std::mt19937 randomEngine(seed_gen());
+        std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
+        std::uniform_real_distribution<float> distRadius(0.0f, kGrenadeAimSpread);
+        float angle = distAngle(randomEngine);
+        float spreadRadius = distRadius(randomEngine);
+        Vector3 targetPos = {
+            playerPos.x + std::cos(angle) * spreadRadius,
+            launchPos.y,
+            playerPos.z + std::sin(angle) * spreadRadius,
+        };
+
+        Vector3 toTarget = { targetPos.x - launchPos.x, 0.0f, targetPos.z - launchPos.z };
+        float horizontalDistance = Calculation::Length(toTarget);
+        Vector3 horizontalDir = (horizontalDistance > 0.0001f)
+            ? Calculation::Normalize(toTarget)
+            : Vector3{ 0.0f, 0.0f, 1.0f };
+
+        // 山なり軌道：頂点の高さ(kGrenadeArcHeight)から逆算して上方向の初速を求め、
+        // 頂点まで昇って同じ高さまで落ちてくる時間(flightFrames)で水平距離を割ることで、
+        // 距離によらず「同じ高さまで放物線を描いて狙った位置の近くに着地する」速度を算出する
+        float launchUpSpeed = std::sqrt(2.0f * -kGrenadeGravity * kGrenadeArcHeight);
+        float flightFrames = (2.0f * launchUpSpeed) / -kGrenadeGravity;
+        float horizontalSpeed = std::clamp(horizontalDistance / flightFrames, kGrenadeMinSpeed, kGrenadeMaxSpeed);
+
+        grenade.position = launchPos;
+        grenade.velocity = { horizontalDir.x * horizontalSpeed, launchUpSpeed, horizontalDir.z * horizontalSpeed };
+        grenade.active = true;
+        grenade.object->SetTranslate(grenade.position);
+        break;
+    }
+}
+
+void GameScene::ExplodeGrenade(Grenade& grenade) {
+    grenade.active = false;
+    grenade.object->SetTranslate({ 0.0f, -1000.0f, 0.0f }); // 未使用分は画面外に隠す（弾痕デカールと同じ手法）
+
+    Vector3 explosionPos = grenade.position;
+
+    // プレイヤーが爆発範囲内なら被弾（水平距離のみで判定。垂直方向の細かい判定は仮実装のスコープ外）
+    Vector3 toPlayer = { playerPos.x - explosionPos.x, 0.0f, playerPos.z - explosionPos.z };
+    if (Calculation::Length(toPlayer) <= kGrenadeExplosionRadius) {
+        TakeDamage(kGrenadeDamage); // 内部でカメラシェイク・被弾ヴィネットも行われる
+    }
+
+    // 見た目：爆発点から全方位に広がる火花バースト（FireShotの着弾演出と同じEmit()の使い方を流用し、方向だけ全方位ランダムにする）
+    std::random_device seed_gen;
+    std::mt19937 randomEngine(seed_gen());
+    std::uniform_real_distribution<float> distTheta(0.0f, 6.28318f);
+    std::uniform_real_distribution<float> distCosPhi(-1.0f, 1.0f); // 球面上に均一分布させるための余弦
+    std::uniform_real_distribution<float> distSpeed(2.0f, 6.0f);
+    std::uniform_real_distribution<float> distLife(0.3f, 0.6f);
+
+    auto sphereDir = [&]() {
+        float theta = distTheta(randomEngine);
+        float cosPhi = distCosPhi(randomEngine);
+        float sinPhi = std::sqrt((std::max)(0.0f, 1.0f - cosPhi * cosPhi));
+        return Vector3{ sinPhi * std::cos(theta), cosPhi, sinPhi * std::sin(theta) };
+    };
+
+    for (int i = 0; i < 30; ++i) {
+        Vector3 dir = sphereDir();
+        float speed = distSpeed(randomEngine);
+
+        ParticleEmitParams params;
+        params.position = explosionPos;
+        params.velocity = { dir.x * speed, dir.y * speed, dir.z * speed };
+        params.lifeTime = distLife(randomEngine);
+
+        params.useColorGradient = true;
+        params.startColor = { 1.0f, 0.7f, 0.2f, 1.0f };
+        params.endColor = { 1.0f, 0.1f, 0.0f, 0.0f };
+
+        params.gravity = { 0.0f, -0.015f, 0.0f };
+        params.drag = 0.1f;
+
+        particleManagerPoint->Emit(params);
+    }
+
+    std::uniform_real_distribution<float> distSize(0.1f, 0.3f);
+    for (int i = 0; i < 12; ++i) {
+        Vector3 dir = sphereDir();
+        float speed = distSpeed(randomEngine) * 0.6f;
+        float size = distSize(randomEngine);
+
+        ParticleEmitParams params;
+        params.position = explosionPos;
+        params.velocity = { dir.x * speed, dir.y * speed, dir.z * speed };
+        params.lifeTime = distLife(randomEngine) * 1.3f;
+
+        params.useColorGradient = true;
+        params.startColor = { 1.0f, 0.5f, 0.15f, 0.8f };
+        params.endColor = { 0.4f, 0.1f, 0.05f, 0.0f };
+
+        params.gravity = { 0.0f, 0.0f, 0.0f };
+        params.drag = 0.2f;
+
+        params.startScale = { size, size, size };
+        params.endScale = { size * 1.6f, size * 1.6f, size * 1.6f };
+
+        particleManagerTriangle->Emit(params);
     }
 }
 
@@ -1167,11 +1583,19 @@ void GameScene::FireShot() {
 
             Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         } else {
-            if (closestObject == boss.get()) {
-                DamageBoss(kBossDamagePerShot);
+            bool isBossHit = (closestObject == boss.get());
+            if (isBossHit) {
+                // 距離で線形減衰するダメージ（近距離ほど高ダメージ＝ショットガン的な仕様）
+                float t = std::clamp((closestHit.distance - kBossDamageFalloffStart) / (kBossDamageFalloffEnd - kBossDamageFalloffStart), 0.0f, 1.0f);
+                float damage = kBossDamageMax + (kBossDamageMin - kBossDamageMax) * t;
+                DamageBoss(damage);
             }
 
-            SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
+            // ボスは移動するため、ワールド座標に固定される弾痕デカールを出すと空中に取り残されて見える。
+            // 壁・床など静止オブジェクトのみ弾痕を残す（ヒットフラッシュ・カメラシェイクはボスにも残す）
+            if (!isBossHit) {
+                SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
+            }
 
             // 2. 壁の色を一時的に変える
             auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {

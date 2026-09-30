@@ -25,6 +25,18 @@ int BitmapText::GlyphIndex(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c == '.') return 10;
     if (c == '-') return 11;
+    switch (c) {
+        case 'W': return 13;
+        case 'I': return 14;
+        case 'N': return 15;
+        case 'L': return 16;
+        case 'O': return 17;
+        case 'S': return 18;
+        case 'E': return 19;
+        case 'Q': return 20;
+        case 'U': return 21;
+        case 'T': return 22;
+    }
     return kBlankGlyphIndex;
 }
 

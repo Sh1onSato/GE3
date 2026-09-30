@@ -10,7 +10,7 @@ void MyGame::Initialize() {
 	sceneManager->SetSceneFactory(sceneFactory.get());
 
 	// 最初のアクティブシーンを設定
-	sceneManager->ChangeScene("GAME");
+	sceneManager->ChangeScene("TITLE");
 }
 
 void MyGame::Update() {

@@ -71,6 +71,8 @@ private:
 	void TakeDamage(float amount);
 	// ボスがダメージを受けた時の処理（HP減算・0未満クランプのみ。シェイクは呼び出し元のFireShotが担当）
 	void DamageBoss(float amount);
+	// 勝敗演出（gameOver）中にEnterキーで呼ばれる。プレイヤー/ボス/ポータル等をスポーン直後の状態へ戻す
+	void RestartGame();
 
 	// ヒット演出用の構造体
 	struct HitFlash {
@@ -102,8 +104,13 @@ private:
 	// ボス（1v1ボス戦フェーズ2：HP/UIの土台。移動・攻撃AIは次フェーズ）
 	std::unique_ptr<Object3d> boss = nullptr;
 	float bossHP = kBossMaxHP;
-	static constexpr float kBossMaxHP = 300.0f;        // 仮値（プレイヤーの3倍程度）
-	static constexpr float kBossDamagePerShot = 15.0f; // 1発あたりのダメージ（仮値、20発で撃破）
+	static constexpr float kBossMaxHP = 300.0f; // 仮値（プレイヤーの3倍程度）
+
+	// プレイヤーの射撃ダメージ（距離で線形減衰。近距離ほど高ダメージ＝ショットガン的な仕様）
+	static constexpr float kBossDamageMax = 25.0f;          // 至近距離での最大ダメージ
+	static constexpr float kBossDamageMin = 8.0f;           // 遠距離での最小ダメージ
+	static constexpr float kBossDamageFalloffStart = 5.0f;  // これ以下の距離は常に最大ダメージ
+	static constexpr float kBossDamageFalloffEnd = 20.0f;   // これ以上の距離は常に最小ダメージ
 
 	// ボスの移動AI（常に追いかける。距離とHPで速度を変化させる）
 	Vector3 bossPos = { 0.0f, 0.0f, 20.0f }; // 足元基準（playerPosと同じ規約）
@@ -118,6 +125,59 @@ private:
 	Vector3 bossAvoidDir = {};   // 保持中の回避（滑り）方向
 	float bossStuckTimer = 0.0f; // 直進・スライドどちらも失敗して動けていない継続時間
 	static constexpr float kBossStuckRetreatDelay = 0.3f; // これ以上動けない状態が続いたら後退を試みる
+
+	// ボスの攻撃AI（距離しきい値で近接突進／遠距離グレネードを自動切替）
+	// kChasing中は既存の追跡・障害物回避ロジックで移動を続けながらbossAttackTimerを減算し、
+	// 0以下になったタイミングでその時の距離に応じてkMeleeWindup/kRangedWindupへ遷移する
+	// （＝「クールダウン中は棒立ち」ではなく、既存の追跡AIをそのまま活かして常に動き続ける設計）
+	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst };
+	BossAttackState bossAttackState = BossAttackState::kChasing;
+	float bossAttackTimer = 0.0f;
+	Vector3 bossDashDir = {}; // kMeleeDash中に固定して使い続ける突進方向
+	float bossDashCurrentSpeed = 0.0f; // kMeleeDash中、加速しながら変化していく現在の突進速度
+	static constexpr float kBossMeleeRange = 10.0f;           // これ以下なら近接突進、これより遠いならグレネード
+	static constexpr float kBossMeleeWindupDuration = 0.4f;   // 突進前の予備動作（停止して溜める）時間
+	static constexpr float kBossMeleeDashDuration = 0.6f;     // 突進の最大継続時間（不発ならここでタイムアウト）
+	static constexpr float kBossDashStartSpeed = 0.15f;       // 突進開始時の速度
+	static constexpr float kBossDashMaxSpeed = 0.55f;         // 突進が加速しきった後の最高速度
+	static constexpr float kBossDashAcceleration = 0.025f;    // 突進中、1フレームごとに速度へ加算する加速度
+	static constexpr float kBossMeleeDamage = 20.0f;
+	static constexpr float kBossRangedWindupDuration = 0.5f;  // グレネード投擲前の予備動作時間
+	static constexpr float kBossAttackCooldown = 1.5f;        // 攻撃後、次の攻撃判定が始まるまでの追跡専念時間
+
+	// 遠距離グレネードの3連射（kRangedWindup終了後、kRangedBurst中に一定間隔で発射する）
+	int bossGrenadeBurstRemaining = 0;
+	float bossGrenadeBurstTimer = 0.0f;
+	static constexpr int kBossGrenadeBurstCount = 3;
+	static constexpr float kBossGrenadeBurstInterval = 0.2f; // 1発ごとの発射間隔
+
+	// 近接突進がヒットした時のプレイヤーノックバック（ポータルのportalExitVelocityと同じ「減衰しながらmoveDirへ加算」方式）
+	Vector3 knockbackVelocity = { 0.0f, 0.0f, 0.0f };
+	float knockbackVelocityTimer = 0.0f;
+	static constexpr float kKnockbackDuration = 0.3f;
+	static constexpr float kKnockbackSpeed = 0.35f;
+
+	// ボスの遠距離攻撃（グレネードランチャー的な範囲攻撃、着弾で爆発）
+	struct Grenade {
+		std::unique_ptr<Object3d> object;
+		Vector3 position = {};
+		Vector3 velocity = {};
+		bool active = false;
+	};
+	std::vector<Grenade> grenades;
+	static const int kMaxGrenades = 3; // 3連射を同時に飛ばせるよう、バースト数と揃えている
+	static constexpr float kGrenadeGravity = -0.02f;      // プレイヤーと同じ重力値を流用
+	static constexpr float kGrenadeArcHeight = 5.0f;      // 山なり軌道の頂点の高さ（発射点からの相対高さ）
+	static constexpr float kGrenadeAimSpread = 2.0f;      // 着弾狙い位置をプレイヤー中心にこの半径内でランダムにずらす（回避の余地＋3連射の着弾散らし）
+	static constexpr float kGrenadeMinSpeed = 0.1f;       // 水平速度のクランプ下限（至近距離での過度なスロー化を防ぐ）
+	static constexpr float kGrenadeMaxSpeed = 0.6f;       // 水平速度のクランプ上限（遠距離での過度な高速化を防ぐ）
+	static constexpr float kGrenadeRadius = 0.3f;         // 床・壁との衝突判定半径
+	static constexpr float kGrenadeExplosionRadius = 4.0f;
+	static constexpr float kGrenadeDamage = 15.0f;
+	// グレネードを発射する（非アクティブなものを1つ使う）
+	void FireGrenade();
+	// グレネードを爆発させる（範囲内ならプレイヤーにダメージ、着弾演出を出す）
+	void ExplodeGrenade(Grenade& grenade);
 
 	// 弾痕デカール用
 	std::unique_ptr<Model> planeModel = nullptr;
@@ -134,6 +194,10 @@ private:
 	static constexpr float kRecoilDuration = 0.12f;   // リコイル演出の継続時間(秒)
 	static constexpr float kRecoilKickAmount = 0.08f; // 発砲直後にカメラ側へ引く量(m)
 
+	// 射撃間隔（ショットガン的に連射させず、1発ごとの重みを出すためのクールダウン）
+	float fireCooldownTimer = 0.0f;
+	static constexpr float kFireCooldownDuration = 0.6f; // 秒。この間はクリックしても発砲しない
+
 	// カメラシェイク（発砲・ヒット時に視点をランダムに揺らす演出）
 	float cameraShakeTimer = 0.0f;    // 残り時間(秒)。0になると揺れは止まる
 	float cameraShakeDuration = 0.0f; // 今回の揺れの総時間(秒)。強さの減衰計算に使う
@@ -145,10 +209,9 @@ private:
 	static constexpr float kPlayerDamageShakeDuration = 0.15f; // 被弾時：与ダメージより大きめに揺らす
 	static constexpr float kPlayerDamageShakeStrength = 0.02f;
 
-	// プレイヤーHP（1v1ボス戦に向けた土台。現時点ではボス未実装のためNキーのテストダメージのみが減算源）
+	// プレイヤーHP
 	float playerHP = kPlayerMaxHP;
 	static constexpr float kPlayerMaxHP = 100.0f;
-	static constexpr float kTestDamageAmount = 10.0f; // Nキーで受けるテストダメージ量
 
 	std::unique_ptr<Sprite> uvChecker = nullptr;
 	std::unique_ptr<Sprite> monsterBall = nullptr;
@@ -169,6 +232,21 @@ private:
 	static constexpr float kBossHpBarMaxWidth = 500.0f;
 	static constexpr float kBossHpBarHeight = 20.0f;
 	static constexpr Vector2 kBossHpBarPosition = { 390.0f, 20.0f }; // 画面上部中央(1280幅基準)
+
+	// 勝敗演出（全画面カラーオーバーレイのフェード＋中央にWIN/LOSE文字表示）
+	bool gameOver = false;
+	bool playerWon = false;
+	float gameOverFadeTimer = 0.0f;
+	static constexpr float kGameOverFadeDuration = 1.0f;
+	std::unique_ptr<Sprite> gameOverOverlay = nullptr;
+	BitmapText gameOverText; // "WIN"/"LOSE"を中央表示（BitmapTextのグリフセル幅7*表示倍率2と一致させる複製定数がkGameOverTextCharWidth）
+	static constexpr float kGameOverTextCharWidth = 14.0f;
+	static constexpr float kGameOverTextPositionY = 300.0f;
+
+	// 終了確認（ESCキーでいつでも開始。フェード無しの即時暗転＋"QUIT"表示。Enterで終了・ESCでキャンセル）
+	bool quitConfirming = false;
+	std::unique_ptr<Sprite> quitConfirmOverlay = nullptr;
+	BitmapText quitConfirmText;
 
 	std::unique_ptr<PostProcess> postProcess = nullptr;
 	// 点・線・面を同時に出せるよう、描画タイプごとにParticleManagerを分けて持つ

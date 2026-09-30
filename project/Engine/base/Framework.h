@@ -38,6 +38,9 @@ public:
 	// 終了フラグのゲッター
 	virtual bool IsEndRequest() { return endRequest; }
 
+	// シーン側からのアプリケーション終了リクエスト（次のUpdate後、メインループを抜ける）
+	void RequestEnd() { endRequest = true; }
+
 	// 各種ゲッター
 	WinApp* GetWinApp() const { return winApp.get(); }
 	DirectXCommon* GetDxCommon() const { return dxCommon.get(); }

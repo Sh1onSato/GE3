@@ -25,7 +25,7 @@ void SettingsMenu::Initialize(SpriteCommon* spriteCommon, std::vector<Item> newI
         row.fill->SetSize({ kBarWidth, kBarHeight });
         row.fill->SetColor(items[i].color);
 
-        row.valueText.Initialize(spriteCommon, 5); // "10.00"程度まで表示できれば十分
+        row.valueText.Initialize(spriteCommon, 7); // "0.0001"のような桁数の多い表示にも対応できる余裕を持たせる
         row.valueText.SetPosition({ rowPos.x + kBarWidth + 10.0f, rowPos.y });
         row.valueText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
     }
@@ -51,8 +51,10 @@ void SettingsMenu::Update(Input* input, bool isOpen) {
         rows[i].fill->SetSize({ kBarWidth * ratio, kBarHeight });
 
         if (!item.isBool) {
+            char fmt[8];
+            snprintf(fmt, sizeof(fmt), "%%.%df", item.displayDecimals);
             char buf[16];
-            snprintf(buf, sizeof(buf), "%.2f", value);
+            snprintf(buf, sizeof(buf), fmt, value);
             rows[i].valueText.SetText(buf);
         } else {
             rows[i].valueText.SetText(""); // bool項目はバーの満/空だけで表現し、数値は出さない

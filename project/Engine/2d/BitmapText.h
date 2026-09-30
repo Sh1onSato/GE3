@@ -7,14 +7,14 @@
 class Sprite;
 class SpriteCommon;
 
-// 数字("0"-"9")・"."・"-"だけを表示できる軽量なビットマップフォント描画クラス。
+// 数字("0"-"9")・"."・"-"・英字(W/I/N/L/O/S/E/Q/U/Tのみ、勝敗演出のWIN/LOSE・終了確認のQUIT表示用)だけを表示できる軽量なビットマップフォント描画クラス。
 // TextureManagerが内部生成する"digitFont"アトラス（5x7ドット、1pxパディング入り7x9セル）を、
 // Spriteのプールを並べてUV切り出しすることで表示する（ImGuiに依存しないため、Releaseビルドでも使える）。
 class BitmapText {
 public:
     // maxChars: このインスタンスが表示できる最大文字数（プール数）
     void Initialize(SpriteCommon* spriteCommon, size_t maxChars);
-    // "0"-"9" "." "-" 以外の文字は空白グリフとして扱う
+    // "0"-"9" "." "-" "W" "I" "N" "L" "O" "S" "E" "Q" "U" "T" 以外の文字は空白グリフとして扱う
     void SetText(const std::string& text);
     void SetPosition(const Vector2& pos);
     void SetColor(const Vector4& color);

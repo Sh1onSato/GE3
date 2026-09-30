@@ -27,7 +27,7 @@ public:
 	void CreateInternalWhiteTexture();
 
 	/// <summary>
-	/// 数字("0"-"9")・"."・"-"・空白のグリフアトラス（"digitFont"）を内部で生成する。
+	/// 数字("0"-"9")・"."・"-"・空白・英字(W/I/N/L/O/S/E/Q/U/Tのみ)のグリフアトラス（"digitFont"）を内部で生成する。
 	/// 既に生成済みなら何もしない
 	/// </summary>
 	void CreateInternalDigitFontTexture();
