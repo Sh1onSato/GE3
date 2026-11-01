@@ -48,6 +48,9 @@ public:
 	static Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth);
 	// eyeからtargetを見るビュー行列を作成（行ベクトル規約。Inverse(MakeAffineMatrix(...))と等価）
 	static Matrix4x4 MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up);
+	// eyeからtargetを向くカメラのrotate（x=ピッチ, y=ヨー, z=0）を返す。
+	// GameScene（マウス視点・射撃方向）の規約に合わせ、forward=(cosX*sinY, -sinX, cosX*cosY)となる角度を求める
+	static Vector3 MakeLookAtRotation(const Vector3& eye, const Vector3& target);
 
 	// 当たり判定
 	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);

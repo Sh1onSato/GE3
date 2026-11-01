@@ -165,6 +165,9 @@
     <ClCompile Include="Engine\scene\GameSettings.cpp">
       <Filter>ソース ファイル\engine\scene</Filter>
     </ClCompile>
+    <ClCompile Include="Engine\scene\SceneTransition.cpp">
+      <Filter>ソース ファイル\engine\scene</Filter>
+    </ClCompile>
     <ClCompile Include="Engine\3d\ModelManager.cpp">
       <Filter>ソース ファイル\engine\3d</Filter>
     </ClCompile>
@@ -259,6 +262,9 @@
     <ClInclude Include="Engine\math\Calculation.h">
       <Filter>ヘッダー ファイル\engine\math</Filter>
     </ClInclude>
+    <ClInclude Include="Engine\math\Easing.h">
+      <Filter>ヘッダー ファイル\engine\math</Filter>
+    </ClInclude>
     <ClInclude Include="Engine\3d\Model.h">
       <Filter>ヘッダー ファイル\engine\3d</Filter>
     </ClInclude>
@@ -322,7 +328,13 @@
     <ClInclude Include="Engine\scene\GameScene.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
+    <ClInclude Include="Engine\scene\ArenaLayout.h">
+      <Filter>ヘッダー ファイル\engine\scene</Filter>
+    </ClInclude>
     <ClInclude Include="Engine\scene\GameSettings.h">
+      <Filter>ヘッダー ファイル\engine\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\scene\SceneTransition.h">
       <Filter>ヘッダー ファイル\engine\scene</Filter>
     </ClInclude>
     <ClInclude Include="Engine\scene\SceneFactory.h">

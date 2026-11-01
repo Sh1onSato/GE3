@@ -1,5 +1,6 @@
 #include "Calculation.h"
-#include <cmath> 
+#include <algorithm>
+#include <cmath>
 #include <numbers> 
 
 // --- Matrix4x4 演算子オーバーロード ---
@@ -326,6 +327,14 @@ Matrix4x4 Calculation::MakeLookAtMatrix(const Vector3& eye, const Vector3& targe
 	result.m[3][2] = -Dot(forward, eye);
 	result.m[3][3] = 1.0f;
 	return result;
+}
+
+Vector3 Calculation::MakeLookAtRotation(const Vector3& eye, const Vector3& target) {
+	Vector3 direction = Normalize(target - eye);
+	// forward=(cosX*sinY, -sinX, cosX*cosY) の逆算。rotate.xは正で下を向く規約
+	float yaw = std::atan2(direction.x, direction.z);
+	float pitch = -std::asin((std::clamp)(direction.y, -1.0f, 1.0f));
+	return { pitch, yaw, 0.0f };
 }
 
 bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit) {

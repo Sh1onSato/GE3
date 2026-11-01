@@ -38,6 +38,22 @@ public:
     // 画面全体ぼかし（ボックスフィルター版）のON/OFFを切り替える（ガウシアン版のToggleBlur()と対称）
     void ToggleBoxBlur() { boxBlurEnabled = !boxBlurEnabled; }
 
+    // 一時的な演出状態（グレースケールフラッシュ／被弾ヴィネットのタイマー）だけを初期値に戻す。
+    // PostProcessはFrameworkが全シーンで共有するため、シーン開始時に前シーンの演出が残らないよう各シーンのInitializeから呼ぶ
+    void ResetTransientEffects() {
+        grayscaleFlashTimer = 0.0f;
+        damageVignetteTimer = 0.0f;
+        transitionGlitchIntensity = 0.0f;
+        transitionGlitchTime = 0.0f;
+    }
+
+    // シーン遷移グリッチの強度(0=無効～1=最大)と乱数シード用の時間を設定する。
+    // 遷移中はPostProcess::Updateが呼ばれないため、SceneTransitionが毎フレーム外部から渡す
+    void SetTransitionGlitch(float intensity, float time) {
+        transitionGlitchIntensity = intensity;
+        transitionGlitchTime = time;
+    }
+
     // --- 設定メニュー（SettingsMenu）から値を読み書きするためのアクセサ ---
     float GetBloomIntensity() const { return bloomIntensity; }
     void SetBloomIntensity(float v) { bloomIntensity = v; }
@@ -156,6 +172,13 @@ private:
     float damageVignetteTimer = 0.0f; // 残り時間(秒)。0になると演出は終わる
     static constexpr float kDamageVignetteDuration = 0.4f;
     static constexpr float kDamageVignetteMaxBlend = 0.4f; // 頂点時でも画面が完全な赤一色にならないよう上限を設ける
+
+    // シーン遷移グリッチ（SceneTransitionがSetTransitionGlitchで毎フレーム設定する）
+    float transitionGlitchIntensity = 0.0f; // 0=効果なし、1=最大
+    float transitionGlitchTime = 0.0f;      // 乱数シード用の時間(秒)
+
+    // 合成パスの32bit定数の個数（HLSL cbuffer CompositeParamのfloat数と一致させる）
+    static constexpr uint32_t kCompositeParamCount = 9;
 
     // 頂点データ (画面全体を覆う板ポリ用)
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexResource;

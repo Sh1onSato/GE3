@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -173,6 +173,7 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClCompile Include="Engine\base\DirectXCommon.cpp" />
     <ClCompile Include="Engine\scene\GameScene.cpp" />
     <ClCompile Include="Engine\scene\GameSettings.cpp" />
+    <ClCompile Include="Engine\scene\SceneTransition.cpp" />
     <ClCompile Include="Engine\scene\SceneFactory.cpp" />
     <ClCompile Include="Engine\scene\SceneManager.cpp" />
     <ClCompile Include="Engine\scene\TitleScene.cpp" />
@@ -245,11 +246,14 @@ copy "$(WindowsSdkDir)bin\$(TargetPlatformVersion)\x64\dxil.dll" "$(TargetDir)dx
     <ClInclude Include="Engine\base\PostProcess.h" />
     <ClInclude Include="Engine\base\SrvManager.h" />
     <ClInclude Include="Engine\math\Calculation.h" />
+    <ClInclude Include="Engine\math\Easing.h" />
     <ClInclude Include="Engine\base\DirectXCommon.h" />
     <ClInclude Include="Engine\scene\AbstractSceneFactory.h" />
     <ClInclude Include="Engine\scene\BaseScene.h" />
+    <ClInclude Include="Engine\scene\ArenaLayout.h" />
     <ClInclude Include="Engine\scene\GameScene.h" />
     <ClInclude Include="Engine\scene\GameSettings.h" />
+    <ClInclude Include="Engine\scene\SceneTransition.h" />
     <ClInclude Include="Engine\scene\SceneFactory.h" />
     <ClInclude Include="Engine\scene\SceneManager.h" />
     <ClInclude Include="Engine\scene\TitleScene.h" />

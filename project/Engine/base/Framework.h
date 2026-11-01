@@ -11,6 +11,7 @@
 #include "SceneManager.h"
 #include "ImGuiManager.h"
 #include "AudioManager.h"
+#include "PostProcess.h"
 
 #include <memory>
 
@@ -50,6 +51,7 @@ public:
 	Object3dCommon* GetObject3dCommon() const { return object3dCommon.get(); }
 	ParticleCommon* GetParticleCommon() const { return particleCommon.get(); }
 	SkyboxCommon* GetSkyboxCommon() const { return skyboxCommon.get(); }
+	PostProcess* GetPostProcess() const { return postProcess.get(); }
 
 protected:
 	std::unique_ptr<WinApp> winApp = nullptr;
@@ -62,6 +64,8 @@ protected:
 	std::unique_ptr<Object3dCommon> object3dCommon = nullptr;
 	std::unique_ptr<ParticleCommon> particleCommon = nullptr;
 	std::unique_ptr<SkyboxCommon> skyboxCommon = nullptr;
+	// 全シーンで共有するポストエフェクト（sceneManagerより先に宣言＝シーンより後、dxCommon等より先に破棄される）
+	std::unique_ptr<PostProcess> postProcess = nullptr;
 	std::unique_ptr<SceneManager> sceneManager = nullptr;
 
 	bool endRequest = false;

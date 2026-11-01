@@ -1,11 +1,13 @@
-#include "GameScene.h"
+﻿#include "GameScene.h"
 #include "Framework.h"
+#include "SceneManager.h"
 #include "TextureManager.h"
 #include "ModelManager.h"
 #include "CameraManager.h"
 #include "ParticleManager.h"
 #include "ParticleEmitter.h"
 #include "GameSettings.h"
+#include "Easing.h"
 #include "externals/imgui/imgui.h"
 #include <algorithm>
 
@@ -32,8 +34,8 @@ void GameScene::Initialize() {
     particleManagerTriangle = std::make_unique<ParticleManager>();
     particleManagerTriangle->Initialize(framework->GetParticleCommon(), whiteTexIndex, ParticleDrawType::kTriangle);
 
-    postProcess = std::make_unique<PostProcess>();
-    postProcess->Initialize(framework->GetDxCommon(), framework->GetSrvManager());
+    postProcess = framework->GetPostProcess();
+    postProcess->ResetTransientEffects();
 
     reticle = std::make_unique<Sprite>();
     reticle->Initialize(framework->GetSpriteCommon(), "Resources/syouzyuu1.png");
@@ -93,11 +95,25 @@ void GameScene::Initialize() {
     quitConfirmOverlay->SetSize({ (float)WinApp::KclientWidth, (float)WinApp::KclientHeight });
     quitConfirmOverlay->SetColor({ 0.0f, 0.0f, 0.0f, 0.6f });
 
-    quitConfirmText.Initialize(framework->GetSpriteCommon(), 4); // "QUIT"固定4文字
-    quitConfirmText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
-    quitConfirmText.SetText("QUIT");
-    float quitTextWidth = kGameOverTextCharWidth * 4.0f;
-    quitConfirmText.SetPosition({ ((float)WinApp::KclientWidth - quitTextWidth) / 2.0f, kGameOverTextPositionY });
+    const char* quitMenuLabels[kQuitMenuCount] = { "TITLE", "QUIT" };
+    for (int i = 0; i < kQuitMenuCount; ++i) {
+        BitmapText& text = quitMenuTexts[i];
+        text.Initialize(framework->GetSpriteCommon(), 5); // 最長"TITLE"の5文字
+        text.SetText(quitMenuLabels[i]);
+        text.SetPosition({ ((float)WinApp::KclientWidth - text.GetWidth()) / 2.0f, kGameOverTextPositionY + kQuitMenuLineSpacing * i });
+    }
+
+    // --- 開始演出（READY→FIGHT） ---
+    introText.Initialize(framework->GetSpriteCommon(), 5); // "READY"/"FIGHT"が最大5文字
+    introText.SetScale(kIntroTextScale);
+    introBarTop = std::make_unique<Sprite>();
+    introBarTop->Initialize(framework->GetSpriteCommon(), "white");
+    introBarTop->SetPosition({ 0.0f, 0.0f });
+    introBarTop->SetColor({ 0.0f, 0.0f, 0.0f, 1.0f });
+    introBarBottom = std::make_unique<Sprite>();
+    introBarBottom->Initialize(framework->GetSpriteCommon(), "white");
+    introBarBottom->SetColor({ 0.0f, 0.0f, 0.0f, 1.0f });
+    // StartIntro(true)はボス等の生成後に呼ぶ必要があるため、Initialize()の最後で呼ぶ
 
     std::unique_ptr<Camera> newCamera = std::make_unique<Camera>();
     CameraManager::GetInstance()->AddCamera("MainCamera", std::move(newCamera));
@@ -119,37 +135,12 @@ void GameScene::Initialize() {
     floor = std::make_unique<Object3d>();
     floor->Initialize(framework->GetObject3dCommon());
     floor->SetModel(cubeModel.get());
-    floor->SetScale({ 30.0f, 1.0f, 30.0f });
-    floor->SetTranslate({ 0.0f, -1.0f, 0.0f });
-    floor->SetColor({ 0.5f, 0.5f, 0.5f, 1.0f });
+    floor->SetScale(ArenaLayout::kFloorScale);
+    floor->SetTranslate(ArenaLayout::kFloorTranslate);
+    floor->SetColor(ArenaLayout::kFloorColor);
 
-    struct WallData { Vector3 pos; Vector3 scale; };
-    std::vector<WallData> wallDatas = {
-        // --- 外壁（閉じた箱型アリーナの四方。±30に拡張し、1v1ボス戦を見据えた構成） ---
-        // 上下移動(四隅の上段プラットフォーム高さ5.0＋ジャンプ最大加算高さ約3.61=最大到達約8.6)を考慮し、
-        // 場外に出られないよう上端をy=15.0まで引き上げ（下端y=-1.0は床への埋め込みのため変更なし）
-        { { 0.0f, 7.0f, 30.0f }, { 30.0f, 8.0f, 1.0f } },
-        { { 0.0f, 7.0f, -30.0f }, { 30.0f, 8.0f, 1.0f } },
-        { { 30.0f, 7.0f, 0.0f }, { 1.0f, 8.0f, 30.0f } },
-        { { -30.0f, 7.0f, 0.0f }, { 1.0f, 8.0f, 30.0f } },
-        // --- 中央のカバー（十字型に対称配置。中心は空けて見通しを確保しつつ、物陰に隠れられるようにする） ---
-        { { 12.0f, 1.0f, 0.0f }, { 1.5f, 2.0f, 1.5f } },
-        { { -12.0f, 1.0f, 0.0f }, { 1.5f, 2.0f, 1.5f } },
-        { { 0.0f, 1.0f, 12.0f }, { 1.5f, 2.0f, 1.5f } },
-        { { 0.0f, 1.0f, -12.0f }, { 1.5f, 2.0f, 1.5f } },
-        // --- 四隅の2段プラットフォーム（上下を使った戦い用。ジャンプ1回で下段(高さ2.5)、
-        //     さらにもう1回ジャンプで上段(高さ5.0)に登れる高低差にしている） ---
-        { { 14.0f, 1.25f, 14.0f }, { 3.0f, 1.25f, 3.0f } },
-        { { 14.0f, 3.75f, 14.0f }, { 1.5f, 1.25f, 1.5f } },
-        { { -14.0f, 1.25f, 14.0f }, { 3.0f, 1.25f, 3.0f } },
-        { { -14.0f, 3.75f, 14.0f }, { 1.5f, 1.25f, 1.5f } },
-        { { 14.0f, 1.25f, -14.0f }, { 3.0f, 1.25f, 3.0f } },
-        { { 14.0f, 3.75f, -14.0f }, { 1.5f, 1.25f, 1.5f } },
-        { { -14.0f, 1.25f, -14.0f }, { 3.0f, 1.25f, 3.0f } },
-        { { -14.0f, 3.75f, -14.0f }, { 1.5f, 1.25f, 1.5f } },
-    };
-
-    for (const auto& data : wallDatas) {
+    // 壁の配置データはTitleScene（3D背景）と共有するためArenaLayout.hにある
+    for (const auto& data : ArenaLayout::kWallDatas) {
         auto wall = std::make_unique<Object3d>();
         wall->Initialize(framework->GetObject3dCommon());
         wall->SetModel(cubeModel.get());
@@ -182,12 +173,14 @@ void GameScene::Initialize() {
     // 中央カバー(±12)・角プラットフォーム(±14)と被らない開けた位置に配置
     boss = std::make_unique<Object3d>();
     boss->Initialize(framework->GetObject3dCommon());
-    boss->SetModel(cubeModel.get());
+    bossModel = std::make_unique<Model>();
+    bossModel->Initialize(framework->GetDxCommon(), "Resources/cube", "cubeSliced.obj");
+    boss->SetModel(bossModel.get());
     // 底面が床(y=0)にちょうど乗るよう、bossPosの足元基準にkBossHalfHeightを足した高さに配置する
     // （前フェーズではy=1.5決め打ちで底面が1ユニット埋まっていたため、ここで修正）
     boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
-    boss->SetScale({ 2.0f, 2.5f, 2.0f });
-    boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 紫系でプレイヤー・的と区別する
+    boss->SetScale(ArenaLayout::kBossScale);
+    boss->SetColor(ArenaLayout::kBossColor); // 紫系でプレイヤー・的と区別する
 
     // ボスの遠距離攻撃（グレネード）用のプール
     grenades.reserve(kMaxGrenades);
@@ -240,7 +233,7 @@ void GameScene::Initialize() {
 
     // --- 設定メニュー（ImGui非依存。Pキーでのポーズ中にキー操作で調整できる） ---
     {
-        PostProcess* pp = postProcess.get();
+        PostProcess* pp = postProcess;
         std::vector<SettingsMenu::Item> menuItems;
 
         menuItems.push_back({ { 1.0f, 0.6f, 0.1f, 1.0f }, false, 0.0f, 10.0f, 0.05f,
@@ -281,6 +274,9 @@ void GameScene::Initialize() {
     isLookPaused = false;
     framework->GetWinApp()->ShowCursor(false);
     framework->GetWinApp()->SetClipCursor(true);
+
+    // 開始演出（フル版）。UpdateIntroVisual()がboss/postProcessを触るため、全オブジェクトの生成後に呼ぶ
+    StartIntro(true);
 }
 
 bool GameScene::CheckCollision(const Vector3& pos, float* outMaxY, float radius, Vector3* outPushDir) {
@@ -348,10 +344,21 @@ void GameScene::Update() {
     Input* input = framework->GetInput();
     Transform& cameraTransform = camera->GetTransform();
 
-    // --- 終了確認中は他の更新を全て止め、Enter(終了確定)/ESC(キャンセル)の入力のみ受け付ける ---
+    // --- ESCメニュー中は他の更新を全て止め、↑↓(選択)/Enter(決定)/ESC(キャンセル)の入力のみ受け付ける ---
     if (quitConfirming) {
+        if (input->TriggerKey(DIK_UP) || input->TriggerKey(DIK_W)) {
+            quitMenuIndex = (quitMenuIndex + kQuitMenuCount - 1) % kQuitMenuCount;
+        }
+        if (input->TriggerKey(DIK_DOWN) || input->TriggerKey(DIK_S)) {
+            quitMenuIndex = (quitMenuIndex + 1) % kQuitMenuCount;
+        }
         if (input->TriggerKey(DIK_RETURN)) {
-            framework->RequestEnd();
+            // 暗転してから実行（暗転中はSceneManagerがUpdateを止める）
+            if (quitMenuIndex == kQuitMenuTitle) {
+                sceneManager->RequestTransition("TITLE", SceneTransition::kReturnTitleParams);
+            } else {
+                sceneManager->RequestFade(SceneTransition::kQuitParams, []() { Framework::GetInstance()->RequestEnd(); });
+            }
         } else if (input->TriggerKey(DIK_ESCAPE)) {
             quitConfirming = false;
             // 確認画面を開く前の状態（プレイ中）に戻す。ポーズ中・ゲームオーバー中に開いた場合はマウス表示のまま
@@ -361,13 +368,17 @@ void GameScene::Update() {
             }
         }
         quitConfirmOverlay->Update();
-        quitConfirmText.Update();
+        for (int i = 0; i < kQuitMenuCount; ++i) {
+            quitMenuTexts[i].SetColor(i == quitMenuIndex ? kQuitMenuSelectedColor : kQuitMenuUnselectedColor);
+            quitMenuTexts[i].Update();
+        }
         return;
     }
 
     // --- ESCキーで終了確認を開始（プレイ中・設定メニュー中・ゲームオーバー中いずれからでも） ---
     if (input->TriggerKey(DIK_ESCAPE)) {
         quitConfirming = true;
+        quitMenuIndex = kQuitMenuTitle; // 開くたびに誤って終了しにくい方を初期選択にする
         winApp->ShowCursor(true);
         winApp->SetClipCursor(false);
         return;
@@ -377,13 +388,17 @@ void GameScene::Update() {
     if (gameOver) {
         gameOverFadeTimer = (std::min)(gameOverFadeTimer + 1.0f / 60.0f, kGameOverFadeDuration);
         float alpha = (gameOverFadeTimer / kGameOverFadeDuration) * 0.6f;
-        gameOverOverlay->SetColor(playerWon ? Vector4{ 0.75f, 0.6f, 0.15f, alpha } : Vector4{ 0.6f, 0.05f, 0.05f, alpha });
+        const Vector3& resultColor = playerWon ? kWinOverlayColor : kLoseOverlayColor;
+        gameOverOverlay->SetColor({ resultColor.x, resultColor.y, resultColor.z, alpha });
         gameOverOverlay->Update();
         gameOverText.Update();
 
         // フェードが終わってから（演出の途中で誤爆しないように）Enterキーでリスタート
         if (gameOverFadeTimer >= kGameOverFadeDuration && input->TriggerKey(DIK_RETURN)) {
-            RestartGame();
+            // 結果色を暗くした幕で暗転し、真っ暗な間にリスタートする
+            TransitionParams retryParams = SceneTransition::kRetryParams;
+            retryParams.color = { resultColor.x * kRetryFadeColorScale, resultColor.y * kRetryFadeColorScale, resultColor.z * kRetryFadeColorScale, 1.0f };
+            sceneManager->RequestFade(retryParams, [this]() { RestartGame(); });
         }
         return;
     }
@@ -391,8 +406,12 @@ void GameScene::Update() {
     // --- マウス操作（プレイ中のみ） ---
     if (!isLookPaused) {
         Input::MouseMove mouseMove = input->GetMouseMove();
-        cameraTransform.rotate.y += (float)mouseMove.lX * mouseSensitivity;
-        cameraTransform.rotate.x += (float)mouseMove.lY * mouseSensitivity;
+        // フル版の開始演出（READY中）は視点をボスに向けたまま固定する
+        bool isIntroViewLocked = (introPhase == IntroPhase::kReady && introIsFull);
+        if (!isIntroViewLocked) {
+            cameraTransform.rotate.y += (float)mouseMove.lX * mouseSensitivity;
+            cameraTransform.rotate.x += (float)mouseMove.lY * mouseSensitivity;
+        }
 
         // マウスを中央に固定し続ける
         POINT center = { WinApp::KclientWidth / 2, WinApp::KclientHeight / 2 };
@@ -432,6 +451,38 @@ void GameScene::Update() {
             winApp->ShowCursor(false);
             winApp->SetClipCursor(true);
         }
+    }
+
+    // --- ポーズ中はゲーム世界の時間を止める ---
+    // 移動・ボスAI・グレネード・タイマー類・パーティクルは一切進めず、設定メニューの操作と
+    // 描画に必要な行列・UIの更新だけを行う（設定を触っている間にボスに殴られるのを防ぐため）
+    if (isLookPaused) {
+        postProcess->Update(isLookPaused);
+        settingsMenu.Update(input, isLookPaused);
+        UpdateRenderObjects();
+        UpdateDebugGui();
+        return;
+    }
+
+    // --- 開始演出のREADY中：移動・射撃・ボスAIは止め、視点操作と描画に必要な更新だけ行う ---
+    if (introPhase == IntroPhase::kReady) {
+        introElapsed += 1.0f / 60.0f;
+        float readyDuration = introIsFull ? kIntroFullReadyDuration : kIntroReadyDuration;
+        if (introElapsed >= readyDuration) {
+            // FIGHT表示と同時に操作解禁（次フレームから通常の更新に入る）
+            introPhase = IntroPhase::kFight;
+            introElapsed = 0.0f;
+            SetIntroText("FIGHT", kIntroFightColor);
+            TriggerCameraShake(kIntroFightShakeDuration, kIntroFightShakeStrength);
+        }
+        UpdateIntroVisual(); // UpdateRenderObjects()より前に置き、HPバーのチャージ倍率を当フレームから反映する
+        UpdateIntroCamera();
+        camera->Update();
+        UpdateWeaponViewModel(); // 銃のWVPも更新しないと単位行列のまま描画されるため必須
+        postProcess->Update(isLookPaused);
+        UpdateRenderObjects();
+        UpdateDebugGui();
+        return;
     }
 
     // --- 武器モード切り替え（1:ライフル／2:ポータルガン） ---
@@ -861,6 +912,38 @@ void GameScene::Update() {
     particleManagerLine->Update();
     particleManagerPoint->Update();
     particleManagerTriangle->Update();
+    UpdateRenderObjects();
+
+    // --- 勝敗判定：HPが0になった瞬間に一度だけ確定させる ---
+    if (playerHP <= 0.0f) {
+        gameOver = true;
+        playerWon = false;
+        gameOverText.SetText("LOSE");
+    } else if (bossHP <= 0.0f) {
+        gameOver = true;
+        playerWon = true;
+        gameOverText.SetText("WIN");
+    }
+    if (gameOver) {
+        // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
+        float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
+        gameOverText.SetPosition({ ((float)WinApp::KclientWidth - textWidth) / 2.0f, kGameOverTextPositionY });
+    }
+
+    // --- 開始演出のFIGHT表示：操作は解禁済み、文字を徐々に消し、黒帯を引いていく ---
+    if (introPhase == IntroPhase::kFight) {
+        introElapsed += 1.0f / 60.0f;
+        if (introElapsed >= kIntroFightDuration) {
+            introPhase = IntroPhase::kNone;
+        } else {
+            UpdateIntroVisual();
+        }
+    }
+
+    UpdateDebugGui();
+}
+
+void GameScene::UpdateRenderObjects() {
     skybox->Update();
     floor->Update();
     for (auto& wall : walls) { wall->Update(); }
@@ -882,28 +965,16 @@ void GameScene::Update() {
     playerHpText.Update();
 
     // ボスHPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める
-    float bossHpRatio = bossHP / kBossMaxHP;
+    float bossHpRatio = (bossHP / kBossMaxHP) * bossHpBarIntroScale;
     bossHpBarFill->SetSize({ kBossHpBarMaxWidth * bossHpRatio, kBossHpBarHeight });
     bossHpBarBackground->Update();
     bossHpBarFill->Update();
+}
 
-    // --- 勝敗判定：HPが0になった瞬間に一度だけ確定させる ---
-    if (playerHP <= 0.0f) {
-        gameOver = true;
-        playerWon = false;
-        gameOverText.SetText("LOSE");
-    } else if (bossHP <= 0.0f) {
-        gameOver = true;
-        playerWon = true;
-        gameOverText.SetText("WIN");
-    }
-    if (gameOver) {
-        // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
-        float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
-        gameOverText.SetPosition({ ((float)WinApp::KclientWidth - textWidth) / 2.0f, kGameOverTextPositionY });
-    }
-
+void GameScene::UpdateDebugGui() {
 #ifdef _DEBUG
+    Framework* framework = Framework::GetInstance();
+    WinApp* winApp = framework->GetWinApp();
     // "FPS Debug"パネルはDebugビルドの開発用（ライト/シャドウ調整等）。
     // Release/Developmentで調整したい項目はImGui非依存のsettingsMenuの方を使う
     if (isLookPaused) {
@@ -961,7 +1032,8 @@ void GameScene::Draw() {
     floor->DrawShadow(lightViewProjection);
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->DrawShadow(lightViewProjection); }
-    if (boss) boss->DrawShadow(lightViewProjection);
+    // 影パスは深度のみでピクセルシェーダーの切り取りが効かないため、実体化中は影を落とさない
+    if (boss && !IsBossMaterializing()) boss->DrawShadow(lightViewProjection);
     for (auto& grenade : grenades) { if (grenade.active) grenade.object->DrawShadow(lightViewProjection); }
     object3dCommon->PostDrawShadow();
 
@@ -995,8 +1067,10 @@ void GameScene::Draw() {
     framework->GetParticleCommon()->PreDraw(particleManagerTriangle->GetDrawType());
     particleManagerTriangle->Draw();
 
-    // --- 視点武器（常に最前面に描画。壁などにめり込んで消えないようにする） ---
-    DrawWeaponViewModel();
+    // --- 視点武器（常に最前面に描画。壁などにめり込んで消えないようにする）。開始演出の演出用カメラ中は隠す ---
+    if (!IsIntroCameraActive()) {
+        DrawWeaponViewModel();
+    }
 
     // 描画先を本来の画面（スワップチェーン）に「戻す」
     postProcess->PostDraw();
@@ -1011,16 +1085,29 @@ void GameScene::Draw() {
     // PostProcess::Draw でルートシグネチャが書き換わっているため、
     // スプライトを描く前にもう一度 SpriteCommon::PreDraw を呼ぶ必要がある
     framework->GetSpriteCommon()->PreDraw();
-    reticle->Draw();
+    if (!IsIntroCameraActive()) {
+        reticle->Draw();
+    }
 
     // --- 4. UI（プレイヤーHPバー）の描画 ---
     hpBarBackground->Draw();
     hpBarFill->Draw();
     playerHpText.Draw();
 
+    // --- 4.5 UI（開始演出の黒帯）：プレイヤーHPは隠し、ボスHPバーはチャージが見えるよう帯の上に描く ---
+    if (introPhase != IntroPhase::kNone && introIsFull) {
+        introBarTop->Draw();
+        introBarBottom->Draw();
+    }
+
     // --- 5. UI（ボスHPバー）の描画 ---
     bossHpBarBackground->Draw();
     bossHpBarFill->Draw();
+
+    // --- 5.5 UI（開始演出のREADY/FIGHT文字） ---
+    if (introPhase != IntroPhase::kNone) {
+        introText.Draw();
+    }
 
     // --- 6. UI（設定メニュー）の描画：Pキーでのポーズ中のみ表示 ---
     if (isLookPaused) {
@@ -1036,7 +1123,7 @@ void GameScene::Draw() {
     // --- 8. UI（終了確認オーバーレイ）：ESCキーで確認中のみ最前面に表示 ---
     if (quitConfirming) {
         quitConfirmOverlay->Draw();
-        quitConfirmText.Draw();
+        for (auto& text : quitMenuTexts) { text.Draw(); }
     }
 }
 
@@ -1093,7 +1180,7 @@ void GameScene::RestartGame() {
     fireCooldownTimer = 0.0f;
 
     // ボスをスポーン地点・追跡状態へ戻す
-    bossPos = { 0.0f, 0.0f, 20.0f };
+    bossPos = ArenaLayout::kBossInitialPos;
     bossAttackState = BossAttackState::kChasing;
     bossAttackTimer = 0.0f;
     bossAvoiding = false;
@@ -1125,6 +1212,130 @@ void GameScene::RestartGame() {
     portalB.isPlaced = false;
     if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
     if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+
+    // リトライ時は短縮版の開始演出を流す（暗転中に呼ばれるため、明転とともにREADYが見える）
+    StartIntro(false);
+}
+
+void GameScene::StartIntro(bool fullVersion) {
+    introPhase = IntroPhase::kReady;
+    introIsFull = fullVersion;
+    introElapsed = 0.0f;
+    introSavedCameraRotate = camera->GetTransform().rotate;
+    SetIntroText("READY", kIntroReadyColor);
+    UpdateIntroVisual(); // 初回フレームの描画前に黒帯・HPバーの初期状態を確定させる
+}
+
+void GameScene::UpdateIntroVisual() {
+    const float screenWidth = (float)WinApp::KclientWidth;
+    const float screenHeight = (float)WinApp::KclientHeight;
+
+    // 文字：READYはフル版だと黒帯・チャージの後に出す。FIGHTは時間とともに消えていく
+    float textAlpha = 1.0f;
+    if (introPhase == IntroPhase::kReady) {
+        textAlpha = (!introIsFull || introElapsed >= kIntroFullTextAppearTime) ? 1.0f : 0.0f;
+    } else if (introPhase == IntroPhase::kFight) {
+        textAlpha = 1.0f - introElapsed / kIntroFightDuration;
+    }
+    const Vector4& textColor = (introPhase == IntroPhase::kFight) ? kIntroFightColor : kIntroReadyColor;
+    introText.SetColor({ textColor.x, textColor.y, textColor.z, textAlpha });
+    introText.Update();
+
+    // グリッチ（シーン遷移用のグリッチを流用）。明転中はSceneTransition側が毎フレーム書き込むため、
+    // 明転が終わった後の時間帯（FIGHT、またはフル版の実体化開始以降）だけ書き込む
+    if (introPhase == IntroPhase::kFight) {
+        float glitch = kIntroFightGlitch * (1.0f - Easing::EaseOutCubic(introElapsed / kIntroFightGlitchDuration));
+        postProcess->SetTransitionGlitch(glitch, introElapsed);
+    } else if (introIsFull && introElapsed >= kIntroMaterializeStart) {
+        float t = std::clamp((introElapsed - kIntroMaterializeStart) / kIntroMaterializeDuration, 0.0f, 1.0f);
+        postProcess->SetTransitionGlitch(kIntroMaterializeGlitch * (1.0f - t), introElapsed);
+    }
+
+    if (!introIsFull) {
+        bossHpBarIntroScale = 1.0f;
+        return;
+    }
+
+    // ボスの実体化（READY中のみ）：形は最初から完成形のまま、描画範囲の上端を足元から頭上へ走らせて
+    // 下から姿が転送されてくるように見せる。前半は数フレームおきに消してちらつかせる
+    if (introPhase == IntroPhase::kReady) {
+        float materializeT = std::clamp((introElapsed - kIntroMaterializeStart) / kIntroMaterializeDuration, 0.0f, 1.0f);
+        float bossHeight = kBossHalfHeight * 2.0f;
+        // 発光帯が頭頂を抜け切るまで走らせる
+        float revealHeight = (bossHeight + kIntroMaterializeEdgeWidth) * Easing::EaseOutCubic(materializeT);
+        // ブロック欠けは境界が頭頂に近づくにつれ弱め、頭頂に届いた（全体が見えた）時点で0にする
+        float blockStrength = std::clamp((1.0f - revealHeight / bossHeight) / kIntroMaterializeBlockFadeRatio, 0.0f, 1.0f);
+        int frame = static_cast<int>(introElapsed * 60.0f);
+        if (materializeT > 0.0f && materializeT < kIntroMaterializeFlickerEnd && frame % 3 == 0) {
+            revealHeight = 0.0f;
+        }
+        boss->SetScale(ArenaLayout::kBossScale);
+        boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
+        // 完了後は演出を切る（edgeWidth=0で無効）
+        boss->SetDissolve(bossPos.y + revealHeight, materializeT < 1.0f ? kIntroMaterializeEdgeWidth : 0.0f, introElapsed, blockStrength);
+    } else {
+        // 短縮版はREADY(1.6s)と実体化完了(0.6+1.0s)がほぼ同時で、完了前にFIGHTへ移ることがあるため、READY外では必ず演出を切る
+        boss->SetDissolve(0.0f, 0.0f, 0.0f);
+    }
+
+    // 黒帯：READY開始時に上下から入り、READY終盤で引き切る（FIGHT＝操作解禁の時点では帯なし）
+    float barRatio = 0.0f;
+    if (introPhase == IntroPhase::kReady) {
+        float retractStart = kIntroFullReadyDuration - kIntroBarRetractDuration;
+        float slideIn = Easing::EaseOutCubic(introElapsed / kIntroBarSlideDuration);
+        float retract = Easing::EaseInCubic((introElapsed - retractStart) / kIntroBarRetractDuration);
+        barRatio = slideIn * (1.0f - retract);
+    }
+    float barHeight = kIntroBarHeight * barRatio;
+    introBarTop->SetSize({ screenWidth, barHeight });
+    introBarBottom->SetPosition({ 0.0f, screenHeight - barHeight });
+    introBarBottom->SetSize({ screenWidth, barHeight });
+    introBarTop->Update();
+    introBarBottom->Update();
+
+    // ボスHPバー：READY中に0から満タンまでチャージする（FIGHT以降は常に満タン表示）
+    bossHpBarIntroScale = (introPhase == IntroPhase::kReady)
+        ? Easing::EaseOutCubic((introElapsed - kIntroHpChargeStart) / (kIntroHpChargeEnd - kIntroHpChargeStart))
+        : 1.0f;
+}
+
+void GameScene::UpdateIntroCamera() {
+    if (!introIsFull) { return; }
+    Transform& cameraTransform = camera->GetTransform();
+    const Vector3 playerEye = { playerPos.x, playerPos.y + eyeHeight, playerPos.z };
+
+    // 演出用カメラ：READY全体をかけてStart→Endへ少しずつ寄り、常にボスの注視点を向く
+    float pushT = introElapsed / kIntroFullReadyDuration;
+    Vector3 cinePos = {
+        kIntroCameraStartPos.x + (kIntroCameraEndPos.x - kIntroCameraStartPos.x) * pushT,
+        kIntroCameraStartPos.y + (kIntroCameraEndPos.y - kIntroCameraStartPos.y) * pushT,
+        kIntroCameraStartPos.z + (kIntroCameraEndPos.z - kIntroCameraStartPos.z) * pushT,
+    };
+    Vector3 toTarget = { bossPos.x - cinePos.x, bossPos.y + kIntroCameraLookHeight - cinePos.y, bossPos.z - cinePos.z };
+    float cineYaw = std::atan2(toTarget.x, toTarget.z); // forward = (sin(yaw), 0, cos(yaw)) の規約
+    float cinePitch = std::atan2(-toTarget.y, std::sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z)); // rotate.xは正で下向き
+
+    // 黒帯が引く間（READY終盤）にプレイヤー視点へ補間して戻す。FIGHTに入った後は完全にプレイヤー視点
+    float retractStart = kIntroFullReadyDuration - kIntroBarRetractDuration;
+    float back = (introPhase == IntroPhase::kReady)
+        ? Easing::EaseInOutCubic((introElapsed - retractStart) / kIntroBarRetractDuration)
+        : 1.0f;
+    cameraTransform.translate = {
+        cinePos.x + (playerEye.x - cinePos.x) * back,
+        cinePos.y + (playerEye.y - cinePos.y) * back,
+        cinePos.z + (playerEye.z - cinePos.z) * back,
+    };
+    cameraTransform.rotate = {
+        cinePitch + (introSavedCameraRotate.x - cinePitch) * back,
+        cineYaw + (introSavedCameraRotate.y - cineYaw) * back,
+        introSavedCameraRotate.z,
+    };
+}
+
+void GameScene::SetIntroText(const std::string& text, const Vector4& color) {
+    introText.SetText(text);
+    introText.SetColor(color);
+    introText.SetPosition({ ((float)WinApp::KclientWidth - introText.GetWidth()) / 2.0f, kIntroTextPositionY });
 }
 
 void GameScene::FireGrenade() {

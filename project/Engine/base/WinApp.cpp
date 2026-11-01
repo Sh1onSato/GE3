@@ -87,7 +87,14 @@ bool WinApp::ProcessMassage() {
 }
 
 void WinApp::ShowCursor(bool isShow) {
-	::ShowCursor(isShow);
+	// ::ShowCursorは「表示カウンタを±1する」APIで、カウンタが0以上のとき表示される。
+	// 同じ値で連続して呼ぶとカウンタがずれ（例：タイトルでtrue→ゲームでfalseしても0のままで消えない）、
+	// 呼び出し回数に依存してしまうため、目的の状態になるまで呼び続けて何度呼んでも同じ結果になるようにする
+	if (isShow) {
+		while (::ShowCursor(TRUE) < 0) {}
+	} else {
+		while (::ShowCursor(FALSE) >= 0) {}
+	}
 }
 
 void WinApp::SetClipCursor(bool isClip) {

@@ -32,6 +32,13 @@ public:
     void Update(Input* input, bool isOpen);
     void Draw();
 
+    // 各行のバー左上座標（行ラベルをバーの左に並べるための外部参照用）
+    static Vector2 GetRowPosition(size_t index) {
+        return { kMenuPosition.x, kMenuPosition.y + kRowHeight * static_cast<float>(index) };
+    }
+    // 行ラベルとバー(カーソル含む)の間に確保しておく余白
+    static constexpr float kLabelRightMargin = 30.0f;
+
 private:
     struct Row {
         std::unique_ptr<Sprite> background;

@@ -16,6 +16,10 @@ public:
     // カメラの追加
     void AddCamera(const std::string& name, std::unique_ptr<Camera> camera);
 
+    // カメラの削除（シーン固有のカメラの後始末用）。
+    // アクティブなカメラを消した場合はアクティブ名を空に戻し、次のAddCameraで自動的にアクティブになるようにする
+    void RemoveCamera(const std::string& name);
+
     // アクティブなカメラの設定
     void SetActiveCamera(const std::string& name);
 

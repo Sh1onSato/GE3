@@ -1,9 +1,36 @@
 #include "PostProcess.h"
 #include "ShaderCompiler.h"
 #include "externals/imgui/imgui.h"
+#include "Logger.h"
 #include <cassert>
+#include <cstdlib>
+#include <format>
 
 using namespace ShaderCompiler;
+
+namespace {
+// HRESULT失敗時にログを残して終了する（assert単体はReleaseビルドで消えるため）
+void CheckHResult(HRESULT hr, const char* what, ID3D12Device* device, ID3DBlob* errorBlob = nullptr) {
+    if (SUCCEEDED(hr)) { return; }
+    Logger::Log(std::format("PostProcess: {} failed. hr=0x{:08X}\n", what, static_cast<uint32_t>(hr)));
+    if (errorBlob) {
+        Logger::Log(static_cast<const char*>(errorBlob->GetBufferPointer()));
+    }
+    if (hr == DXGI_ERROR_DEVICE_REMOVED && device) {
+        Logger::Log(std::format("PostProcess: DeviceRemovedReason=0x{:08X}\n", static_cast<uint32_t>(device->GetDeviceRemovedReason())));
+    }
+    assert(false);
+    std::exit(EXIT_FAILURE);
+}
+
+// シェーダーコンパイル失敗時にログを残して終了する
+void CheckShaderBlob(const Microsoft::WRL::ComPtr<IDxcBlob>& blob, const char* what) {
+    if (blob) { return; }
+    Logger::Log(std::format("PostProcess: shader compile failed ({}).\n", what));
+    assert(false);
+    std::exit(EXIT_FAILURE);
+}
+}
 
 void PostProcess::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
     this->dxCommon = dxCommon;
@@ -31,7 +58,7 @@ void PostProcess::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager) {
         &heapProps, D3D12_HEAP_FLAG_NONE, &desc,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&resource)
     );
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateCommittedResource (scene)", dxCommon->GetDevice());
 
     // 2. RTVの作成
     rtvIndex = kSceneRtvIndex;
@@ -111,7 +138,7 @@ Microsoft::WRL::ComPtr<ID3D12Resource> PostProcess::CreateBloomTexture(uint32_t 
         &heapProps, D3D12_HEAP_FLAG_NONE, &desc,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clearValue, IID_PPV_ARGS(&texture)
     );
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateCommittedResource (intermediate)", dxCommon->GetDevice());
 
     D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
     rtvDesc.Format = desc.Format;
@@ -166,8 +193,8 @@ void PostProcess::CreateGraphicsPipeline() {
 
     rootParameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParameters[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    rootParameters[3].Constants.ShaderRegister = 0; // b0: bloomIntensity, grayscaleフラグ, sepiaフラグ, blurEnabledフラグ, vignetteIntensity, vignetteRadius, damageVignetteIntensity
-    rootParameters[3].Constants.Num32BitValues = 7;
+    rootParameters[3].Constants.ShaderRegister = 0; // b0: bloomIntensity, grayscaleフラグ, sepiaフラグ, blurEnabledフラグ, vignetteIntensity, vignetteRadius, damageVignetteIntensity, glitchIntensity, glitchTime
+    rootParameters[3].Constants.Num32BitValues = kCompositeParamCount;
 
     D3D12_STATIC_SAMPLER_DESC staticSamplers[1] = {};
     staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -189,9 +216,9 @@ void PostProcess::CreateGraphicsPipeline() {
     Microsoft::WRL::ComPtr<ID3DBlob> signatureBlob;
     Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
     HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "D3D12SerializeRootSignature (composite)", device, errorBlob.Get());
     hr = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&compositeRootSignature));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateRootSignature (composite)", device);
 
     // --- 2. シェーダーのコンパイル ---
     IDxcUtils* dxcUtils;
@@ -203,7 +230,8 @@ void PostProcess::CreateGraphicsPipeline() {
 
     auto vsBlob = CompileShader(L"Resources/shaders/PostProcess.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
     auto psBlob = CompileShader(L"Resources/shaders/PostProcess.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
-    assert(vsBlob && psBlob);
+    CheckShaderBlob(vsBlob, "PostProcess.VS.hlsl");
+    CheckShaderBlob(psBlob, "PostProcess.PS.hlsl");
 
     // --- 3. PSO の作成 ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
@@ -230,7 +258,7 @@ void PostProcess::CreateGraphicsPipeline() {
     psoDesc.SampleDesc.Count = 1;
 
     hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&compositePipelineState));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateGraphicsPipelineState (composite)", device);
 }
 
 void PostProcess::CreateExtractPipeline() {
@@ -274,9 +302,9 @@ void PostProcess::CreateExtractPipeline() {
     Microsoft::WRL::ComPtr<ID3DBlob> signatureBlob;
     Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
     HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "D3D12SerializeRootSignature (extract)", device, errorBlob.Get());
     hr = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&extractRootSignature));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateRootSignature (extract)", device);
 
     // --- 2. シェーダーのコンパイル ---
     IDxcUtils* dxcUtils;
@@ -288,7 +316,8 @@ void PostProcess::CreateExtractPipeline() {
 
     auto vsBlob = CompileShader(L"Resources/shaders/PostProcess.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
     auto psBlob = CompileShader(L"Resources/shaders/BrightnessExtract.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
-    assert(vsBlob && psBlob);
+    CheckShaderBlob(vsBlob, "PostProcess.VS.hlsl");
+    CheckShaderBlob(psBlob, "BrightnessExtract.PS.hlsl");
 
     // --- 3. PSO の作成 ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
@@ -315,7 +344,7 @@ void PostProcess::CreateExtractPipeline() {
     psoDesc.SampleDesc.Count = 1;
 
     hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&extractPipelineState));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateGraphicsPipelineState (extract)", device);
 }
 
 void PostProcess::CreateBlurPipeline() {
@@ -359,9 +388,9 @@ void PostProcess::CreateBlurPipeline() {
     Microsoft::WRL::ComPtr<ID3DBlob> signatureBlob;
     Microsoft::WRL::ComPtr<ID3DBlob> errorBlob;
     HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "D3D12SerializeRootSignature (blur)", device, errorBlob.Get());
     hr = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&blurRootSignature));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateRootSignature (blur)", device);
 
     // --- 2. シェーダーのコンパイル ---
     IDxcUtils* dxcUtils;
@@ -373,7 +402,8 @@ void PostProcess::CreateBlurPipeline() {
 
     auto vsBlob = CompileShader(L"Resources/shaders/PostProcess.VS.hlsl", L"vs_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
     auto psBlob = CompileShader(L"Resources/shaders/GaussianBlur.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
-    assert(vsBlob && psBlob);
+    CheckShaderBlob(vsBlob, "PostProcess.VS.hlsl");
+    CheckShaderBlob(psBlob, "GaussianBlur.PS.hlsl");
 
     // --- 3. PSO の作成 ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
@@ -400,15 +430,15 @@ void PostProcess::CreateBlurPipeline() {
     psoDesc.SampleDesc.Count = 1;
 
     hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&blurPipelineState));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateGraphicsPipelineState (gaussian blur)", device);
 
     // ボックスフィルターPSO：ルートシグネチャ・頂点シェーダー・各種ステートはガウシアンと共用し、
     // ピクセルシェーダーだけBoxBlur.PS.hlslに差し替える
     auto boxPsBlob = CompileShader(L"Resources/shaders/BoxBlur.PS.hlsl", L"ps_6_0", dxcUtils, dxcCompiler, includeHandler, std::cout);
-    assert(boxPsBlob);
+    CheckShaderBlob(boxPsBlob, "BoxBlur.PS.hlsl");
     psoDesc.PS = { boxPsBlob->GetBufferPointer(), boxPsBlob->GetBufferSize() };
     hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&boxBlurPipelineState));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "CreateGraphicsPipelineState (box blur)", device);
 }
 
 void PostProcess::PreDraw() {
@@ -608,11 +638,13 @@ void PostProcess::DrawCompositePass() {
     float damageVignetteRatio = damageVignetteTimer / kDamageVignetteDuration; // 1(開始)→0(終了)
     float damageVignetteIntensity = damageVignetteRatio * kDamageVignetteMaxBlend;
 
-    float compositeParam[7] = {
+    // 並びはPostProcess.PS.hlslのcbuffer CompositeParamと完全に一致させること
+    float compositeParam[kCompositeParamCount] = {
         bloomIntensity, grayscaleBlend, sepiaEnabled ? 1.0f : 0.0f, (blurEnabled || boxBlurEnabled) ? 1.0f : 0.0f,
-        vignetteEnabled ? vignetteIntensity : 0.0f, vignetteRadius, damageVignetteIntensity
+        vignetteEnabled ? vignetteIntensity : 0.0f, vignetteRadius, damageVignetteIntensity,
+        transitionGlitchIntensity, transitionGlitchTime
     };
-    commandList->SetGraphicsRoot32BitConstants(3, 7, compositeParam, 0);
+    commandList->SetGraphicsRoot32BitConstants(3, kCompositeParamCount, compositeParam, 0);
 
     commandList->DrawInstanced(4, 1, 0, 0);
 }

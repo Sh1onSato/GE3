@@ -108,7 +108,8 @@ void SpriteCommon::CreateRootSignature(){
 
 	D3D12_ROOT_PARAMETER rootParameters[8] = {};
 	rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b0: Material
-	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	// Object3d.VS.hlslを共用しており、VSもMaterialを読む（実体化演出の横ズレ）ためALL
+	rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameters[0].Descriptor.ShaderRegister = 0;
 
 	rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b1: Transform

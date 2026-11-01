@@ -1,6 +1,34 @@
 #include "SceneManager.h"
 
+void SceneManager::Initialize() {
+    transition = std::make_unique<SceneTransition>();
+    transition->Initialize();
+}
+
 void SceneManager::Update() {
+    // 遷移演出の更新
+    if (transition) {
+        transition->Update();
+
+        if (transition->IsReadyToSwitch()) {
+            // 真っ暗になったので遷移先を予約し、明転へ進める（実際の差し替えは下の既存処理で行う）
+            if (!pendingSceneName.empty()) {
+                ChangeScene(pendingSceneName);
+                pendingSceneName.clear();
+            }
+            // シーンを変えない暗転の場合は、真っ暗なこのフレームで1回だけコールバックを呼ぶ
+            if (onBlack) {
+                auto callback = std::move(onBlack);
+                onBlack = nullptr;
+                callback();
+            }
+            transition->BeginFadeIn();
+        } else if (transition->IsFadingOut()) {
+            // 暗転中はシーンを止める（入力も無効）
+            return;
+        }
+    }
+
     // シーン切り替え予約がある場合
     if (nextScene) {
         // 旧シーンの終了
@@ -34,6 +62,36 @@ void SceneManager::Draw() {
     if (currentScene) {
         currentScene->Draw();
     }
+    // 遷移用の黒幕は常に最前面
+    if (transition) {
+        transition->Draw();
+    }
+}
+
+void SceneManager::ChangeSceneWithFadeIn(const std::string& sceneName) {
+    ChangeScene(sceneName);
+    if (transition) {
+        transition->StartFromBlack(SceneTransition::kBattleStartParams);
+    }
+}
+
+void SceneManager::RequestTransition(const std::string& sceneName, const TransitionParams& params) {
+    // 多重遷移防止
+    if (!transition || transition->IsActive()) {
+        return;
+    }
+    pendingSceneName = sceneName;
+    transition->Start(params);
+}
+
+void SceneManager::RequestFade(const TransitionParams& params, std::function<void()> onBlack) {
+    // 多重遷移防止
+    if (!transition || transition->IsActive()) {
+        return;
+    }
+    pendingSceneName.clear();
+    this->onBlack = std::move(onBlack);
+    transition->Start(params);
 }
 
 void SceneManager::ChangeScene(BaseScene* nextScene) {
@@ -55,4 +113,5 @@ void SceneManager::Finalize() {
         currentScene->Finalize();
         currentScene.reset();
     }
+    transition.reset();
 }

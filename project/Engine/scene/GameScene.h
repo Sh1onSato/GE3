@@ -1,5 +1,6 @@
 #pragma once
 #include "BaseScene.h"
+#include "ArenaLayout.h"
 #include "Sprite.h"
 #include "BitmapText.h"
 #include "SettingsMenu.h"
@@ -13,6 +14,7 @@
 #include "PostProcess.h"
 #include <memory>
 #include <vector>
+#include <array>
 
 /// <summary>
 /// ゲーム本編シーン
@@ -59,6 +61,10 @@ private:
 	void UpdatePortalTeleport(float preCollisionVelocityY);
 	// ベクトルvを、fromの姿勢からtoの姿勢へ180度反転込みで変換する
 	Vector3 TransformThroughPortal(const Portal& from, const Portal& to, const Vector3& v);
+	// 描画用の行列(WVP)・HPバー等UIの更新（ポーズ中もゲーム進行と無関係に毎フレーム必要な処理）
+	void UpdateRenderObjects();
+	// Debugビルド専用のImGui調整パネル（ポーズ中のみ表示）
+	void UpdateDebugGui();
 	// 視点武器の追従・リコイル演出の更新
 	void UpdateWeaponViewModel();
 	// 視点武器の描画（常に最前面）
@@ -73,6 +79,20 @@ private:
 	void DamageBoss(float amount);
 	// 勝敗演出（gameOver）中にEnterキーで呼ばれる。プレイヤー/ボス/ポータル等をスポーン直後の状態へ戻す
 	void RestartGame();
+	// 開始演出（READY→FIGHT）を最初から始める。fullVersion=trueで黒帯・ボスHPチャージ・視点ロック付き（初回開始用）
+	void StartIntro(bool fullVersion);
+	// 開始演出の見た目（文字の透明度・黒帯・ボスHPバーのチャージ）を経過時間に合わせて更新する
+	void UpdateIntroVisual();
+	// フル版の開始演出：READY中はボスを見上げる演出用カメラにし、黒帯が引く間にプレイヤー視点へ戻す
+	void UpdateIntroCamera();
+	// 演出用カメラ中かどうか（銃・レティクルを隠す判定に使う）
+	bool IsIntroCameraActive() const { return introPhase == IntroPhase::kReady && introIsFull; }
+	// ボスが実体化演出の途中か（影パスを止める判定に使う）
+	bool IsBossMaterializing() const {
+		return introPhase == IntroPhase::kReady && introElapsed < kIntroMaterializeStart + kIntroMaterializeDuration;
+	}
+	// 開始演出の文字を差し替えて画面中央に配置する
+	void SetIntroText(const std::string& text, const Vector4& color);
 
 	// ヒット演出用の構造体
 	struct HitFlash {
@@ -86,6 +106,8 @@ private:
 	Camera* camera = nullptr; 
 	std::unique_ptr<Model> model = nullptr;
 	std::unique_ptr<Model> cubeModel = nullptr; // 追加：キューブモデル
+	// ボス用モデル（仮）：実体化演出の横ズレ（頂点シェーダー）が帯状に効くよう、高さ方向に分割したcube。本番モデル追加時に差し替える
+	std::unique_ptr<Model> bossModel = nullptr;
 	std::unique_ptr<Object3d> object3d = nullptr;
 	std::unique_ptr<Object3d> object3d2 = nullptr;
 	std::unique_ptr<Object3d> floor = nullptr;    // 追加：床
@@ -113,8 +135,8 @@ private:
 	static constexpr float kBossDamageFalloffEnd = 20.0f;   // これ以上の距離は常に最小ダメージ
 
 	// ボスの移動AI（常に追いかける。距離とHPで速度を変化させる）
-	Vector3 bossPos = { 0.0f, 0.0f, 20.0f }; // 足元基準（playerPosと同じ規約）
-	static constexpr float kBossHalfHeight = 2.5f;          // 底面を床(y=0)に合わせるための高さオフセット
+	Vector3 bossPos = ArenaLayout::kBossInitialPos; // 足元基準（playerPosと同じ規約）
+	static constexpr float kBossHalfHeight = ArenaLayout::kBossHalfHeight; // 底面を床(y=0)に合わせるための高さオフセット
 	static constexpr float kBossCollisionRadius = 2.0f;     // 横幅（ボスのscale.x/zに合わせる）
 	static constexpr float kBossStopDistance = 3.0f;        // これより近づいたら停止（次フェーズの攻撃間合いを想定）
 	static constexpr float kBossFarDistance = 15.0f;        // これより遠いと最高速度になる
@@ -196,7 +218,7 @@ private:
 
 	// 射撃間隔（ショットガン的に連射させず、1発ごとの重みを出すためのクールダウン）
 	float fireCooldownTimer = 0.0f;
-	static constexpr float kFireCooldownDuration = 0.6f; // 秒。この間はクリックしても発砲しない
+	static constexpr float kFireCooldownDuration = 0.5f; // 秒。この間はクリックしても発砲しない
 
 	// カメラシェイク（発砲・ヒット時に視点をランダムに揺らす演出）
 	float cameraShakeTimer = 0.0f;    // 残り時間(秒)。0になると揺れは止まる
@@ -238,6 +260,9 @@ private:
 	bool playerWon = false;
 	float gameOverFadeTimer = 0.0f;
 	static constexpr float kGameOverFadeDuration = 1.0f;
+	static constexpr Vector3 kWinOverlayColor = { 0.75f, 0.6f, 0.15f };  // 勝利時の幕の色（金）
+	static constexpr Vector3 kLoseOverlayColor = { 0.6f, 0.05f, 0.05f }; // 敗北時の幕の色（赤）
+	static constexpr float kRetryFadeColorScale = 0.3f; // リトライ暗転は結果色をこの倍率で暗くして使う
 	std::unique_ptr<Sprite> gameOverOverlay = nullptr;
 	BitmapText gameOverText; // "WIN"/"LOSE"を中央表示（BitmapTextのグリフセル幅7*表示倍率2と一致させる複製定数がkGameOverTextCharWidth）
 	static constexpr float kGameOverTextCharWidth = 14.0f;
@@ -246,9 +271,56 @@ private:
 	// 終了確認（ESCキーでいつでも開始。フェード無しの即時暗転＋"QUIT"表示。Enterで終了・ESCでキャンセル）
 	bool quitConfirming = false;
 	std::unique_ptr<Sprite> quitConfirmOverlay = nullptr;
-	BitmapText quitConfirmText;
+	// ESCメニューの選択肢（↑↓/W・Sで選択、Enterで決定）
+	enum QuitMenuItem { kQuitMenuTitle, kQuitMenuQuit, kQuitMenuCount };
+	std::array<BitmapText, kQuitMenuCount> quitMenuTexts;
+	int quitMenuIndex = kQuitMenuTitle;
+	static constexpr float kQuitMenuLineSpacing = 30.0f; // 選択肢の行間[px]（文字の高さ9px×既定倍率2より広め）
+	static constexpr Vector4 kQuitMenuSelectedColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+	static constexpr Vector4 kQuitMenuUnselectedColor = { 0.5f, 0.5f, 0.55f, 1.0f }; // TitleSceneの非選択色と揃える
 
-	std::unique_ptr<PostProcess> postProcess = nullptr;
+	// 開始演出（READY中は移動・射撃・ボスAIを止め、FIGHT表示と同時に解禁）
+	// フル版（初回開始）：黒帯＋ボスHPバーのチャージ＋READY中の視点ロック。短縮版（リトライ）：READY→FIGHTのみで視点操作可
+	enum class IntroPhase { kNone, kReady, kFight };
+	IntroPhase introPhase = IntroPhase::kNone;
+	bool introIsFull = false;
+	float introElapsed = 0.0f; // 現在のフェーズに入ってからの経過時間
+	static constexpr float kIntroReadyDuration = 1.6f;     // 短縮版のREADY時間（シーン遷移の明転と重なる分を含む）
+	static constexpr float kIntroFullReadyDuration = 2.2f; // フル版のREADY時間
+	static constexpr float kIntroFullTextAppearTime = 1.0f; // フル版：黒帯が入ってからREADYの文字を出すまでの時間
+	static constexpr float kIntroHpChargeStart = 0.8f;     // フル版：ボスHPバーのチャージ開始時刻
+	static constexpr float kIntroHpChargeEnd = 1.8f;       // フル版：ボスHPバーのチャージ完了時刻
+	static constexpr float kIntroBarHeight = 80.0f;        // 黒帯1本の高さ
+	static constexpr float kIntroBarSlideDuration = 0.4f;  // 黒帯が入ってくる時間
+	static constexpr float kIntroBarRetractDuration = 0.4f; // READY終盤に黒帯を引く時間（FIGHTの瞬間には消え切っている）
+	static constexpr float kIntroFightDuration = 0.6f;     // FIGHT表示時間（この間は操作可能、徐々に消える）
+	// フル版：ボスの実体化。シーン遷移の明転（0.6秒）中はSceneTransitionがグリッチ強度を毎フレーム上書きするため、明転後に始める
+	static constexpr float kIntroMaterializeStart = 0.6f;
+	static constexpr float kIntroMaterializeDuration = 1.0f; // 開始0.6s+1.0s=1.6sで完了し、黒帯の引き始め(2.2-0.4=1.8s)より前に収まる
+	static constexpr float kIntroMaterializeFlickerEnd = 0.5f; // 実体化の進行率がここまではちらつかせる
+	static constexpr float kIntroMaterializeEdgeWidth = 0.6f;  // 実体化の境界の発光帯の幅[m]
+	static constexpr float kIntroMaterializeBlockFadeRatio = 0.3f; // ブロック欠けを弱め始める位置（境界が残り身長のこの割合に来たら弱め、頭頂で0）
+	static constexpr float kIntroMaterializeGlitch = 0.7f;     // 実体化開始時のグリッチ強度（実体化完了に向けて0へ）
+	static constexpr float kIntroFightGlitch = 1.0f;           // FIGHTの瞬間のグリッチ強度（短縮版でも出す）
+	static constexpr float kIntroFightGlitchDuration = 0.25f;
+	// フル版：演出用カメラ。プレイヤーとボスの間に中央カバー箱(0,*,12)があり実体化が隠れるため、
+	// 箱を避けたボスの右斜め前の低い位置から見上げ、READY中に少しずつ寄る
+	static constexpr Vector3 kIntroCameraStartPos = { 9.2f, 1.2f, 7.5f };  // ボスまで約15.5m
+	static constexpr Vector3 kIntroCameraEndPos = { 7.0f, 1.6f, 10.2f };   // ボスまで約12m
+	static constexpr float kIntroCameraLookHeight = 3.0f; // ボスの足元からこの高さを注視する（見上げる構図）
+	Vector3 introSavedCameraRotate = {}; // 演出前のプレイヤーの視点（演出後にここへ戻す）
+	std::unique_ptr<Sprite> introBarTop = nullptr;
+	std::unique_ptr<Sprite> introBarBottom = nullptr;
+	float bossHpBarIntroScale = 1.0f; // ボスHPバーの表示倍率（チャージ演出用、実際のbossHPには影響しない）
+	static constexpr float kIntroTextScale = 5.0f;
+	static constexpr float kIntroTextPositionY = 320.0f;
+	static constexpr Vector4 kIntroReadyColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+	static constexpr Vector4 kIntroFightColor = { 0.3f, 1.0f, 1.0f, 1.0f }; // タイル遷移と揃えたシアン
+	static constexpr float kIntroFightShakeDuration = 0.2f;
+	static constexpr float kIntroFightShakeStrength = 0.015f;
+	BitmapText introText;
+
+	PostProcess* postProcess = nullptr; // Frameworkが所有する共有インスタンス（非所有）
 	// 点・線・面を同時に出せるよう、描画タイプごとにParticleManagerを分けて持つ
 	std::unique_ptr<ParticleManager> particleManagerLine = nullptr;
 	std::unique_ptr<ParticleManager> particleManagerPoint = nullptr;

@@ -84,8 +84,12 @@ struct VertexData {
 struct Material {
 	Vector4 color;
 	int32_t enableLighting;
-	float padding[3];
+	float dissolveHeight;    // 実体化演出：このワールドY座標より上のピクセルを描かない
+	float dissolveEdgeWidth; // 実体化演出：境界の発光幅。0以下で演出無効
+	float dissolveTime;      // 実体化演出：ノイズを動かすための経過時間[秒]
 	Matrix4x4 uvTransform;
+	float dissolveBlockStrength; // 実体化演出：ブロック欠けの強さ（0～1）。全体が見えた時点で0にする
+	float padding[3];
 };
 
 struct TransformationMatrix {

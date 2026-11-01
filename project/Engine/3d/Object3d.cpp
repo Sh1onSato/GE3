@@ -24,6 +24,10 @@ void Object3d::Initialize(Object3dCommon* common) {
 
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = 1;
+    materialData->dissolveHeight = 0.0f;
+    materialData->dissolveEdgeWidth = 0.0f; // 実体化演出は無効
+    materialData->dissolveTime = 0.0f;
+    materialData->dissolveBlockStrength = 0.0f;
     materialData->uvTransform = Calculation::MakeIdentity4x4();
 
     // デフォルトのトランスフォーム

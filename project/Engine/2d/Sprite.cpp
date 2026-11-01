@@ -68,6 +68,10 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = false;
+    materialData->dissolveHeight = 0.0f;
+    materialData->dissolveEdgeWidth = 0.0f; // Object3d.PS.hlslを共用しているため、実体化演出を明示的に無効化
+    materialData->dissolveTime = 0.0f;
+    materialData->dissolveBlockStrength = 0.0f;
     materialData->uvTransform = Calculation::MakeIdentity4x4();
 
     // 行列リソースの設定

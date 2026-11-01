@@ -1,11 +1,25 @@
 #include"object3d.hlsli"
 
-struct Material
-{
-    float4 color;
-    int enableLighting;
-    float4x4 uvTransform;
-};
+// 実体化の境界の発光色（1超えでブルームに乗せる。FIGHT文字・タイル遷移と揃えたシアン）
+static const float3 kDissolveGlowColor = float3(0.3f, 1.0f, 1.0f) * 3.0f;
+// 境界付近を走査線状に欠けさせる密度（ワールド1mあたりの本数）
+static const float kDissolveScanlineDensity = 24.0f;
+// ノイズの切り替え頻度[回/秒]（連続的に動かさずカクつかせてデジタル感を出す）
+static const float kDissolveNoiseRate = 20.0f;
+// (1) 境界の揺らぎ：ブロックの細かさ（ワールド1mあたりの個数）と上下の振れ幅[m]
+static const float kDissolveEdgeBlockDensity = 3.0f;
+static const float kDissolveEdgeNoiseAmplitude = 0.4f;
+// (2) 横帯ノイズ：帯の細かさ（1mあたりの本数）、上へ流れる速さ[本/秒]、帯が出る確率、帯の発光強度
+static const float kDissolveBandDensity = 8.0f;
+static const float kDissolveBandSpeed = 6.0f;
+static const float kDissolveBandRate = 0.12f;
+static const float kDissolveBandGlow = 0.5f;
+// (4) ブロック欠け：ブロックの細かさ（1mあたりの個数）、境界直下での欠ける確率、
+// 欠けが届く範囲[m]（境界からこの距離まで下るにつれ確率が0へ減る）、欠ける寸前のブロックの発光強度
+static const float kDissolveBlockDensity = 4.0f;
+static const float kDissolveBlockDropRate = 0.35f;
+static const float kDissolveBlockDropRange = 2.5f;
+static const float kDissolveBlockGlow = 0.6f;
 
 struct DirectionalLight
 {
@@ -165,6 +179,46 @@ PixelShaderOutput main(VertexShaderOutput input)
         discard;
     }
 
+    // 実体化演出：境界より上は破棄、境界に近いほど走査線状に欠けさせつつ発光させる
+    float dissolveGlow = 0.0f;
+    if (gMaterial.dissolveEdgeWidth > 0.0f) {
+        float noiseStep = floor(gMaterial.dissolveTime * kDissolveNoiseRate);
+
+        // (1) 境界をXZのブロック単位で上下に揺らし、凸凹に組み上がって見せる
+        float2 edgeBlock = floor(input.worldPosition.xz * kDissolveEdgeBlockDensity);
+        float edgeOffset = (Hash21(edgeBlock + noiseStep * float2(17.0f, 31.0f)) - 0.5f) * kDissolveEdgeNoiseAmplitude;
+        float distanceToEdge = gMaterial.dissolveHeight + edgeOffset - input.worldPosition.y;
+        if (distanceToEdge < 0.0f) {
+            discard;
+        }
+        dissolveGlow = 1.0f - saturate(distanceToEdge / gMaterial.dissolveEdgeWidth);
+        if (frac(input.worldPosition.y * kDissolveScanlineDensity) < dissolveGlow * 0.6f) {
+            discard;
+        }
+
+        // (2) 実体化済みの部分に横帯ノイズを下から上へ流す（帯の一部は欠け、残りは光る）
+        // ※現在は不使用。後で使うため残しておく（有効化するときはコメントを外すだけでよい）
+        //float band = floor(input.worldPosition.y * kDissolveBandDensity - gMaterial.dissolveTime * kDissolveBandSpeed);
+        //float bandRandom = Hash21(float2(band, noiseStep));
+        //if (bandRandom < kDissolveBandRate) {
+        //    if (bandRandom < kDissolveBandRate * 0.4f) {
+        //        discard;
+        //    }
+        //    dissolveGlow = max(dissolveGlow, kDissolveBandGlow);
+        //}
+
+        // (4) 立方体ブロック単位でランダムに欠けさせる。境界に近いほど欠けやすく、下の安定した部分ほど埋まっていく
+        float3 block = floor(input.worldPosition * kDissolveBlockDensity);
+        float blockRandom = Hash21(float2(dot(block, float3(1.0f, 57.0f, 113.0f)), noiseStep));
+        float dropRate = kDissolveBlockDropRate * saturate(1.0f - distanceToEdge / kDissolveBlockDropRange) * gMaterial.dissolveBlockStrength;
+        if (blockRandom < dropRate) {
+            discard;
+        }
+        if (blockRandom < dropRate * 1.5f) {
+            dissolveGlow = max(dissolveGlow, kDissolveBlockGlow); // 欠ける寸前のブロックを光らせてチラつかせる
+        }
+    }
+
     // ライティングの計算と適用
     if (gMaterial.enableLighting != 0){
         float3 baseColor = output.color.rgb;
@@ -209,6 +263,8 @@ PixelShaderOutput main(VertexShaderOutput input)
 
         output.color.rgb = baseColor * lightingResult + ambient;
     }
+
+    output.color.rgb += kDissolveGlowColor * dissolveGlow;
 
     return output;
 }

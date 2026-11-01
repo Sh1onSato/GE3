@@ -78,10 +78,10 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
 void Object3dCommon::CreateRootSignature() {
     D3D12_ROOT_PARAMETER rootParameters[8] = {};
 
-    // CBV: Material (b0)
+    // CBV: Material (b0)。VSも実体化演出の横ズレで読むためALL
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
-    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // CBV: TransformationMatrix (b1)
     rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;

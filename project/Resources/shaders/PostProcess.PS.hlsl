@@ -17,7 +17,23 @@ cbuffer CompositeParam : register(b0) {
     float gVignetteIntensity;       // 0=効果なし、1で画面端が真っ黒になるまで減光
     float gVignetteRadius;          // ここより中心側は減光しない範囲（0=中心から、1で端のみ）
     float gDamageVignetteIntensity; // 被弾フラッシュ用。0=効果なし、上のvignetteとは独立に赤くブレンドする
+    float gGlitchIntensity;         // シーン遷移用グリッチ。0=効果なし、1=最大
+    float gGlitchTime;              // グリッチの乱数シード用の経過時間(秒)。外部(SceneTransition)から毎フレーム渡される
 };
+
+// --- グリッチ演出の調整値 ---
+static const float kGlitchBandCount = 24.0f;       // 画面を縦に分割する帯の数
+static const float kGlitchRate = 20.0f;            // 乱数が切り替わる速さ(回/秒)
+static const float kGlitchShiftMax = 0.05f;        // ブロックずれの最大量(UV)。強度を掛けて使う
+static const float kGlitchRgbOffset = 0.006f;      // RGBずれの量(UV)。強度を掛けて使う
+static const float kGlitchScanlineDarken = 0.15f;  // 走査線で下げる明度の最大量。強度を掛けて使う
+static const float kGlitchScreenHeight = 720.0f;   // 走査線の本数計算用の画面高さ(WinApp::KclientHeightと揃える)
+static const float kGlitchPi = 3.14159265f;
+
+// 2次元の値から0～1の疑似乱数を作る小さなハッシュ
+float GlitchHash(float2 p) {
+    return frac(sin(dot(p, float2(127.1f, 311.7f))) * 43758.5453f);
+}
 
 struct PixelShaderOutput {
     float4 color : SV_TARGET0;
@@ -26,13 +42,43 @@ struct PixelShaderOutput {
 PixelShaderOutput main(VertexShaderOutput input) {
     PixelShaderOutput output;
 
-    float4 sceneColor = gTexture.Sample(gSampler, input.texcoord);
-
-    if (gBlurEnabled > 0.5f) {
-        sceneColor = gBlurTexture.Sample(gSampler, input.texcoord);
+    float2 sceneUV = input.texcoord;
+    float rgbOffset = 0.0f;
+    if (gGlitchIntensity > 0.0f) {
+        // 帯ごとの乱数で、強度に比例した確率の帯だけ横にずらす
+        float band = floor(input.texcoord.y * kGlitchBandCount);
+        float tick = floor(gGlitchTime * kGlitchRate);
+        float chance = GlitchHash(float2(band, tick));
+        if (chance < gGlitchIntensity) {
+            float dir = GlitchHash(float2(band + 17.0f, tick)) * 2.0f - 1.0f; // -1～1
+            sceneUV.x += dir * kGlitchShiftMax * gGlitchIntensity;
+        }
+        rgbOffset = kGlitchRgbOffset * gGlitchIntensity;
     }
 
-    float4 bloomColor = gBloomTexture.Sample(gSampler, input.texcoord);
+    float4 sceneColor = gTexture.Sample(gSampler, sceneUV);
+
+    if (gBlurEnabled > 0.5f) {
+        sceneColor = gBlurTexture.Sample(gSampler, sceneUV);
+    }
+
+    if (gGlitchIntensity > 0.0f) {
+        // RGBずれ：Rを+x、Bを-xへずらして別サンプルし、Gはそのまま
+        float2 shift = float2(rgbOffset, 0.0f);
+        if (gBlurEnabled > 0.5f) {
+            sceneColor.r = gBlurTexture.Sample(gSampler, sceneUV + shift).r;
+            sceneColor.b = gBlurTexture.Sample(gSampler, sceneUV - shift).b;
+        } else {
+            sceneColor.r = gTexture.Sample(gSampler, sceneUV + shift).r;
+            sceneColor.b = gTexture.Sample(gSampler, sceneUV - shift).b;
+        }
+        // 走査線：細い横縞で明度を下げる
+        float scan = sin(input.texcoord.y * kGlitchScreenHeight * kGlitchPi) * 0.5f + 0.5f;
+        sceneColor.rgb *= 1.0f - scan * kGlitchScanlineDarken * gGlitchIntensity;
+    }
+
+    // ブルームもブロックずれと同じUVで引く（ずれた画面の明部から光が出るため自然）。強度0ではsceneUV==texcoordで従来通り
+    float4 bloomColor = gBloomTexture.Sample(gSampler, sceneUV);
 
     output.color.rgb = sceneColor.rgb + bloomColor.rgb * gBloomIntensity;
 

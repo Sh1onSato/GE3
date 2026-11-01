@@ -68,7 +68,11 @@ void Framework::Initialize() {
 
 	CameraManager::GetInstance()->Initialize();
 
+	postProcess = std::make_unique<PostProcess>();
+	postProcess->Initialize(dxCommon.get(), srvManager.get());
+
 	sceneManager = std::make_unique<SceneManager>();
+	sceneManager->Initialize();
 }
 
 void Framework::Update() {

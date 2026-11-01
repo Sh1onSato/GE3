@@ -25,6 +25,14 @@ public:
     void SetColor(const Vector4& color) { materialData->color = color; }
     const Vector4& GetColor() const { return materialData->color; }
     void SetEnableLighting(bool enable) { materialData->enableLighting = enable ? 1 : 0; }
+    // 実体化演出：ワールドY座標heightより上を描かず、境界をedgeWidthの幅で発光させる（edgeWidth<=0で無効）
+    // timeはノイズを動かすための経過時間[秒]、blockStrengthはブロック欠けの強さ（0～1）
+    void SetDissolve(float height, float edgeWidth, float time, float blockStrength = 1.0f) {
+        materialData->dissolveHeight = height;
+        materialData->dissolveEdgeWidth = edgeWidth;
+        materialData->dissolveTime = time;
+        materialData->dissolveBlockStrength = blockStrength;
+    }
 
     // Getter
     const Transform& GetTransform() const { return transform; }
