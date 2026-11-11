@@ -205,6 +205,32 @@ void GameScene::Initialize() {
         walls.push_back(std::move(wall));
     }
 
+    // 四隅のプラットフォーム（下段・上段）を、x,zが同じもの同士で角ごとにまとめる
+    wallCornerIndex.assign(walls.size(), -1);
+    cornerCount = 0;
+    for (size_t i = 0; i < ArenaLayout::kWallDatas.size() && i < walls.size(); ++i) {
+        const auto& data = ArenaLayout::kWallDatas[i];
+        bool isLow = data.kind == ArenaLayout::WallKind::kPlatformLow;
+        bool isHigh = data.kind == ArenaLayout::WallKind::kPlatformHigh;
+        if (!isLow && !isHigh) continue;
+        int found = -1;
+        for (int c = 0; c < cornerCount; ++c) {
+            if (std::abs(corners[c].x - data.pos.x) < 0.01f && std::abs(corners[c].z - data.pos.z) < 0.01f) {
+                found = c;
+                break;
+            }
+        }
+        if (found < 0) {
+            if (cornerCount >= kCornerCount) continue;
+            found = cornerCount++;
+            corners[found] = CornerData{};
+            corners[found].x = data.pos.x;
+            corners[found].z = data.pos.z;
+        }
+        (isLow ? corners[found].lowIndex : corners[found].highIndex) = static_cast<int>(i);
+        wallCornerIndex[i] = found;
+    }
+
     // 敵キャラクター（第一段階：静的な的）を、既存の壁・障害物・プラットフォームと重ならない位置に配置する
     std::vector<Vector3> enemyPositions = {
         { 20.0f, 0.75f, 20.0f },
@@ -254,6 +280,13 @@ void GameScene::Initialize() {
     bossLaser->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
     bossLaser->SetScale({ 0.0f, 0.0f, 0.0f });
 
+    // 正面シールド（表示は kShield の間だけ。位置・向き・スケールは UpdateBossShieldTransform で毎フレーム設定する）
+    bossShield = std::make_unique<Object3d>();
+    bossShield->Initialize(framework->GetObject3dCommon());
+    bossShield->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "boss_shield.glb"));
+    bossShield->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    bossShield->SetScale({ 0.0f, 0.0f, 0.0f });
+
     // P3のテレポート行き先マーカーと衝撃波リング（どちらも shockwave.glb。使うときにスケールを設定する）
     bossTeleportMarker = std::make_unique<Object3d>();
     bossTeleportMarker->Initialize(framework->GetObject3dCommon());
@@ -261,11 +294,13 @@ void GameScene::Initialize() {
     bossTeleportMarker->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
     bossTeleportMarker->SetScale({ 0.0f, 0.0f, 0.0f });
 
-    bossShockwave = std::make_unique<Object3d>();
-    bossShockwave->Initialize(framework->GetObject3dCommon());
-    bossShockwave->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "shockwave.glb"));
-    bossShockwave->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
-    bossShockwave->SetScale({ 0.0f, 0.0f, 0.0f });
+    for (auto& ring : shockwaveRings) {
+        ring.object = std::make_unique<Object3d>();
+        ring.object->Initialize(framework->GetObject3dCommon());
+        ring.object->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "shockwave.glb"));
+        ring.object->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        ring.object->SetScale({ 0.0f, 0.0f, 0.0f });
+    }
 
     // ボスの遠距離攻撃（グレネード）用のプール
     grenades.reserve(kMaxGrenades);
@@ -768,8 +803,51 @@ void GameScene::Update() {
         bossHiddenTimer = CanBossSeePlayer() ? 0.0f : bossHiddenTimer + 1.0f / 60.0f;
         const bool playerHidden = bossHiddenTimer > 0.0f;
 
+        // シールド用タイマー（ボスAIが動いている間だけ進む）
+        if (bossShieldCooldownTimer > 0.0f) {
+            bossShieldCooldownTimer = (std::max)(bossShieldCooldownTimer - 1.0f / 60.0f, 0.0f);
+        }
+        if (bossShieldHitWindowTimer > 0.0f) {
+            bossShieldHitWindowTimer -= 1.0f / 60.0f;
+            if (bossShieldHitWindowTimer <= 0.0f) {
+                bossShieldHitCount = 0; // 3秒たったので数え直す
+            }
+        }
+
         switch (bossAttackState) {
+        case BossAttackState::kShield: {
+            // 動かず攻撃もせず、プレイヤーの方へゆっくり向き直る（角度差は-π〜πに正規化）
+            constexpr float kPi = 3.14159265f;
+            constexpr float kTwoPiLocal = 2.0f * kPi;
+            float targetYaw = std::atan2(dirToPlayer.x, dirToPlayer.z);
+            float currentYaw = boss->GetTransform().rotate.y;
+            float diff = targetYaw - currentYaw;
+            diff = std::fmod(diff + kPi, kTwoPiLocal);
+            if (diff < 0.0f) diff += kTwoPiLocal;
+            diff -= kPi;
+            float maxStep = kBossShieldTurnSpeed / 60.0f;
+            diff = std::clamp(diff, -maxStep, maxStep);
+            boss->SetRotate({ 0.0f, currentYaw + diff, 0.0f });
+
+            bossAttackTimer -= 1.0f / 60.0f;
+            // 組み合わせ版：一定間隔でプレイヤーを狙うグレネード
+            if (bossComboActive) {
+                bossComboTimer -= 1.0f / 60.0f;
+                if (bossComboTimer <= 0.0f) {
+                    FireGrenade();
+                    bossComboTimer = kBossComboShieldGrenadeInterval;
+                }
+            }
+            if (bossAttackTimer <= 0.0f) {
+                ResetBossCombo();
+                bossAttackState = BossAttackState::kChasing;
+                bossAttackTimer = BossAttackCooldown();
+                bossShieldCooldownTimer = kBossShieldCooldown;
+            }
+            break;
+        }
         case BossAttackState::kChasing: {
+            ResetBossCombo(); // 追跡中は常に通常版。行動を選ぶときに下で決め直す
             // プレイヤーが高い場所（データ足場の上）にいる間は、真下に寄らず距離を取る（近すぎたら下がる）
             const bool highGround = IsPlayerOnHighGround();
             const float stopDistance = highGround ? kBossHighGroundKeepDistance : kBossStopDistance;
@@ -904,46 +982,38 @@ void GameScene::Update() {
                 bossAttackState = BossAttackState::kRebuildWindup;
                 bossAttackTimer = kArenaRebuildWindupDuration;
                 bossWarningEmissive = kArenaRebuildWarningEmissive; // データの色で予兆
-            } else if (bossPhase != BossPhase::kP1 && bossHiddenTimer >= kBossHiddenTeleportDelay && !highGround
+            } else if (bossHiddenTimer >= kBossHiddenTeleportDelay && !highGround
                        && TryPickBossTeleportDest(true)) {
-                // P2以降、隠れ続けられたらテレポートで「プレイヤーから見える場所」へ回り込む（再構築以外より優先）
+                // 隠れ続けられたらテレポートで「プレイヤーから見える場所」へ回り込む（再構築以外より優先。P1から使う）
                 bossAttackState = BossAttackState::kTeleportOut;
                 bossAttackTimer = kBossTeleportOutDuration;
                 bossTeleportMarkerVisible = true;
+                RollBossCombo(); // 回り込みのテレポートも組み合わせ判定の対象
             } else if (distance <= kBossMeleeRange && !highGround && !playerHidden) {
-                // P3の近距離は、一定確率で衝撃波リング。それ以外は突進
-                // （高い場所のプレイヤーには突進も衝撃波も届かないので、距離に関係なく下の遠距離の選び方にする）
-                bool useShockwave = false;
-                if (bossPhase == BossPhase::kP3) {
-                    std::random_device seedGen;
-                    std::mt19937 randomEngine(seedGen());
-                    std::uniform_real_distribution<float> distChance(0.0f, 1.0f);
-                    useShockwave = distChance(randomEngine) < kBossP3ShockwaveChance;
-                }
-                if (useShockwave) {
-                    bossAttackState = BossAttackState::kShockwaveWindup;
-                    bossAttackTimer = kBossShockwaveWindupDuration;
-                    bossWarningEmissive = { 1.0f, 0.35f, 0.05f }; // 衝撃波予備動作：警告色（橙赤）
-                } else {
-                    bossAttackState = BossAttackState::kMeleeWindup;
-                    bossAttackTimer = kBossMeleeWindupDuration;
-                    bossWarningEmissive = { 1.0f, 0.15f, 0.05f }; // 突進予備動作：警告色（赤）。くさびの発光で表現する
-                }
+                // 近距離は突進
+                // （高い場所のプレイヤーには突進が届かないので、距離に関係なく下の遠距離の選び方にする）
+                bossAttackState = BossAttackState::kMeleeWindup;
+                bossAttackTimer = kBossMeleeWindupDuration;
+                bossWarningEmissive = { 1.0f, 0.15f, 0.05f }; // 突進予備動作：警告色（赤）。くさびの発光で表現する
+                RollBossCombo();
             } else {
                 // P2以降の遠距離は、一定確率でレーザー薙ぎ払い・テレポートを選ぶ（残りはグレネード）
                 bool useLaser = false;
                 bool useTeleport = false;
-                if (bossPhase != BossPhase::kP1) {
+                {
+                    // テレポートはP1から、レーザーはP2以降。確率の区間は [0, レーザー) [レーザー, レーザー+テレポート) [残り＝グレネード]
+                    // （P1ではレーザーの区間がグレネードになるので、テレポート30%・グレネード70%）
                     std::random_device seedGen;
                     std::mt19937 randomEngine(seedGen());
                     std::uniform_real_distribution<float> distChance(0.0f, 1.0f);
                     float roll = distChance(randomEngine);
+                    const bool laserAvailable = (bossPhase != BossPhase::kP1);
                     if (playerHidden) {
                         // 見えないときはテレポートせず、カバーを貫通するレーザーか、裏に落とすグレネード
-                        useLaser = roll < kBossHiddenLaserChance;
+                        useLaser = laserAvailable && roll < kBossHiddenLaserChance;
                     } else {
-                        useLaser = roll < kBossFarLaserChance;
-                        useTeleport = !useLaser && roll < kBossFarLaserChance + kBossFarTeleportChance;
+                        useLaser = laserAvailable && roll < kBossFarLaserChance;
+                        useTeleport = roll >= kBossFarLaserChance && roll < kBossFarLaserChance + kBossFarTeleportChance;
                     }
                 }
                 // 床すれすれのレーザーは高い場所に届かないので、その分はグレネードにする
@@ -958,7 +1028,10 @@ void GameScene::Update() {
                     bossAttackState = BossAttackState::kTeleportOut;
                     bossAttackTimer = kBossTeleportOutDuration;
                     bossTeleportMarkerVisible = true;
+                    RollBossCombo();
                 } else if (useLaser) {
+                    RollBossCombo();
+                    bossComboShotsRemaining = kBossComboLaserGrenadeCount;
                     bossAttackState = BossAttackState::kLaserWindup;
                     bossAttackTimer = kBossLaserWindupDuration;
                     bossWarningEmissive = kBossLaserWarningEmissive; // レーザー予備動作：警告色（紫）
@@ -967,7 +1040,17 @@ void GameScene::Update() {
                 } else {
                     bossAttackState = BossAttackState::kRangedWindup;
                     bossAttackTimer = kBossRangedWindupDuration;
-                    bossWarningEmissive = { 1.0f, 0.5f, 0.05f }; // 投擲予備動作：警告色（橙）
+                    // 型を決める：一斉発射はボスの周りに落ちるので、プレイヤーが見えていて地上にいるときだけ選ぶ
+                    // （隠れている・足場の上のときは、プレイヤーを狙える連続の方にする）
+                    bossGrenadeRadial = false;
+                    if (!playerHidden && !highGround) {
+                        std::random_device seedGen;
+                        std::mt19937 randomEngine(seedGen());
+                        std::uniform_real_distribution<float> distChance(0.0f, 1.0f);
+                        bossGrenadeRadial = distChance(randomEngine) < kBossRadialGrenadeChance;
+                    }
+                    // 投擲予備動作の警告色：連続＝橙、一斉＝黄
+                    bossWarningEmissive = bossGrenadeRadial ? kBossRadialWarningEmissive : kBossRangedWarningEmissive;
                 }
             }
             break;
@@ -982,6 +1065,8 @@ void GameScene::Update() {
                 bossAttackTimer = kBossMeleeDashDuration;
                 bossDashCurrentSpeed = kBossDashStartSpeed; // 突進開始時は遅めから、加速しながら距離を詰める
                 bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
+                bossComboTimer = 0.0f; // 組み合わせ版：1発目は突進開始と同時に落とす
+                bossComboShotsRemaining = kBossComboDashDropCount;
             }
             break;
         }
@@ -1007,6 +1092,19 @@ void GameScene::Update() {
 
             bossAttackTimer -= 1.0f / 60.0f;
 
+            // 組み合わせ版：通った跡（ボスの足元の後ろ）にグレネードを落とす
+            if (bossComboActive && bossComboShotsRemaining > 0) {
+                bossComboTimer -= 1.0f / 60.0f;
+                if (bossComboTimer <= 0.0f) {
+                    Vector3 dropPos = bossPos;
+                    dropPos.x -= bossDashDir.x * kBossComboDashDropBackOffset;
+                    dropPos.z -= bossDashDir.z * kBossComboDashDropBackOffset;
+                    FireGrenadeAt(dropPos);
+                    --bossComboShotsRemaining;
+                    bossComboTimer = kBossComboDashDropInterval;
+                }
+            }
+
             if (hitPlayer) {
                 TakeDamage(kBossMeleeDamage);
                 // ノックバック方向はボス→プレイヤー方向（ユーザー指定）
@@ -1030,10 +1128,17 @@ void GameScene::Update() {
             bossAttackTimer -= 1.0f / 60.0f;
             if (bossAttackTimer <= 0.0f) {
                 bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
-                // 隠れ続けられて焦れている間は連射数が増える
-                bossGrenadeBurstRemaining = IsBossFrustrated() ? kBossFrustrationGrenadeBurstCount : kBossGrenadeBurstCount;
-                bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
-                bossAttackState = BossAttackState::kRangedBurst;
+                if (bossGrenadeRadial) {
+                    // 一斉発射：その場で周りへまとめて投げて、すぐ追跡に戻る
+                    FireRadialGrenades();
+                    bossAttackState = BossAttackState::kChasing;
+                    bossAttackTimer = BossAttackCooldown();
+                } else {
+                    // 連続：隠れ続けられて焦れている間は連射数が増える
+                    bossGrenadeBurstRemaining = IsBossFrustrated() ? kBossFrustrationGrenadeBurstCount : kBossGrenadeBurstCount;
+                    bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
+                    bossAttackState = BossAttackState::kRangedBurst;
+                }
             }
             break;
         }
@@ -1072,13 +1177,18 @@ void GameScene::Update() {
         case BossAttackState::kLaserWindup: {
             // 停止してプレイヤーの方を向く。薙ぎ始めの向きに細いレーザーを予兆として出す
             boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
-            UpdateBossLaserTransform(bossLaserCenterYaw - kBossLaserSweepHalfAngle, kBossLaserTelegraphRadius);
+            // 2本目は1本目の終わりの向きから逆向きに払うので、予兆もそちら側に出す
+            float telegraphYaw = bossLaserSecondPass
+                ? bossLaserCenterYaw + kBossLaserSweepHalfAngle
+                : bossLaserCenterYaw - kBossLaserSweepHalfAngle;
+            UpdateBossLaserTransform(telegraphYaw, kBossLaserTelegraphRadius);
             bossLaserVisible = true;
             bossAttackTimer -= 1.0f / 60.0f;
             if (bossAttackTimer <= 0.0f) {
                 bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
                 bossAttackState = BossAttackState::kLaserSweep;
                 bossAttackTimer = kBossLaserSweepDuration;
+                bossComboTimer = 0.0f; // 組み合わせ版：1発目は薙ぎ始めと同時に撃つ
             }
             break;
         }
@@ -1088,12 +1198,30 @@ void GameScene::Update() {
             float sweepT = Easing::Clamp01(1.0f - bossAttackTimer / kBossLaserSweepDuration);
             float startYaw = bossLaserCenterYaw - kBossLaserSweepHalfAngle;
             float endYaw = bossLaserCenterYaw + kBossLaserSweepHalfAngle;
+            if (bossLaserSecondPass) {
+                std::swap(startYaw, endYaw); // 2本目は逆向きに払う
+            }
             float yaw = startYaw + (endYaw - startYaw) * Easing::InOutSine(sweepT);
             UpdateBossLaserTransform(yaw, kBossLaserRadius);
             bossLaserVisible = true;
 
-            // 当たり判定：足元が低く、XZ平面でレーザー線分との距離が半径+プレイヤー半径以下なら命中（1回の薙ぎで1回だけ）
-            if (!bossLaserHasHit && playerPos.y < kBossLaserHeight + kBossLaserRadius) {
+            // 組み合わせ版：薙ぎ払いの間、プレイヤーを狙うグレネードを連射する（P3の2本目では撃たない）
+            if (bossComboActive && !bossLaserSecondPass && bossComboShotsRemaining > 0) {
+                bossComboTimer -= 1.0f / 60.0f;
+                if (bossComboTimer <= 0.0f) {
+                    FireGrenade();
+                    --bossComboShotsRemaining;
+                    bossComboTimer = kBossComboLaserGrenadeInterval;
+                }
+            }
+
+            // 当たり判定：プレイヤーの体（足元〜頭）の高さがレーザーの高さの範囲と重なり、
+            // XZ平面でレーザー線分との距離が半径+プレイヤー半径以下なら命中（1回の薙ぎで1回だけ）。
+            // 1本目（床すれすれ）はジャンプして足元が上にあれば、2本目（高い）は立っていて頭が下にあれば当たらない
+            float playerHeadY = playerPos.y + eyeHeight + kPlayerHeadMargin;
+            bool heightOverlap = playerPos.y < bossLaserHeight + kBossLaserRadius
+                && playerHeadY > bossLaserHeight - kBossLaserRadius;
+            if (!bossLaserHasHit && heightOverlap) {
                 Vector2 segDir = { std::sin(yaw), std::cos(yaw) };
                 Vector2 rel = { playerPos.x - bossPos.x, playerPos.z - bossPos.z };
                 float along = std::clamp(rel.x * segDir.x + rel.y * segDir.y, 0.0f, kBossLaserLength);
@@ -1107,9 +1235,19 @@ void GameScene::Update() {
             }
 
             if (bossAttackTimer <= 0.0f) {
-                StopBossLaser();
-                bossAttackState = BossAttackState::kChasing;
-                bossAttackTimer = BossAttackCooldown();
+                if (bossPhase == BossPhase::kP3 && !bossLaserSecondPass) {
+                    // P3：続けて高い2本目。短い予兆（青）を挟んで逆向きに払う
+                    bossLaserSecondPass = true;
+                    bossLaserHeight = kBossLaserHighHeight;
+                    bossLaserHasHit = false;
+                    bossWarningEmissive = kBossLaserHighWarningEmissive;
+                    bossAttackState = BossAttackState::kLaserWindup;
+                    bossAttackTimer = kBossLaserSecondWindupDuration;
+                } else {
+                    StopBossLaser();
+                    bossAttackState = BossAttackState::kChasing;
+                    bossAttackTimer = BossAttackCooldown();
+                }
             }
             break;
         }
@@ -1139,28 +1277,17 @@ void GameScene::Update() {
             float t = Easing::Clamp01(elapsed / kBossTeleportInDuration);
             if (bossAttackTimer <= 0.0f) {
                 StopBossTeleport();
+                // 組み合わせ版：現れ終わった瞬間に周りへ一斉に投げる
+                if (bossComboActive) {
+                    FireRadialGrenades();
+                }
+                ResetBossCombo();
                 bossAttackState = BossAttackState::kChasing;
                 bossAttackTimer = BossAttackCooldown();
             } else {
                 float bossHeight = kBossHalfHeight * 2.0f + kIntroMaterializeEdgeWidth;
                 SetBossDissolve(bossPos.y + bossHeight * Easing::OutCubic(t), kIntroMaterializeEdgeWidth, elapsed, 1.0f - t);
                 screenEffect->SetTransitionGlitch(kBossTeleportGlitch * (1.0f - t), elapsed);
-            }
-            break;
-        }
-        case BossAttackState::kShockwaveWindup: {
-            // 止まってプレイヤーの方を向き、橙赤の警告を出す。終わったら衝撃波を発生させる
-            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
-            bossAttackTimer -= 1.0f / 60.0f;
-            if (bossAttackTimer <= 0.0f) {
-                bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
-                shockwaveActive = true;
-                shockwaveHasHit = false;
-                shockwaveCenter = { bossPos.x, 0.0f, bossPos.z };
-                shockwaveRadius = kBossShockwaveStartRadius;
-                TriggerCameraShake(kBossShockwaveShakeDuration, kBossShockwaveShakeStrength);
-                bossAttackState = BossAttackState::kChasing;
-                bossAttackTimer = BossAttackCooldown();
             }
             break;
         }
@@ -1194,7 +1321,9 @@ void GameScene::Update() {
 
         // くさびの開閉：P1は 追跡0・それ以外1。P2以降は 追跡中kBossPhase2IdleOpen・攻撃中1
         float openTarget = 1.0f;
-        if (bossAttackState == BossAttackState::kChasing) {
+        if (bossAttackState == BossAttackState::kShield) {
+            openTarget = 0.0f; // シールド中はくさびを閉じる（コアも隠す）
+        } else if (bossAttackState == BossAttackState::kChasing) {
             openTarget = (bossPhase == BossPhase::kP1) ? 0.0f : kBossPhase2IdleOpen;
         }
         float openStep = kBossOpenSpeed / 60.0f;
@@ -1206,21 +1335,33 @@ void GameScene::Update() {
         if (bossHitFlashTimer > 0.0f) {
             bossHitFlashTimer = (std::max)(bossHitFlashTimer - 1.0f / 60.0f, 0.0f);
         }
+        if (bossHealFlashTimer > 0.0f) {
+            bossHealFlashTimer = (std::max)(bossHealFlashTimer - 1.0f / 60.0f, 0.0f);
+        }
         if (phaseTextTimer > 0.0f) {
             phaseTextTimer = (std::max)(phaseTextTimer - 1.0f / 60.0f, 0.0f);
         }
     }
 
-    // --- P3の衝撃波リングの更新（広がりながら、ジャンプで避けられる低い輪として当たり判定を持つ） ---
-    if (shockwaveActive) {
-        shockwaveRadius += kBossShockwaveSpeed / 60.0f;
-        if (shockwaveRadius > kBossShockwaveMaxRadius) {
-            StopBossShockwave();
-        } else if (!shockwaveHasHit && playerPos.y < kBossShockwaveHeight) {
-            float ringDistance = Calculation::Length(Vector3{ playerPos.x - shockwaveCenter.x, 0.0f, playerPos.z - shockwaveCenter.z });
-            if (std::abs(ringDistance - shockwaveRadius) <= kBossShockwaveHitHalfWidth + collisionRadius) {
-                TakeDamage(kBossShockwaveDamage);
-                shockwaveHasHit = true;
+    // --- 衝撃波ギミック（P2以降、カバー箱の予兆→発生） ---
+    UpdateShockwaveGimmick();
+
+    // --- 角のプラットフォーム崩壊（予兆→上から消える→消滅） ---
+    UpdateCornerCollapse();
+
+    // --- 衝撃波リングの更新（広がりながら、ジャンプで避けられる低い輪として当たり判定を持つ。輪ごとに1回だけ当たる） ---
+    for (auto& ring : shockwaveRings) {
+        if (!ring.active) continue;
+        ring.radius += kShockwaveSpeed / 60.0f;
+        if (ring.radius > kShockwaveMaxRadius) {
+            ring.active = false;
+            ring.hasHit = false;
+            ring.radius = 0.0f;
+        } else if (!ring.hasHit && playerPos.y < kShockwaveHeight) {
+            float ringDistance = Calculation::Length(Vector3{ playerPos.x - ring.center.x, 0.0f, playerPos.z - ring.center.z });
+            if (std::abs(ringDistance - ring.radius) <= kShockwaveHitHalfWidth + collisionRadius) {
+                TakeDamage(kShockwaveDamage);
+                ring.hasHit = true;
             }
         }
     }
@@ -1309,9 +1450,15 @@ void GameScene::Update() {
     }
     if (gameOver) {
         StopBossLaser(); // 決着後はレーザーを消す
+        ResetBossCombo();
+        ResetBossShield();
+        if (bossAttackState == BossAttackState::kShield) bossAttackState = BossAttackState::kChasing; // シールドを消す
         StopBossTeleport();
-        StopBossShockwave();
+        StopShockwaves();
+        CancelShockwaveWarning();
+        shockwaveGimmickTimer = 0.0f;
         StopArenaRebuild(); // 破損マスと足場も消す（ポータルは足場と一緒に消える）
+        StopCornerCollapse(); // 角の崩壊：予兆は取り消し、崩壊中のものは消滅まで確定
         ResetBossHiddenState();
         phaseTextTimer = 0.0f;
         // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
@@ -1343,17 +1490,21 @@ void GameScene::UpdateRenderObjects() {
     boss->Update();
     UpdateBossParts(); // bossのtranslate/rotate/scaleが確定した後に5パーツへ写す
     bossLaser->Update(); // 位置・回転・スケールはボスAIが設定済み。呼び忘れると単位行列のまま巨大に描画される
+    UpdateBossShieldTransform(); // ボスのtransform確定後に位置・向き・スケールを設定（非表示時もUpdateは呼ぶ）
+    bossShield->Update();
     // マーカー・衝撃波の位置とスケールは表示中だけ更新側で毎フレーム設定する（Updateを忘れると巨大に描画される）
     if (bossTeleportMarkerVisible) {
         bossTeleportMarker->SetTranslate({ bossTeleportDest.x, 0.0f, bossTeleportDest.z });
         bossTeleportMarker->SetScale({ kBossTeleportMarkerRadius, kBossTeleportMarkerHeight, kBossTeleportMarkerRadius });
     }
     bossTeleportMarker->Update();
-    if (shockwaveActive) {
-        bossShockwave->SetTranslate(shockwaveCenter);
-        bossShockwave->SetScale({ shockwaveRadius, kBossShockwaveHeight, shockwaveRadius });
+    for (auto& ring : shockwaveRings) {
+        if (ring.active) {
+            ring.object->SetTranslate(ring.center);
+            ring.object->SetScale({ ring.radius, kShockwaveHeight, ring.radius });
+        }
+        ring.object->Update();
     }
-    bossShockwave->Update();
     UpdatePhaseText();
     for (auto& decal : bulletDecals) { decal->Update(); }
     // 過去に敵ターゲットでUpdate()呼び忘れによりWVP行列が更新されず巨大に固定表示された
@@ -1443,7 +1594,10 @@ void GameScene::Draw() {
     object3dCommon->PreDrawShadow();
     Matrix4x4 lightViewProjection = object3dCommon->GetLightViewProjection();
     floor->DrawShadow(lightViewProjection);
-    for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
+    for (size_t i = 0; i < walls.size(); ++i) {
+        if (IsWallShadowHidden(i)) continue; // 崩壊中はディゾルブが影に効かないので影を描かない
+        walls[i]->DrawShadow(lightViewProjection);
+    }
     // データ足場：判定のあるkActive・kBreakingだけ影を落とす（kMaterializingはディゾルブが影に効かないので除く）
     for (auto& platform : dataPlatforms) {
         bool castsShadow = platform.state == DataPlatform::State::kActive
@@ -1486,9 +1640,10 @@ void GameScene::Draw() {
     if (boss) {
         for (auto& part : bossParts) { part->Draw(); }
         if (bossLaserVisible) bossLaser->Draw(); // 影は落とさない
+        if (bossAttackState == BossAttackState::kShield) bossShield->Draw(); // 影は落とさない
         if (bossTeleportMarkerVisible) bossTeleportMarker->Draw();
-        if (shockwaveActive) bossShockwave->Draw();
     }
+    for (auto& ring : shockwaveRings) { if (ring.active) ring.object->Draw(); } // 影は落とさない
     for (auto& grenade : grenades) { if (grenade.active) grenade.object->Draw(); }
     for (auto& decal : bulletDecals) { decal->Draw(); }
     // ワープポータル（薄い板なのでシャドウパスには含めない）
@@ -1633,14 +1788,22 @@ void GameScene::StartBossPhaseShift(BossPhase next) {
     }
     if (next == BossPhase::kP2) {
         arenaRebuildTimer = 0.0f; // 移行演出が終わった直後に1回目の再構築が起きるようにする
+        shockwaveGimmickTimer = kShockwaveGimmickFirstDelay; // 衝撃波ギミックは再構築と重ならないよう少し間を置く
+        StartCornerCollapse(kCornerCollapseCountP2);
+    } else if (next == BossPhase::kP3) {
+        StartCornerCollapse(kCornerCollapseCountP3);
     }
     bossPhase = next;
     bossAttackState = BossAttackState::kPhaseShift;
     bossAttackTimer = kBossPhaseShiftDuration;
     bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+    ResetBossCombo(); // 組み合わせ攻撃は打ち切る
     StopBossLaser(); // 進行中のレーザーは止める（グレネードは飛んでいるものをそのまま）
+    // シールド中だった場合は上の状態上書きで非表示になる。命中の記録だけ消す（クールダウンはそのまま）
+    bossShieldHitCount = 0;
+    bossShieldHitWindowTimer = 0.0f;
     // テレポート中なら打ち切る。無敵なので移行は起きないが念のため、位置は現在のbossPosのまま（Out中は元の位置）で確定させる。
-    // 衝撃波の予備動作はstateがkPhaseShiftに上書きされるので打ち切られる。広がっている衝撃波は消さない
+    // 広がっている衝撃波・カバー箱の予兆はそのまま続ける（ボスの攻撃ではなくアリーナのギミックのため）
     StopBossTeleport();
     bossGrenadeBurstRemaining = 0; // 3連射の途中だった場合の残弾を捨てる
 
@@ -1673,15 +1836,90 @@ void GameScene::UpdatePhaseText() {
 }
 
 void GameScene::UpdateBossLaserTransform(float yaw, float radius) {
-    // 発射口はボスの足元位置のXZ、高さはkBossLaserHeight。モデルはローカル+Z方向に長さ1
-    bossLaser->SetTranslate({ bossPos.x, kBossLaserHeight, bossPos.z });
+    // 発射口はボスの足元位置のXZ、高さはbossLaserHeight（1本目は床すれすれ、P3の2本目は高い）。モデルはローカル+Z方向に長さ1
+    bossLaser->SetTranslate({ bossPos.x, bossLaserHeight, bossPos.z });
     bossLaser->SetRotate({ 0.0f, yaw, 0.0f });
     bossLaser->SetScale({ radius, radius, kBossLaserLength });
+}
+
+bool GameScene::IsFromBossFront(const Vector3& worldPos) const {
+    // ボスの足元からその点へのXZ方向と、ボスの正面方向(sin yaw, cos yaw)の内積で判定する
+    Vector3 toPoint = { worldPos.x - bossPos.x, 0.0f, worldPos.z - bossPos.z };
+    float length = Calculation::Length(toPoint);
+    if (length < 0.0001f) return true; // 真上・真下付近は正面扱い
+    float yaw = boss->GetTransform().rotate.y;
+    float dot = (toPoint.x * std::sin(yaw) + toPoint.z * std::cos(yaw)) / length;
+    return dot >= std::cos(kBossShieldHalfAngle);
+}
+
+bool GameScene::CanBossStartShield() const {
+    // 割り込んでよいのは追跡中と予備動作中だけ（突進・レーザー照射・テレポート・フェーズ移行・再構築予備動作は不可）
+    return bossAttackState == BossAttackState::kChasing
+        || bossAttackState == BossAttackState::kMeleeWindup
+        || bossAttackState == BossAttackState::kRangedWindup
+        || bossAttackState == BossAttackState::kLaserWindup;
+}
+
+void GameScene::RollBossCombo() {
+    ResetBossCombo();
+    if (bossPhase == BossPhase::kP1) {
+        return; // P1では組み合わせは起きない
+    }
+    const float chance = (bossPhase == BossPhase::kP2) ? kBossComboChanceP2 : kBossComboChanceP3;
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::uniform_real_distribution<float> distChance(0.0f, 1.0f);
+    bossComboActive = distChance(randomEngine) < chance;
+}
+
+void GameScene::ResetBossCombo() {
+    bossComboActive = false;
+    bossComboTimer = 0.0f;
+    bossComboShotsRemaining = 0;
+    bossComboBlinkTimer = 0.0f;
+}
+
+void GameScene::StartBossShield() {
+    // 予備動作を打ち切る（警告色を戻し、レーザーの予兆なら消す）
+    bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+    if (bossAttackState == BossAttackState::kLaserWindup) {
+        StopBossLaser();
+    }
+    bossGrenadeBurstRemaining = 0;
+    RollBossCombo(); // 打ち切った予備動作の組み合わせは破棄し、シールド自身で決め直す（点滅なし）
+    bossComboTimer = kBossComboShieldGrenadeInterval; // 張ってから最初の1発までも間隔分待つ
+    bossAttackState = BossAttackState::kShield;
+    bossAttackTimer = kBossShieldDuration;
+    bossShieldHitCount = 0;
+    bossShieldHitWindowTimer = 0.0f;
+}
+
+void GameScene::ResetBossShield() {
+    bossShieldHitCount = 0;
+    bossShieldHitWindowTimer = 0.0f;
+    bossShieldCooldownTimer = 0.0f;
+}
+
+void GameScene::UpdateBossShieldTransform() {
+    const Transform& core = boss->GetTransform();
+    const float yaw = core.rotate.y;
+    // 張った直後は0→1へ広がる（OutBackで少し行き過ぎてから収まる）
+    float elapsed = kBossShieldDuration - bossAttackTimer;
+    float scaleRate = (bossAttackState == BossAttackState::kShield)
+        ? Easing::OutBack(Easing::Clamp01(elapsed / kBossShieldAppearDuration)) : 0.0f;
+    bossShield->SetTranslate({
+        core.translate.x + std::sin(yaw) * kBossShieldForwardOffset,
+        core.translate.y + kBossShieldOffsetY,
+        core.translate.z + std::cos(yaw) * kBossShieldForwardOffset });
+    bossShield->SetRotate({ 0.0f, yaw, 0.0f });
+    bossShield->SetScale({ kBossShieldHalfSize * scaleRate, kBossShieldHalfSize * scaleRate, 1.0f });
 }
 
 void GameScene::StopBossLaser() {
     bossLaserVisible = false;
     bossLaserHasHit = false;
+    bossLaserSecondPass = false;
+    bossLaserHeight = kBossLaserHeight;
 }
 
 float GameScene::BossAttackCooldown() const {
@@ -1778,10 +2016,207 @@ void GameScene::StopBossTeleport() {
     }
 }
 
-void GameScene::StopBossShockwave() {
-    shockwaveActive = false;
-    shockwaveHasHit = false;
-    shockwaveRadius = 0.0f;
+void GameScene::StopShockwaves() {
+    for (auto& ring : shockwaveRings) {
+        ring.active = false;
+        ring.hasHit = false;
+        ring.radius = 0.0f;
+    }
+}
+
+void GameScene::UpdateShockwaveGimmick() {
+    if (bossPhase == BossPhase::kP1) return;
+
+    if (shockwaveWarningTimer > 0.0f) {
+        // 予兆中：選んだ箱の発光を橙赤で点滅させる
+        shockwaveWarningTimer -= 1.0f / 60.0f;
+        if (shockwaveWarningTimer <= 0.0f) {
+            SpawnShockwaves();
+        } else {
+            float elapsed = kShockwaveWarningDuration - shockwaveWarningTimer;
+            int blinkIndex = static_cast<int>(elapsed * 60.0f) / kShockwaveWarningBlinkFrames;
+            float intensity = (blinkIndex % 2 == 0) ? kShockwaveWarningIntensityHigh : kShockwaveWarningIntensityLow;
+            for (size_t wallIndex : shockwaveWarningWalls) {
+                walls[wallIndex]->SetEmissive(kShockwaveWarningEmissive, intensity);
+            }
+        }
+        return;
+    }
+
+    shockwaveGimmickTimer -= 1.0f / 60.0f;
+    if (shockwaveGimmickTimer <= 0.0f) {
+        StartShockwaveWarning();
+        shockwaveGimmickTimer = kShockwaveGimmickInterval;
+    }
+}
+
+void GameScene::StartShockwaveWarning() {
+    // カバー箱のwallsインデックスを集める
+    std::vector<size_t> coverIndices;
+    for (size_t i = 0; i < ArenaLayout::kWallDatas.size() && i < walls.size(); ++i) {
+        if (ArenaLayout::kWallDatas[i].kind == ArenaLayout::WallKind::kCover) {
+            coverIndices.push_back(i);
+        }
+    }
+    if (coverIndices.empty()) return;
+
+    // 重複なしで必要数だけランダムに選ぶ（P2は1つ、P3は2つ。ただし輪の数・箱の数を超えない）
+    size_t boxCount = static_cast<size_t>((bossPhase == BossPhase::kP3) ? kShockwaveBoxCountP3 : kShockwaveBoxCountP2);
+    boxCount = (std::min)(boxCount, (std::min)(coverIndices.size(), static_cast<size_t>(kMaxShockwaveRings)));
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::shuffle(coverIndices.begin(), coverIndices.end(), randomEngine);
+
+    shockwaveWarningWalls.assign(coverIndices.begin(), coverIndices.begin() + boxCount);
+    shockwaveWarningTimer = kShockwaveWarningDuration;
+}
+
+void GameScene::SpawnShockwaves() {
+    // 予兆が終わった箱の足元から、空いている輪を使って衝撃波を出す
+    for (size_t wallIndex : shockwaveWarningWalls) {
+        walls[wallIndex]->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+        const Vector3& pos = ArenaLayout::kWallDatas[wallIndex].pos;
+        for (auto& ring : shockwaveRings) {
+            if (ring.active) continue;
+            ring.active = true;
+            ring.hasHit = false;
+            ring.center = { pos.x, 0.0f, pos.z };
+            ring.radius = kShockwaveStartRadius;
+            break;
+        }
+    }
+    shockwaveWarningWalls.clear();
+    shockwaveWarningTimer = 0.0f;
+    TriggerCameraShake(kShockwaveShakeDuration, kShockwaveShakeStrength);
+}
+
+void GameScene::CancelShockwaveWarning() {
+    for (size_t wallIndex : shockwaveWarningWalls) {
+        if (wallIndex < walls.size()) {
+            walls[wallIndex]->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+        }
+    }
+    shockwaveWarningWalls.clear();
+    shockwaveWarningTimer = 0.0f;
+}
+
+void GameScene::StartCornerCollapse(int count) {
+    std::vector<int> candidates;
+    for (int c = 0; c < cornerCount; ++c) {
+        if (corners[c].state == CornerState::kIntact) candidates.push_back(c);
+    }
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::shuffle(candidates.begin(), candidates.end(), randomEngine);
+    size_t n = (std::min)(static_cast<size_t>((std::max)(count, 0)), candidates.size());
+    for (size_t k = 0; k < n; ++k) {
+        CornerData& corner = corners[candidates[k]];
+        corner.state = CornerState::kWarning;
+        corner.timer = 0.0f;
+    }
+}
+
+void GameScene::SetCornerEmissive(const CornerData& corner, const Vector3& color, float intensity) {
+    if (corner.lowIndex >= 0) walls[corner.lowIndex]->SetEmissive(color, intensity);
+    if (corner.highIndex >= 0) walls[corner.highIndex]->SetEmissive(color, intensity);
+}
+
+void GameScene::SetCornerDissolve(const CornerData& corner, float height, float edgeWidth, float time) {
+    if (corner.lowIndex >= 0) walls[corner.lowIndex]->SetDissolve(height, edgeWidth, time, 1.0f);
+    if (corner.highIndex >= 0) walls[corner.highIndex]->SetDissolve(height, edgeWidth, time, 1.0f);
+}
+
+void GameScene::UpdateCornerCollapse() {
+    for (int c = 0; c < cornerCount; ++c) {
+        CornerData& corner = corners[c];
+        if (corner.state == CornerState::kWarning) {
+            corner.timer += 1.0f / 60.0f;
+            if (corner.timer >= kCornerWarningDuration) {
+                SetCornerEmissive(corner, { 0.0f, 0.0f, 0.0f }, 0.0f);
+                corner.state = CornerState::kCollapsing;
+                corner.timer = 0.0f;
+            } else {
+                int blinkIndex = static_cast<int>(corner.timer * 60.0f) / kCornerWarningBlinkFrames;
+                float intensity = (blinkIndex % 2 == 0) ? kCornerWarningIntensityHigh : kCornerWarningIntensityLow;
+                SetCornerEmissive(corner, kCornerWarningEmissive, intensity);
+            }
+        }
+        if (corner.state == CornerState::kCollapsing) {
+            corner.timer += 1.0f / 60.0f;
+            if (corner.timer >= kCornerCollapseDuration) {
+                FinishCornerGone(corner);
+            } else {
+                float t = Easing::Clamp01(corner.timer / kCornerCollapseDuration);
+                // 境界の発光帯の分だけ余分に動かし、t=1で完全に消えるようにする（床y=0まで）
+                float totalHeight = kCornerTopY + kIntroMaterializeEdgeWidth;
+                SetCornerDissolve(corner, totalHeight * (1.0f - Easing::InCubic(t)), kIntroMaterializeEdgeWidth, corner.timer);
+            }
+        }
+    }
+}
+
+void GameScene::FinishCornerGone(CornerData& corner) {
+    corner.state = CornerState::kGone;
+    corner.timer = 0.0f;
+    const int indices[2] = { corner.lowIndex, corner.highIndex };
+    for (int index : indices) {
+        if (index < 0) continue;
+        // 弾痕・ポータルの判定は、移す前の元の位置（kWallDatas）の箱を少し広げて行う
+        const auto& data = ArenaLayout::kWallDatas[index];
+        Vector3 mn = { data.pos.x - data.scale.x - kCornerClearMargin, data.pos.y - data.scale.y - kCornerClearMargin, data.pos.z - data.scale.z - kCornerClearMargin };
+        Vector3 mx = { data.pos.x + data.scale.x + kCornerClearMargin, data.pos.y + data.scale.y + kCornerClearMargin, data.pos.z + data.scale.z + kCornerClearMargin };
+        auto inside = [&](const Vector3& p) {
+            return p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y && p.z >= mn.z && p.z <= mx.z;
+        };
+        for (auto& decal : bulletDecals) {
+            if (inside(decal->GetTransform().translate)) decal->SetTranslate({ 0.0f, kCornerHiddenY, 0.0f });
+        }
+        for (Portal* portal : { &portalA, &portalB }) {
+            if (portal->isPlaced && inside(portal->position)) {
+                portal->isPlaced = false;
+                portal->platformIndex = -1;
+                if (portal->visual) portal->visual->SetScale({ 0.0f, 0.0f, 0.0f });
+            }
+        }
+        // 画面外へ移す（AABBはy=-1000付近で、床・壁・足場・ボス・プレイヤーのどれとも重ならない）
+        walls[index]->SetTranslate({ data.pos.x, kCornerHiddenY, data.pos.z });
+    }
+    SetCornerEmissive(corner, { 0.0f, 0.0f, 0.0f }, 0.0f);
+    SetCornerDissolve(corner, 0.0f, 0.0f, 0.0f);
+}
+
+void GameScene::ResetCornerCollapse() {
+    for (int c = 0; c < cornerCount; ++c) {
+        CornerData& corner = corners[c];
+        const int indices[2] = { corner.lowIndex, corner.highIndex };
+        for (int index : indices) {
+            if (index >= 0) walls[index]->SetTranslate(ArenaLayout::kWallDatas[index].pos);
+        }
+        SetCornerEmissive(corner, { 0.0f, 0.0f, 0.0f }, 0.0f);
+        SetCornerDissolve(corner, 0.0f, 0.0f, 0.0f);
+        corner.state = CornerState::kIntact;
+        corner.timer = 0.0f;
+    }
+}
+
+void GameScene::StopCornerCollapse() {
+    for (int c = 0; c < cornerCount; ++c) {
+        CornerData& corner = corners[c];
+        if (corner.state == CornerState::kWarning) {
+            SetCornerEmissive(corner, { 0.0f, 0.0f, 0.0f }, 0.0f);
+            corner.state = CornerState::kIntact;
+            corner.timer = 0.0f;
+        } else if (corner.state == CornerState::kCollapsing) {
+            FinishCornerGone(corner);
+        }
+    }
+}
+
+bool GameScene::IsWallShadowHidden(size_t wallIndex) const {
+    if (wallIndex >= wallCornerIndex.size()) return false;
+    int c = wallCornerIndex[wallIndex];
+    if (c < 0) return false;
+    return corners[c].state == CornerState::kCollapsing || corners[c].state == CornerState::kGone;
 }
 
 void GameScene::AppendDataPlatformColliders(std::vector<Object3d*>& out) const {
@@ -1952,6 +2387,14 @@ void GameScene::UpdateArenaRebuild() {
         if (corruptDamageTimer <= 0.0f) {
             TakeDamage(kCorruptDamagePerTick);
             corruptDamageTimer = kCorruptDamageInterval;
+            // P3では、崩壊床のデータを吸ってボスが少し回復する。P3の閾値（45%）を超えては回復しない
+            if (bossPhase == BossPhase::kP3 && bossHP > 0.0f) {
+                float healCap = kBossMaxHP * kBossPhase3HpRatio;
+                if (bossHP < healCap) {
+                    bossHP = (std::min)(bossHP + kCorruptBossHealPerTick, healCap);
+                    bossHealFlashTimer = kBossHealFlashDuration;
+                }
+            }
         } else {
             corruptDamageTimer -= deltaTime;
         }
@@ -2044,13 +2487,19 @@ void GameScene::RestartGame() {
     bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
     bossOpenAmount = 0.0f;
     bossHitFlashTimer = 0.0f;
+    bossHealFlashTimer = 0.0f;
     bossPhase = BossPhase::kP1;
     phaseTextTimer = 0.0f;
     bossLaserCenterYaw = 0.0f;
     StopBossLaser();
+    ResetBossCombo();
+    ResetBossShield(); // bossAttackStateはkChasingに戻し済みなのでシールドも非表示
     StopBossTeleport();
-    StopBossShockwave();
+    StopShockwaves();
+    CancelShockwaveWarning();
+    shockwaveGimmickTimer = 0.0f;
     StopArenaRebuild();
+    ResetCornerCollapse(); // 崩れた角を元の位置・見た目・状態に戻す
     bossTeleportDest = { 0.0f, 0.0f, 0.0f };
     bossPhase3PulseTimer = 0.0f;
     ResetBossHiddenState();
@@ -2227,28 +2676,47 @@ void GameScene::SetIntroText(const std::string& text, const Vector4& color) {
 }
 
 void GameScene::FireGrenade() {
-    // 非アクティブなグレネードを1つ探して発射する
+    Vector3 launchPos = { bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z }; // 胸の高さから発射
+
+    // 着弾狙い位置：プレイヤーそのものではなく、周囲kGrenadeAimSpread以内にランダムでずらす。
+    // これにより毎回同じ場所に落ちず、3連射で着弾点が散らばり、プレイヤーにも回避の余地が生まれる
+    std::random_device seed_gen;
+    std::mt19937 randomEngine(seed_gen());
+    std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
+    std::uniform_real_distribution<float> distRadius(0.0f, kGrenadeAimSpread);
+    float angle = distAngle(randomEngine);
+    float spreadRadius = distRadius(randomEngine);
+    // 落とす高さ：普段は発射点と同じ高さ（そこから床まで落ち続ける）。プレイヤーが高い場所（データ足場の上）に
+    // いるときはプレイヤーの足元の高さにして、足場の上に落とす（当たれば爆発して足場が壊れる）
+    float landingY = IsPlayerOnHighGround() ? playerPos.y : launchPos.y;
+    FireGrenadeAt({
+        playerPos.x + std::cos(angle) * spreadRadius,
+        landingY,
+        playerPos.z + std::sin(angle) * spreadRadius,
+    });
+}
+
+void GameScene::FireRadialGrenades() {
+    // ボスの周りへ一斉に吐き出す：向いている方向を基準に、等間隔の角度で kBossRadialGrenadeCount 発を同時に投げる。
+    // 着地点はボスから kBossRadialGrenadeDistance 離れた輪の上（発射点と同じ高さで狙い、そのまま床まで落ちる）
+    const float baseYaw = boss->GetTransform().rotate.y;
+    const float launchY = bossPos.y + kBossHalfHeight;
+    for (int i = 0; i < kBossRadialGrenadeCount; ++i) {
+        float yaw = baseYaw + 6.28318f * static_cast<float>(i) / static_cast<float>(kBossRadialGrenadeCount);
+        FireGrenadeAt({
+            bossPos.x + std::sin(yaw) * kBossRadialGrenadeDistance,
+            launchY,
+            bossPos.z + std::cos(yaw) * kBossRadialGrenadeDistance,
+        });
+    }
+}
+
+void GameScene::FireGrenadeAt(const Vector3& targetPos) {
+    // 非アクティブなグレネードを1つ探して発射する（空きが無ければ撃たない）
     for (auto& grenade : grenades) {
         if (grenade.active) continue;
 
         Vector3 launchPos = { bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z }; // 胸の高さから発射
-
-        // 着弾狙い位置：プレイヤーそのものではなく、周囲kGrenadeAimSpread以内にランダムでずらす。
-        // これにより毎回同じ場所に落ちず、3連射で着弾点が散らばり、プレイヤーにも回避の余地が生まれる
-        std::random_device seed_gen;
-        std::mt19937 randomEngine(seed_gen());
-        std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
-        std::uniform_real_distribution<float> distRadius(0.0f, kGrenadeAimSpread);
-        float angle = distAngle(randomEngine);
-        float spreadRadius = distRadius(randomEngine);
-        // 落とす高さ：普段は発射点と同じ高さ（そこから床まで落ち続ける）。プレイヤーが高い場所（データ足場の上）に
-        // いるときはプレイヤーの足元の高さにして、足場の上に落とす（当たれば爆発して足場が壊れる）
-        float landingY = IsPlayerOnHighGround() ? playerPos.y : launchPos.y;
-        Vector3 targetPos = {
-            playerPos.x + std::cos(angle) * spreadRadius,
-            landingY,
-            playerPos.z + std::sin(angle) * spreadRadius,
-        };
 
         Vector3 toTarget = { targetPos.x - launchPos.x, 0.0f, targetPos.z - launchPos.z };
         float horizontalDistance = Calculation::Length(toTarget);
@@ -2529,6 +2997,12 @@ void GameScene::FireShot() {
         sparkDir = Calculation::Normalize(sparkDir);
         std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
 
+        // シールド中に正面から当たった弾は弾かれる（ダメージ無効・火花は青）
+        const bool isShieldBlocked = (closestObject == boss.get())
+            && bossAttackState == BossAttackState::kShield
+            && IsFromBossFront(playerPos);
+        const Vector3& sc = kBossShieldSparkColor;
+
         // 指定した中心方向まわりに、coneAngle の範囲でランダムにばらまいた単位ベクトルを返す。
         // 中心に垂直な基底(tangent/bitangent)を Cross で作り、その平面上へ散らす。
         auto coneDir = [&](const Vector3& center, float coneAngle) {
@@ -2563,8 +3037,8 @@ void GameScene::FireShot() {
 
                 // 見た目の時間変化：明るい黄色→赤くフェードしながら消える
                 params.useColorGradient = true;
-                params.startColor = { 1.0f, 0.9f, 0.4f, 1.0f };
-                params.endColor = { 1.0f, 0.1f, 0.0f, 0.0f };
+                params.startColor = isShieldBlocked ? Vector4{ sc.x, sc.y, sc.z, 1.0f } : Vector4{ 1.0f, 0.9f, 0.4f, 1.0f };
+                params.endColor = isShieldBlocked ? Vector4{ 0.1f, 0.3f, 1.0f, 0.0f } : Vector4{ 1.0f, 0.1f, 0.0f, 0.0f };
 
                 // 物理：重力で落ち、空気抵抗で減速する
                 params.gravity = { 0.0f, -0.015f, 0.0f };
@@ -2595,8 +3069,8 @@ void GameScene::FireShot() {
                 params.lifeTime = distLife(randomEngine);
 
                 params.useColorGradient = true;
-                params.startColor = { 1.0f, 0.8f, 0.3f, 1.0f };
-                params.endColor = { 1.0f, 0.2f, 0.0f, 0.0f };
+                params.startColor = isShieldBlocked ? Vector4{ sc.x, sc.y, sc.z, 1.0f } : Vector4{ 1.0f, 0.8f, 0.3f, 1.0f };
+                params.endColor = isShieldBlocked ? Vector4{ 0.1f, 0.3f, 1.0f, 0.0f } : Vector4{ 1.0f, 0.2f, 0.0f, 0.0f };
 
                 // 点は軽いのでゆっくり落ちる・空気抵抗強め
                 params.gravity = { 0.0f, -0.004f, 0.0f };
@@ -2628,8 +3102,8 @@ void GameScene::FireShot() {
                 params.lifeTime = distLife(randomEngine);
 
                 params.useColorGradient = true;
-                params.startColor = { 1.0f, 0.85f, 0.3f, 1.0f };
-                params.endColor = { 1.0f, 0.15f, 0.0f, 0.0f };
+                params.startColor = isShieldBlocked ? Vector4{ sc.x, sc.y, sc.z, 1.0f } : Vector4{ 1.0f, 0.85f, 0.3f, 1.0f };
+                params.endColor = isShieldBlocked ? Vector4{ 0.1f, 0.3f, 1.0f, 0.0f } : Vector4{ 1.0f, 0.15f, 0.0f, 0.0f };
 
                 params.gravity = { 0.0f, -0.012f, 0.0f };
                 params.drag = 0.1f;
@@ -2713,7 +3187,23 @@ void GameScene::FireShot() {
                         isCoreHit = true;
                     }
                 }
-                DamageBoss(damage);
+                if (isShieldBlocked) {
+                    // 正面からの弾はシールドに弾かれる：ダメージ無効（コア判定も無効）
+                    isCoreHit = false;
+                } else {
+                    DamageBoss(damage);
+                    // シールド中でなければ、正面からの命中を記録する。直近kBossShieldTriggerWindow秒以内にkBossShieldTriggerHits回で張る
+                    if (bossAttackState != BossAttackState::kShield && IsFromBossFront(playerPos)) {
+                        if (bossShieldHitCount == 0) {
+                            bossShieldHitWindowTimer = kBossShieldTriggerWindow;
+                        }
+                        ++bossShieldHitCount;
+                        if (bossShieldHitCount >= kBossShieldTriggerHits
+                            && bossShieldCooldownTimer <= 0.0f && CanBossStartShield()) {
+                            StartBossShield();
+                        }
+                    }
+                }
             }
 
             // ボスは移動するため、ワールド座標に固定される弾痕デカールを出すと空中に取り残されて見える。
@@ -2725,8 +3215,10 @@ void GameScene::FireShot() {
             }
 
             if (isBossHit) {
-                // bossは描画しない芯なので色を変えても見えない。代わりにくさびの赤発光タイマーを使う
-                bossHitFlashTimer = kBossHitFlashDuration;
+                // bossは描画しない芯なので色を変えても見えない。代わりにくさびの赤発光タイマーを使う（弾かれたときはフラッシュしない）
+                if (!isShieldBlocked) {
+                    bossHitFlashTimer = kBossHitFlashDuration;
+                }
             } else if (!isPlatformHit) {
                 // 2. 壁の色を一時的に変える
                 auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
@@ -2749,7 +3241,9 @@ void GameScene::FireShot() {
             }
 
             // 3. カメラシェイク：発砲時より少し大きく揺らして命中の「重み」を出す
-            TriggerCameraShake(kHitShakeDuration, isCoreHit ? kBossCoreHitShakeStrength : kHitShakeStrength);
+            float hitShakeStrength = isCoreHit ? kBossCoreHitShakeStrength : kHitShakeStrength;
+            if (isShieldBlocked) hitShakeStrength = kBossShieldBlockShakeStrength; // 弾かれたときは弱め
+            TriggerCameraShake(kHitShakeDuration, hitShakeStrength);
 
             Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         }
@@ -3011,6 +3505,12 @@ void GameScene::UpdateBossParts() {
     // 被弾フラッシュ（赤）を警告色より優先する。時間で減衰
     Vector3 emissive = bossWarningEmissive;
     float intensity = kBossWarningEmissiveIntensity;
+    // 組み合わせ版の予兆：警告色が出ている間、強弱を一定間隔で切り替えて点滅させる
+    if (bossComboActive && (emissive.x != 0.0f || emissive.y != 0.0f || emissive.z != 0.0f)) {
+        bossComboBlinkTimer += 1.0f / 60.0f;
+        const int blinkStep = static_cast<int>(bossComboBlinkTimer / kBossComboBlinkInterval);
+        intensity *= (blinkStep % 2 == 0) ? kBossComboBlinkStrongScale : kBossComboBlinkWeakScale;
+    }
     // P3は警告がないとき、赤で脈打つのを基本色にする
     if (bossPhase == BossPhase::kP3 && emissive.x == 0.0f && emissive.y == 0.0f && emissive.z == 0.0f) {
         emissive = kBossPhase3Emissive;
@@ -3019,6 +3519,11 @@ void GameScene::UpdateBossParts() {
         // 焦れ中は橙で弱く脈打つ（警告色・P3の赤・被弾フラッシュより優先度は下）
         emissive = kBossFrustrationEmissive;
         intensity = kBossFrustrationEmissiveBase + kBossFrustrationEmissivePulse * std::sin(bossHiddenTimer * kBossFrustrationPulseSpeed);
+    }
+    // 回復の光（P3でプレイヤーが崩壊床に乗っているとき）。警告色より上、被弾フラッシュより下
+    if (bossHealFlashTimer > 0.0f) {
+        emissive = kArenaRebuildWarningEmissive; // データの色
+        intensity = kBossHealFlashIntensity * (bossHealFlashTimer / kBossHealFlashDuration);
     }
     if (bossHitFlashTimer > 0.0f) {
         emissive = { 1.0f, 0.1f, 0.1f };
@@ -3226,6 +3731,7 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
     }
 
     if (!(portalA.isPlaced && portalB.isPlaced)) {
+        portalExitLock = nullptr;
         return;
     }
 
@@ -3238,10 +3744,22 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
         float clampedY = std::clamp(portalPos.y, playerPos.y, playerPos.y + eyeHeight);
         return Vector3{ playerPos.x, clampedY, playerPos.z };
     };
-    if (Calculation::Length(ClosestPointOnBody(portalA.position) - portalA.position) < kPortalRadius) {
+    auto DistanceToBody = [&](const Portal& portal) {
+        return Calculation::Length(ClosestPointOnBody(portal.position) - portal.position);
+    };
+
+    // ワープで出てきたポータルは、一度その範囲から出るまで入口として反応させない
+    // （データ足場の柱のように出口のすぐ近くにしか立てない場所だと、クールダウンが切れた瞬間に戻されてしまうため）
+    if (portalExitLock && DistanceToBody(*portalExitLock) >= kPortalRadius + kPortalExitLockMargin) {
+        portalExitLock = nullptr;
+    }
+    bool canEnterA = (portalExitLock != &portalA);
+    bool canEnterB = (portalExitLock != &portalB);
+
+    if (canEnterA && DistanceToBody(portalA) < kPortalRadius) {
         entry = &portalA;
         exit = &portalB;
-    } else if (Calculation::Length(ClosestPointOnBody(portalB.position) - portalB.position) < kPortalRadius) {
+    } else if (canEnterB && DistanceToBody(portalB) < kPortalRadius) {
         entry = &portalB;
         exit = &portalA;
     }
@@ -3267,6 +3785,7 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
     }
     portalExitVelocityTimer = kPortalExitVelocityDuration;
     portalCooldownTimer = kPortalTeleportCooldown;
+    portalExitLock = exit; // 出てきたポータルから離れるまで、そこには入れない
 
     // ワープ通過の瞬間、Apex/Titanfallのフェイズ移動のような一瞬のグレースケール演出を入れる
     screenEffect->TriggerGrayscaleFlash();

@@ -14,7 +14,8 @@
 #   cover          … 中央のカバー箱（scale {1.5,2,1.5}）
 #   platform_low   … 角のプラットフォーム下段（scale {3,1.25,3}）
 #   platform_high  … 角のプラットフォーム上段（scale {1.5,1.25,1.5}）
-#   data_platform  … 空中のデータ足場（scale {2,0.2,2}、4m四方・厚さ0.4m。新規なので大きさは仮）
+#   data_platform  … 空中のデータ足場（scale {2.5,0.2,2.5}、5m四方・厚さ0.4m）
+#   data_pylon     … データ足場の中央の柱（scale {0.5,1.25,0.5}、1m角・高さ2.5m。ポータルを貼る）
 #
 # 当たり判定は箱（AABB）なので、どの部品も見た目が箱いっぱいに収まるように作っている
 # （発光ラインの出っ張り 1cm 程度と、角の小さな面取りだけが例外）。
@@ -129,7 +130,8 @@ def build_block(mats, name, hx, hz_up, hy, chamfer, mid_band=True):
 
 
 def build_data_platform(mats):
-    h, hz_up = 2.0, 0.2
+    # 5m 四方（角のブロックが崩れて上の重要度が上がったため、4m から少し広げた。2026/11/11）
+    h, hz_up = 2.5, 0.2
     b = c.MeshBuilder()
     b.prism_z(c.chamfer_rect_profile(-h, h, -h, h, 0.15), -hz_up, hz_up, BODY)
     t = GLOW_PROTRUDE
@@ -140,7 +142,7 @@ def build_data_platform(mats):
         b.box((s * (h - inset) - w, -h + inset, hz_up), (s * (h - inset) + w, h - inset, hz_up + t), GLOW)
     # 下面のグリッド（下にいるプレイヤーから「足場がある」と分かるように）
     for i in (-1, 0, 1):
-        p = i * 1.0
+        p = i * 1.25
         b.box((p - w, -h + inset, -hz_up - t), (p + w, h - inset, -hz_up), GLOW)
         b.box((-h + inset, p - w, -hz_up - t), (h - inset, p + w, -hz_up), GLOW)
     return b.finish("data_platform", mats, engine_scale=(h, hz_up, h))
@@ -188,7 +190,7 @@ def build_preview_layout(p):
             place(p["platform_high"], (sx, 3.75, sz), (1.5, 1.25, 1.5))
     # データ足場の配置例（位置は仮）
     for pos in ((-8, 6.5, 4), (8, 6.5, 4), (0, 7.0, -4)):
-        place(p["data_platform"], pos, (2, 0.2, 2))
+        place(p["data_platform"], pos, (2.5, 0.2, 2.5))
         place(p["data_pylon"], (pos[0], pos[1] + 0.2 + 1.25, pos[2]), (0.5, 1.25, 0.5))
     for obj in p.values():
         obj.hide_render = True  # 原点に置いた元の部品は写さない

@@ -30,6 +30,7 @@ DANGER = (1.0, 0.35, 0.05)      # グレネード
 TARGET = (1.0, 0.55, 0.1)       # 的（今のオレンジ色の的に合わせる）
 HEAL = (0.3, 1.0, 0.45)         # 回復
 BOSS_ATTACK = (0.85, 0.2, 1.0)  # ボスの攻撃（ボスの発光色に合わせた紫）
+SHIELD = (0.3, 0.7, 1.0)        # ボスのシールド（攻撃の紫と見分ける青）
 
 
 def mats3(prefix, glow, strength, body=(0.06, 0.06, 0.08), trim=(0.16, 0.16, 0.2)):
@@ -134,6 +135,29 @@ def build_heal_cube():
     return b.finish("heal_cube", m)
 
 
+def build_boss_shield():
+    """ボスが正面に張るシールド。-1〜1 の正方形、正面（法線）= Blender の +Y（エンジンの +Z）。
+    中を塞ぐ膜は付けず、発光する格子だけにして、向こうのボスが透けて見えるようにする。
+    コードで scale {横の半分, 縦の半分, 1} にして、ボスの正面に置く"""
+    m = glow_only("Shield", SHIELD, 4.0)
+    b = c.MeshBuilder()
+    d = 0.03  # 奥行き
+    w = 0.05  # 外枠の太さ
+    # 外枠（角を落とした8角形の枠を、正方形に近い形で）
+    rot = 0.3927
+    k = 1.0 / math.cos(math.pi / 8)
+    outer = c.ngon_profile(0, 0, 1.0 * k, 8, rot=rot)
+    inner = c.ngon_profile(0, 0, (1.0 - w) * k, 8, rot=rot)
+    _ring_y(b, outer, inner, 0.0, d, 0)
+    # 内側の格子（縦横5本ずつ。8角形の中に収まる長さにする）
+    for i in range(-2, 3):
+        p = i * 0.38
+        half = (1.0 - w) - max(0.0, abs(p) - 0.4) * 1.0  # 角の斜めの辺で短くする
+        b.box((p - 0.012, 0.0, -half), (p + 0.012, d * 0.6, half), 0)
+        b.box((-half, 0.0, p - 0.012), (half, d * 0.6, p + 0.012), 0)
+    return b.finish("boss_shield", m)
+
+
 def build_laser():
     """ボスのレーザー。原点から +Y（エンジンの +Z）へ長さ 1、断面は半径 1 の6角形"""
     m = glow_only("Laser", BOSS_ATTACK, 8.0)
@@ -188,6 +212,7 @@ def main():
         "heal_cube": build_heal_cube(),
         "laser": build_laser(),
         "shockwave": build_shockwave(),
+        "boss_shield": build_boss_shield(),
     }
     c.save_blend(out_dir, "props")
     for name, obj in parts.items():
@@ -204,6 +229,7 @@ def main():
     place(parts["heal_cube"], (4.0, 0.0, 0.8), (1, 1, 1), rot_deg=(20, 0, 30))
     place(parts["shockwave"], (0.0, -6.0, 0.0), (3.0, 0.5, 3.0))
     place(parts["laser"], (6.0, -3.0, 1.5), (0.12, 0.12, 6.0), rot_deg=(0, 0, 60))
+    place(parts["boss_shield"], (0.0, 3.0, 2.6), (2.6, 2.6, 1.0))
     c.render_view("Props", (0.0, 13.0, 5.0), (0.0, -1.5, 0.8), os.path.join(preview_dir, "props_overview.png"), lens=28.0)
     c.render_view("PropsClose", (-3.5, 4.5, 1.6), (-3.0, 0.0, 0.8), os.path.join(preview_dir, "props_close.png"), lens=35.0)
 

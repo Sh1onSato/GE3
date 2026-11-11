@@ -143,15 +143,19 @@ private:
 	Vector3 bossWarningEmissive = { 0.0f, 0.0f, 0.0f };           // 予備動作の警告色（旧boss->SetColorの代わりにくさびの発光で表現）
 	static constexpr float kBossWarningEmissiveIntensity = 0.6f;
 	float bossHitFlashTimer = 0.0f;                               // 被弾フラッシュの残り時間（くさびを赤く発光）
+	float bossHealFlashTimer = 0.0f;                              // 回復の光の残り時間（くさびをデータの色に発光）
+	static constexpr float kBossHealFlashDuration = 0.3f;
+	static constexpr float kBossHealFlashIntensity = 0.9f;
 	static constexpr float kBossHitFlashDuration = 0.2f;
 	static constexpr float kBossHitFlashIntensity = 0.8f;
 	float bossHP = kBossMaxHP;
 	static constexpr float kBossMaxHP = 300.0f; // 仮値（プレイヤーの3倍程度）
 
 	// プレイヤーの射撃ダメージ（距離で線形減衰。近距離ほど高ダメージ＝ショットガン的な仕様）
-	// 1発が大きすぎて簡単だったため半分に下げた（2026/11/11、旧 25 / 8）。コア命中はこの2倍
-	static constexpr float kBossDamageMax = 12.0f;          // 至近距離での最大ダメージ
-	static constexpr float kBossDamageMin = 4.0f;           // 遠距離での最小ダメージ
+	// 1発が大きすぎて簡単だったため下げている（2026/11/11、25/8 → 12/4 → 「削りが速すぎる」で 9/3）。
+	// コア命中はこの kBossCoreDamageMultiplier 倍
+	static constexpr float kBossDamageMax = 9.0f;           // 至近距離での最大ダメージ
+	static constexpr float kBossDamageMin = 3.0f;           // 遠距離での最小ダメージ
 	static constexpr float kBossDamageFalloffStart = 5.0f;  // これ以下の距離は常に最大ダメージ
 	static constexpr float kBossDamageFalloffEnd = 20.0f;   // これ以上の距離は常に最小ダメージ
 
@@ -173,7 +177,7 @@ private:
 	// kChasing中は既存の追跡・障害物回避ロジックで移動を続けながらbossAttackTimerを減算し、
 	// 0以下になったタイミングでその時の距離に応じてkMeleeWindup/kRangedWindupへ遷移する
 	// （＝「クールダウン中は棒立ち」ではなく、既存の追跡AIをそのまま活かして常に動き続ける設計）
-	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kShockwaveWindup, kRebuildWindup };
+	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kRebuildWindup, kShield };
 	BossAttackState bossAttackState = BossAttackState::kChasing;
 
 	// ボスのフェーズ（HP比率で段階的に移行する。P3固有の挙動は段階2で追加予定）
@@ -216,8 +220,9 @@ private:
 	static constexpr float kFloorTileHalfSize = kFloorTileSize * 0.5f;
 	static constexpr int kFloorTileCountPerSide = 15;           // 15x15マス
 	static constexpr float kFloorTileOriginCenter = -28.0f;     // 最初のマスの中心座標（x,z共通。-28,-24,...,28）
-	static constexpr int kCorruptTileCount = 6;                 // 1回の再構築で破損させるマス数
-	static constexpr int kCorruptTilesNearPlayer = 3;           // うちプレイヤー付近から選ぶ数
+	// 1回の再構築で破損させるマス数（ユーザー「もうちょい増やしていい」で 6→10、近く 3→4。2026/11/11）
+	static constexpr int kCorruptTileCount = 10;                // 1回の再構築で破損させるマス数（225マス中）
+	static constexpr int kCorruptTilesNearPlayer = 4;           // うちプレイヤー付近から選ぶ数
 	static constexpr float kCorruptNearRadius = 8.0f;           // 「付近」とみなすXZ距離
 	static constexpr float kCorruptTileLift = 0.02f;            // 床の上面より少しだけ浮かせる量（重ね表示）
 	static constexpr float kCorruptTileCenterY = -1.0f;         // floor_tile.glb(厚さ2m)の中心Y。上面がy=0になる
@@ -233,6 +238,8 @@ private:
 	static constexpr float kCorruptDamageMaxHeight = 0.5f;      // 足元がこれ未満（＝地上）の時だけダメージ
 	static constexpr float kCorruptDamageInterval = 0.5f;
 	static constexpr float kCorruptDamagePerTick = 5.0f;
+	// P3では、プレイヤーが崩壊床でダメージを受けるたびにボスがこれだけ回復する（0.5秒ごと＝毎秒6）
+	static constexpr float kCorruptBossHealPerTick = 3.0f;
 	enum class CorruptState { kHidden, kWarning, kActive };
 	struct CorruptTile {
 		std::unique_ptr<Object3d> object;
@@ -251,7 +258,9 @@ private:
 	static constexpr std::array<Vector3, kDataPlatformCandidateCount> kDataPlatformPositions = { {
 		{ -8.0f, 6.5f, 4.0f }, { 8.0f, 6.5f, 4.0f }, { 0.0f, 7.0f, -4.0f }, { -6.0f, 6.0f, -12.0f }, { 6.0f, 6.0f, -12.0f }
 	} };
-	static constexpr Vector3 kDataPlatformScale = { 2.0f, 0.2f, 2.0f };  // 4m四方・厚さ0.4m（そのまま当たり判定のhalf-extent）
+	// 5m四方・厚さ0.4m（そのまま当たり判定のhalf-extent）。角のブロックが崩れて上の重要度が上がったため、4mから広げた
+	// （モデル data_platform.glb もこの scale 用に作ってある。変えるときは Tools/blender/arena.py も合わせる）
+	static constexpr Vector3 kDataPlatformScale = { 2.5f, 0.2f, 2.5f };
 	static constexpr float kDataPlatformMaterializeDuration = 0.8f;
 	static constexpr float kDataPlatformBreakDuration = 0.8f;
 	static constexpr float kDataPlatformDissolveEdgeWidth = 0.15f;       // 実体化の境界の発光帯の幅[m]
@@ -294,7 +303,7 @@ private:
 	static constexpr float kBossCoreCenterOffsetY = 0.5f;       // bossPos.y + kBossHalfHeight からのコア中心オフセット
 	static constexpr float kBossCoreHalfSize = 0.6f;
 	static constexpr float kBossCoreExposedOpenAmount = 0.3f;   // P1でコアが露出したとみなす開き具合
-	static constexpr float kBossCoreDamageMultiplier = 2.0f;
+	static constexpr float kBossCoreDamageMultiplier = 1.5f; // ユーザー指定で 2.0→1.3→1.5（2026/11/11）
 	static constexpr float kBossCoreHitShakeStrength = 0.015f;
 
 	// レーザー薙ぎ払い（P2以降）
@@ -311,9 +320,60 @@ private:
 	static constexpr float kBossLaserHeight = 0.6f;           // 床すれすれ（ジャンプで越えられる）
 	static constexpr float kBossLaserDamage = 20.0f;
 	static constexpr Vector3 kBossLaserWarningEmissive = { 0.85f, 0.2f, 1.0f };
+	// P3は、床すれすれの1本目のすぐ後に、ジャンプした高さを払う2本目（立っていれば当たらない）を逆向きに払う
+	float bossLaserHeight = kBossLaserHeight;   // 今のレーザーの高さ（中心）
+	bool bossLaserSecondPass = false;           // 2本目（高い方）か
+	static constexpr float kBossLaserHighHeight = 2.4f;               // 2本目の高さ（中心）。立っている頭（約1.7m）より上、ジャンプすると当たる
+	static constexpr float kBossLaserSecondWindupDuration = 0.5f;     // 2本目の予兆（0.5秒以上の予兆ルール）
+	static constexpr Vector3 kBossLaserHighWarningEmissive = { 0.3f, 0.6f, 1.0f };  // 2本目の予兆は青（1本目の紫と見分ける）
+	static constexpr float kPlayerHeadMargin = 0.2f;                  // 目線より上の頭の分（レーザーの高さの判定に使う）
 	void UpdateBossLaserTransform(float yaw, float radius); // bossLaserの位置・向き・太さを設定する
 	void StopBossLaser(); // レーザーを非表示・判定なしに戻す
 	float bossAttackTimer = 0.0f;
+
+	// 正面シールド（P1から）：正面から撃ち続けられると張り、正面からの弾のダメージを無効にする
+	std::unique_ptr<Object3d> bossShield;
+	int bossShieldHitCount = 0;               // 直近の正面命中回数
+	float bossShieldHitWindowTimer = 0.0f;    // 最初の正面命中からの残り時間（0以下で回数を数え直す）
+	float bossShieldCooldownTimer = 0.0f;     // 張り終わってから次に張れるまでの残り時間
+	// 「もうちょい発動条件を緩めていい」で 3秒に5発→3発、クールダウン 8→6秒（2026/11/11）
+	static constexpr int kBossShieldTriggerHits = 3;
+	static constexpr float kBossShieldTriggerWindow = 3.0f;
+	static constexpr float kBossShieldCooldown = 6.0f;
+	static constexpr float kBossShieldDuration = 3.5f;
+	static constexpr float kBossShieldTurnSpeed = 0.698f;      // 向き直る速さ[rad/秒]（約40度）
+	static constexpr float kBossShieldHalfAngle = 1.05f;       // 正面とみなす半角（約60度）
+	static constexpr float kBossShieldForwardOffset = 2.4f;
+	static constexpr float kBossShieldOffsetY = 0.5f;
+	static constexpr float kBossShieldHalfSize = 2.6f;
+	static constexpr float kBossShieldAppearDuration = 0.15f;  // 張った瞬間に広がる演出の長さ
+	static constexpr float kBossShieldBlockShakeStrength = 0.004f;
+	static constexpr Vector3 kBossShieldSparkColor = { 0.4f, 0.8f, 1.0f };  // 弾かれた火花の色（青）
+	bool IsFromBossFront(const Vector3& worldPos) const; // ボスの正面から見て worldPos が正面の範囲内か
+	bool CanBossStartShield() const;                     // 割り込んでシールドを張ってよい状態か
+	void StartBossShield();                              // シールドを張る（予備動作は打ち切る）
+	void ResetBossShield();                              // 命中記録・クールダウンを初期化（表示は状態kShieldで決まる）
+	void UpdateBossShieldTransform();                    // bossShieldの位置・向き・スケールを設定する
+
+	// --- 組み合わせ攻撃（P2以降、低確率でメインの行動にグレネードを重ねる） ---
+	static constexpr float kBossComboChanceP2 = 0.2f;                 // P2で組み合わせ版になる確率
+	static constexpr float kBossComboChanceP3 = 0.4f;                 // P3で組み合わせ版になる確率
+	static constexpr float kBossComboLaserGrenadeInterval = 0.35f;    // レーザー薙ぎ中のグレネード間隔
+	static constexpr int kBossComboLaserGrenadeCount = 4;             // レーザー薙ぎ中のグレネード最大数
+	static constexpr float kBossComboDashDropInterval = 0.15f;        // 突進中にグレネードを落とす間隔
+	static constexpr float kBossComboDashDropBackOffset = 2.5f;       // 落とす位置（ボスの後ろ＝進行方向の逆）までの距離
+	static constexpr int kBossComboDashDropCount = 4;                 // 突進中に落とすグレネードの最大数
+	static constexpr float kBossComboShieldGrenadeInterval = 0.8f;    // シールド中のグレネード間隔
+	static constexpr float kBossComboBlinkInterval = 0.1f;            // 組み合わせ版の予兆の点滅切り替え間隔
+	static constexpr float kBossComboBlinkStrongScale = 1.0f;         // 点滅の強
+	static constexpr float kBossComboBlinkWeakScale = 0.25f;          // 点滅の弱
+	bool bossComboActive = false;          // 今の行動が組み合わせ版か
+	float bossComboTimer = 0.0f;           // 組み合わせのグレネードを撃つまでの残り時間
+	int bossComboShotsRemaining = 0;       // 組み合わせで撃てる残り発数（シールドは無制限なので使わない）
+	float bossComboBlinkTimer = 0.0f;      // 予兆の点滅用の経過時間
+	void RollBossCombo();                  // 行動を始めるとき、確率で組み合わせ版にするか決める（P1は常にfalse）
+	void ResetBossCombo();                 // 組み合わせの状態・カウンタを初期化する
+
 	Vector3 bossDashDir = {}; // kMeleeDash中に固定して使い続ける突進方向
 	float bossDashCurrentSpeed = 0.0f; // kMeleeDash中、加速しながら変化していく現在の突進速度
 	static constexpr float kBossMeleeRange = 10.0f;           // これ以下なら近接突進、これより遠いならグレネード
@@ -382,23 +442,78 @@ private:
 	bool TryPickBossTeleportDest(bool requireLineOfSight = false); // 行き先を探してbossTeleportDestに保存する。見つからなければfalse（trueならプレイヤーから見える場所のみ）
 	void StopBossTeleport();        // テレポート関連の見た目（ディゾルブ・マーカー・グリッチ）を止める
 
-	// 衝撃波リング
-	static constexpr float kBossP3ShockwaveChance = 0.5f;  // P3の近距離で衝撃波を選ぶ確率（残りは突進）
-	static constexpr float kBossShockwaveWindupDuration = 0.7f;
-	static constexpr float kBossShockwaveStartRadius = 2.0f;
-	static constexpr float kBossShockwaveSpeed = 14.0f;    // 1秒あたりの広がる速さ[m/s]
-	static constexpr float kBossShockwaveMaxRadius = 32.0f;
-	static constexpr float kBossShockwaveHeight = 0.7f;
-	static constexpr float kBossShockwaveHitHalfWidth = 0.4f;
-	static constexpr float kBossShockwaveDamage = 20.0f;
-	static constexpr float kBossShockwaveShakeDuration = 0.3f;
-	static constexpr float kBossShockwaveShakeStrength = 0.02f;
-	std::unique_ptr<Object3d> bossShockwave;
-	bool shockwaveActive = false;
-	bool shockwaveHasHit = false;
-	Vector3 shockwaveCenter = { 0.0f, 0.0f, 0.0f };
-	float shockwaveRadius = 0.0f;
-	void StopBossShockwave(); // 広がっている衝撃波を消す
+	// 衝撃波リング（アリーナのギミック：中央のカバー箱から出る。同時に複数の輪を持てる）
+	static constexpr float kShockwaveStartRadius = 2.0f;
+	static constexpr float kShockwaveSpeed = 14.0f;    // 1秒あたりの広がる速さ[m/s]
+	static constexpr float kShockwaveMaxRadius = 32.0f;
+	static constexpr float kShockwaveHeight = 0.7f;
+	static constexpr float kShockwaveHitHalfWidth = 0.4f;
+	static constexpr float kShockwaveDamage = 20.0f;
+	static constexpr float kShockwaveShakeDuration = 0.3f;
+	static constexpr float kShockwaveShakeStrength = 0.02f;
+	static constexpr int kMaxShockwaveRings = 2;           // 同時に出せる輪の数（P3は2箱同時）
+	struct ShockwaveRing {
+		std::unique_ptr<Object3d> object;
+		bool active = false;
+		Vector3 center = { 0.0f, 0.0f, 0.0f };
+		float radius = 0.0f;
+		bool hasHit = false; // 1つの輪につき1回だけダメージ
+	};
+	std::array<ShockwaveRing, kMaxShockwaveRings> shockwaveRings;
+	void StopShockwaves(); // 広がっている衝撃波を全部消す
+
+	// 衝撃波ギミック（P2以降、一定間隔でランダムなカバー箱が予兆のあと衝撃波を出す）
+	static constexpr float kShockwaveGimmickInterval = 12.0f;   // 発生間隔[秒]
+	static constexpr float kShockwaveGimmickFirstDelay = 4.0f;  // P2に入ってから最初の発生までの待ち[秒]
+	static constexpr float kShockwaveWarningDuration = 1.0f;    // 予兆（箱の点滅）の長さ[秒]
+	static constexpr int kShockwaveWarningBlinkFrames = 4;      // 点滅の強弱を切り替えるフレーム数
+	static constexpr float kShockwaveWarningIntensityLow = 0.4f;
+	static constexpr float kShockwaveWarningIntensityHigh = 1.2f;
+	static constexpr int kShockwaveBoxCountP2 = 1;              // 1回に出す箱の数（P2）
+	static constexpr int kShockwaveBoxCountP3 = 2;              // 同（P3）
+	static constexpr Vector3 kShockwaveWarningEmissive = { 1.0f, 0.35f, 0.05f }; // 予兆の発光色（橙赤）
+	float shockwaveGimmickTimer = 0.0f;   // 0になったら予兆開始（P1では使わない）
+	float shockwaveWarningTimer = 0.0f;   // 予兆の残り時間（0より大きければ予兆中）
+	std::vector<size_t> shockwaveWarningWalls; // 予兆中の箱（wallsのインデックス）
+	void UpdateShockwaveGimmick();        // タイマー進行・予兆・発生（ゲームが動いている間だけ呼ぶ）
+	void StartShockwaveWarning();         // 箱を選んで予兆を始める
+	void SpawnShockwaves();               // 予兆が終わった箱の足元から衝撃波を出す
+	void CancelShockwaveWarning();        // 予兆を中断して箱の発光を戻す
+
+	// --- 角のプラットフォーム崩壊（P2で2か所・P3で1か所。予兆→上から消える→消滅） ---
+	// 消滅後のブロックはtranslateのyを画面外へ移し、当たり判定・レイキャスト・描画から実質外す
+	enum class CornerState { kIntact, kWarning, kCollapsing, kGone };
+	struct CornerData {
+		int lowIndex = -1;   // 下段のwallsインデックス
+		int highIndex = -1;  // 上段のwallsインデックス
+		float x = 0.0f;
+		float z = 0.0f;
+		CornerState state = CornerState::kIntact;
+		float timer = 0.0f;  // 現在の状態に入ってからの経過時間[秒]
+	};
+	static constexpr int kCornerCount = 4;
+	static constexpr int kCornerCollapseCountP2 = 2;
+	static constexpr int kCornerCollapseCountP3 = 1;
+	static constexpr float kCornerWarningDuration = 1.5f;
+	static constexpr float kCornerCollapseDuration = 0.8f;
+	static constexpr int kCornerWarningBlinkFrames = 6;
+	static constexpr float kCornerWarningIntensityLow = 0.4f;
+	static constexpr float kCornerWarningIntensityHigh = 1.5f;
+	static constexpr Vector3 kCornerWarningEmissive = { 1.0f, 0.1f, 0.1f };
+	static constexpr float kCornerTopY = 5.0f;            // 上段の上端のワールドY
+	static constexpr float kCornerHiddenY = -1000.0f;     // 消滅後に移す画面外のY
+	static constexpr float kCornerClearMargin = 0.1f;     // ポータル・弾痕を消す範囲の広げ幅
+	std::array<CornerData, kCornerCount> corners;
+	int cornerCount = 0;
+	std::vector<int> wallCornerIndex; // wallsと同じ並び。属する角の番号（なければ-1）
+	void StartCornerCollapse(int count);     // kIntactの角からランダムにcount個をkWarningにする
+	void UpdateCornerCollapse();             // 状態遷移と見た目の更新（ゲームが動いている間だけ呼ぶ）
+	void FinishCornerGone(CornerData& corner); // 画面外へ移し、発光・ディゾルブを戻し、ポータル・弾痕を消す
+	void SetCornerEmissive(const CornerData& corner, const Vector3& color, float intensity);
+	void SetCornerDissolve(const CornerData& corner, float height, float edgeWidth, float time);
+	void ResetCornerCollapse();              // 全て元の位置・見た目・状態に戻す（RestartGame用）
+	void StopCornerCollapse();               // 決着時：予兆は取り消し、崩壊中は消滅まで確定させる
+	bool IsWallShadowHidden(size_t wallIndex) const; // 崩壊中・消滅後は影を描かない
 
 	// 遠距離グレネードの3連射（kRangedWindup終了後、kRangedBurst中に一定間隔で発射する）
 	int bossGrenadeBurstRemaining = 0;
@@ -424,7 +539,16 @@ private:
 		bool active = false;
 	};
 	std::vector<Grenade> grenades;
-	static const int kMaxGrenades = 3; // 3連射を同時に飛ばせるよう、バースト数と揃えている
+	// 同時に飛ばせる数。一斉発射（kBossRadialGrenadeCount）＋前の連射の残りが重なっても足りるようにする
+	// （以前は3で、焦れたときの5連射の4・5発目が空き無しで撃たれていなかった）
+	static const int kMaxGrenades = 16;
+	// グレネード攻撃の2つの型：連続で吐き出す（今までの3連射。プレイヤーを狙う）／周りに一斉に吐き出す
+	bool bossGrenadeRadial = false;                            // 今回の投擲が一斉発射か（予備動作の開始時に決める）
+	static constexpr float kBossRadialGrenadeChance = 0.4f;    // 一斉発射を選ぶ確率（見えている・地上のときだけ）
+	static constexpr int kBossRadialGrenadeCount = 8;          // 一斉発射の数
+	static constexpr float kBossRadialGrenadeDistance = 9.0f;  // 一斉発射の着地点のボスからの距離
+	static constexpr Vector3 kBossRangedWarningEmissive = { 1.0f, 0.5f, 0.05f };   // 連続：橙
+	static constexpr Vector3 kBossRadialWarningEmissive = { 1.0f, 0.85f, 0.1f };   // 一斉：黄（予兆で見分けられるように）
 	static constexpr float kGrenadeGravity = -0.02f;      // プレイヤーと同じ重力値を流用
 	static constexpr float kGrenadeArcHeight = 5.0f;      // 山なり軌道の頂点の高さ（発射点からの相対高さ）
 	static constexpr float kGrenadeAimSpread = 2.0f;      // 着弾狙い位置をプレイヤー中心にこの半径内でランダムにずらす（回避の余地＋3連射の着弾散らし）
@@ -433,8 +557,10 @@ private:
 	static constexpr float kGrenadeRadius = 0.3f;         // 床・壁との衝突判定半径
 	static constexpr float kGrenadeExplosionRadius = 4.0f;
 	static constexpr float kGrenadeDamage = 15.0f;
-	// グレネードを発射する（非アクティブなものを1つ使う）
+	// グレネードを発射する（非アクティブなものを1つ使う）。FireGrenade はプレイヤーの周りを狙う
 	void FireGrenade();
+	void FireRadialGrenades();                   // ボスの周りへ一斉に投げる
+	void FireGrenadeAt(const Vector3& targetPos); // 指定した着地点へ山なりで投げる
 	// グレネードを爆発させる（範囲内ならプレイヤーにダメージ、着弾演出を出す）
 	void ExplodeGrenade(Grenade& grenade);
 
@@ -662,6 +788,9 @@ private:
 	Portal portalA; // 青
 	Portal portalB; // オレンジ
 	static constexpr float kPortalRadius = 1.0f;
+	// ワープで出てきたポータル。一度その範囲（kPortalRadius＋余裕）から出るまで、入口として反応させない
+	const Portal* portalExitLock = nullptr;
+	static constexpr float kPortalExitLockMargin = 0.2f;
 	// 2つのポータルの間の距離の上限。もう一方が置いてあるとき、これより離れた場所には置けない
 	static constexpr float kPortalMaxPairDistance = 25.0f;
 	// 置けなかったときに、レティクルを一瞬この色にして知らせる
