@@ -558,3 +558,59 @@ glTFはJSONの「構造」を決めた3Dモデル用フォーマットです。`
 - 新しい Object3d を足したら、Initialize・Update・Draw・DrawShadow のすべてに入れます。Update を忘れると、単位行列のまま巨大に描かれます（過去に一度起きた不具合です）。
 - ボスのモデルを差し替えるときは、高さ方向に細かく分割しておきます（目安：1mあたり3本以上）。実体化の横ズレは頂点ごとにずらすため、分割が粗いと箱が歪むだけになります。
 - リトライ（`RestartGame()`）では、パーティクル（`ParticleManager::Clear()`）、弾痕、画面効果、ボスの見た目の位置も戻しています。新しく「残るもの」を足したときは、ここにも戻す処理を足します。
+
+## 29. ボスの3フェーズ（GameScene）
+ボスの HP が減ると、行動が3段階に変わります。数値はすべて `GameScene.h` の `kBoss〜` の定数にあるので、難しさを変えたいときはそこを触ります。
+
+### 29-1. フェーズの決まり方
+- `enum class BossPhase { kP1, kP2, kP3 }` と `bossPhase`。
+- `DamageBoss()` で HP を減らしたあと、HP が `kBossPhase2HpRatio`（60%）を下回ったら P2、`kBossPhase3HpRatio`（25%）を下回ったら P3 へ進みます。1発で2つの閾値をまたいでも、1段ずつ進みます。
+- 進むときは `StartBossPhaseShift(次のフェーズ)` を呼びます。ボスの状態を `kPhaseShift` にし、1.2秒の「移行演出」に入ります。
+  - この間は無敵です（`DamageBoss()` が何もせずに戻ります）。
+  - ボスは止まってプレイヤーの方を向き、くさびを全開にします。
+  - グリッチ（`SetTransitionGlitch`）、カメラシェイク、画面中央の紫の文字「PHASE 2」「PHASE 3」（`phaseText`。1.5秒表示して、最後の0.5秒で消える）を出します。
+  - 進行中のレーザーやテレポートは打ち切り、グレネード3連射の残りも捨てます。
+
+### 29-2. ボスの行動の状態（BossAttackState）
+ボスの AI は「今どの行動中か」を1つの状態で持ち、毎フレーム `switch` で処理を分けています。
+- `kChasing`：追いかける。攻撃の待ち時間が明けたら、距離とフェーズで次の攻撃を選ぶ
+- `kMeleeWindup` → `kMeleeDash`：突進（P1から）
+- `kRangedWindup` → `kRangedBurst`：グレネード3連射（P1から）
+- `kLaserWindup` → `kLaserSweep`：レーザーの薙ぎ払い（P2から）
+- `kTeleportOut` → `kTeleportIn`：短距離テレポート（P2から）
+- `kShockwaveWindup`：衝撃波の予備動作（P3から。輪は発生後に独立して広がる）
+- `kPhaseShift`：フェーズ移行の演出
+- 攻撃の選び方：近い（`kBossMeleeRange` 以下）なら突進。P3 だけは50%で衝撃波。遠いなら、P1 はグレネード、P2 以降は レーザー35%・テレポート30%・残りグレネード（`kBossFarLaserChance` / `kBossFarTeleportChance`）。
+- どの攻撃も、0.5秒以上の予兆を出すルールにしています（理不尽に感じさせないため）。予兆は、くさびの発光の色（`bossWarningEmissive`）で出します：突進＝赤、グレネード＝橙、レーザー＝紫、衝撃波＝橙赤。
+- 攻撃のあとの待ち時間は `BossAttackCooldown()` で決めます（P3 は0.6倍）。
+
+### 29-3. くさびとコア
+- くさびの開き具合 `bossOpenAmount` の目標：P1 は「追跡中0、攻撃中1」、P2 以降は「追跡中0.5（`kBossPhase2IdleOpen`）、攻撃中1」。
+- **コアへの命中**：`FireShot()` でボスに当たったとき、同じ射線がコアの箱（中心はボスの中心から上に0.5、半分の大きさ0.6）も通っていれば、ダメージを2倍（`kBossCoreDamageMultiplier`）にします。P1 では、くさびがある程度開いているとき（`kBossCoreExposedOpenAmount` 以上）だけ調べます。
+  - ボスの当たり判定の箱はコアを内側に含むので、「ボスが一番手前に当たったとき」だけ、追加でコアの箱を調べれば済みます。
+  - 箱で判定しているので、くさびの細い先端越しに撃ってもコア扱いになることがあります。
+- P3 では、警告色を出していない間、くさびを赤く脈打たせます（`kBossPhase3Emissive`。`UpdateBossParts()` の中）。
+
+### 29-4. レーザーの薙ぎ払い
+- 予備動作（0.8秒）で、薙ぎの中心の向き（その瞬間のプレイヤーの方向）を `bossLaserCenterYaw` に固定し、薙ぎ始めの向きに細い線を出します。
+- 本番（1.4秒）で、中心から左60度→右60度へ、`Easing::InOutSine` で回します。レーザーは `laser.glb` を `SetScale({太さ, 太さ, 長さ})` と `SetRotate({0, 向き, 0})` で表示しています。
+- 当たり判定：プレイヤーの足元が「レーザーの高さ＋太さ」より低く、かつ真上から見て、プレイヤーとレーザーの線分との距離が「太さ＋プレイヤーの半径」以下なら命中です。1回の薙ぎで1回だけダメージ（`bossLaserHasHit`）。ジャンプして足元が高ければ当たりません。壁やカバーでは止まりません。
+
+### 29-5. テレポート
+- 行き先は `TryPickBossTeleportDest()` で探します。プレイヤーから8〜12m、アリーナの内側、`CheckCollision()` で壁と重ならない場所を最大8回探し、見つからなければグレネードに切り替えます。
+- `kTeleportOut`（0.6秒）：ディゾルブで上から消えます。行き先の床には予兆の輪（`bossTeleportMarker`）を出します。終わったら `bossPos` を行き先に移します。
+- `kTeleportIn`（0.5秒）：下から現れます。終わったら `StopBossTeleport()` でディゾルブと輪を消します。
+- テレポート中は無敵です。影も描きません（`IsBossMaterializing()` がテレポート中も true を返します）。
+
+### 29-6. 衝撃波（P3）
+- 予備動作のあと、ボスの足元を中心に、輪（`bossShockwave`、`shockwave.glb`）を毎フレーム広げます（秒速14m、最大32m）。
+- 当たり判定：プレイヤーの足元が輪の高さ（0.7m）より低く、中心からの距離と輪の半径の差が「輪の幅の半分＋プレイヤーの半径」以下なら命中。1つの輪で1回だけです。
+- 広げる処理は、グレネードの更新と同じ場所にあるので、ポーズ中・READY中・決着後は止まります。
+
+### 29-7. 注意
+- 新しい行動を足すときは、`BossAttackState` に値を足し、`switch` に `case` を足し、決着時と `RestartGame()` で止める処理を足します。新しい Object3d を足したら、Initialize・Update（`UpdateRenderObjects`）・Draw の全部に入れます。
+
+## 30. ポータルの距離の上限
+- 2つ目のポータルを置こうとしたとき、もう一方との距離が `kPortalMaxPairDistance`（25m）を超えていたら置きません（`PlacePortal()`）。
+- 置けなかったときは、`portalRejectTimer` を立てて、レティクルを0.25秒だけ灰色（`kReticleRejectColor`）にします。レティクルの色は `UpdateRenderObjects()` で毎フレーム決めています。
+- 「照準から設置点までの距離」の上限は、まだありません。

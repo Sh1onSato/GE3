@@ -93,7 +93,9 @@ private:
 	bool IsIntroCameraActive() const { return introPhase == IntroPhase::kReady && introIsFull; }
 	// ボスが実体化演出の途中か（影パスを止める判定に使う）
 	bool IsBossMaterializing() const {
-		return introPhase == IntroPhase::kReady && introElapsed < kIntroMaterializeStart + kIntroMaterializeDuration;
+		return (introPhase == IntroPhase::kReady && introElapsed < kIntroMaterializeStart + kIntroMaterializeDuration)
+			|| bossAttackState == BossAttackState::kTeleportOut
+			|| bossAttackState == BossAttackState::kTeleportIn;
 	}
 	// 開始演出の文字を差し替えて画面中央に配置する
 	void SetIntroText(const std::string& text, const Vector4& color);
@@ -169,8 +171,56 @@ private:
 	// kChasing中は既存の追跡・障害物回避ロジックで移動を続けながらbossAttackTimerを減算し、
 	// 0以下になったタイミングでその時の距離に応じてkMeleeWindup/kRangedWindupへ遷移する
 	// （＝「クールダウン中は棒立ち」ではなく、既存の追跡AIをそのまま活かして常に動き続ける設計）
-	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst };
+	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kShockwaveWindup };
 	BossAttackState bossAttackState = BossAttackState::kChasing;
+
+	// ボスのフェーズ（HP比率で段階的に移行する。P3固有の挙動は段階2で追加予定）
+	enum class BossPhase { kP1, kP2, kP3 };
+	BossPhase bossPhase = BossPhase::kP1;
+	static constexpr float kBossPhase2HpRatio = 0.6f;   // HP比率がこれを下回ったらP2へ
+	static constexpr float kBossPhase3HpRatio = 0.25f;  // HP比率がこれを下回ったらP3へ
+	static constexpr float kBossPhaseShiftDuration = 1.2f;       // 移行演出（無敵）の長さ
+	static constexpr float kBossPhaseShiftShakeDuration = 0.35f;
+	static constexpr float kBossPhaseShiftShakeStrength = 0.03f;
+	static constexpr float kBossPhaseShiftGlitch = 1.0f;         // 移行開始時のグリッチ強度
+	static constexpr float kBossPhaseShiftGlitchDuration = 0.5f; // グリッチが消えるまでの時間
+	static constexpr float kBossPhase2IdleOpen = 0.5f;           // P2以降、追跡中のくさびの開き具合
+	void StartBossPhaseShift(BossPhase next);
+	void UpdatePhaseText();
+
+	// "PHASE 2"/"PHASE 3"の文字
+	BitmapText phaseText;
+	float phaseTextTimer = 0.0f;
+	static constexpr int kPhaseTextMaxChars = 7;
+	static constexpr float kPhaseTextScale = 5.0f;
+	static constexpr float kPhaseTextDuration = 1.5f;
+	static constexpr float kPhaseTextFadeDuration = 0.5f; // 最後のこの時間でアルファを下げて消す
+	static constexpr float kPhaseTextPositionY = 320.0f;
+	static constexpr Vector4 kPhaseTextColor = { 0.85f, 0.3f, 1.0f, 1.0f };
+
+	// コア命中ボーナス（くさびが開いている間だけコアが狙える）
+	static constexpr float kBossCoreCenterOffsetY = 0.5f;       // bossPos.y + kBossHalfHeight からのコア中心オフセット
+	static constexpr float kBossCoreHalfSize = 0.6f;
+	static constexpr float kBossCoreExposedOpenAmount = 0.3f;   // P1でコアが露出したとみなす開き具合
+	static constexpr float kBossCoreDamageMultiplier = 2.0f;
+	static constexpr float kBossCoreHitShakeStrength = 0.015f;
+
+	// レーザー薙ぎ払い（P2以降）
+	std::unique_ptr<Object3d> bossLaser;
+	bool bossLaserVisible = false;   // trueの間だけ描画（予兆＋薙ぎ）
+	bool bossLaserHasHit = false;    // 1回の薙ぎで1回だけダメージを与えるためのフラグ
+	float bossLaserCenterYaw = 0.0f; // 薙ぎの中心の向き（予備動作開始時に固定）
+	static constexpr float kBossLaserWindupDuration = 0.8f;
+	static constexpr float kBossLaserSweepDuration = 1.4f;
+	static constexpr float kBossLaserSweepHalfAngle = 1.05f;  // 中心から片側へ振る角度（約60度）
+	static constexpr float kBossLaserTelegraphRadius = 0.03f;
+	static constexpr float kBossLaserRadius = 0.25f;
+	static constexpr float kBossLaserLength = 45.0f;
+	static constexpr float kBossLaserHeight = 0.6f;           // 床すれすれ（ジャンプで越えられる）
+	static constexpr float kBossLaserDamage = 20.0f;
+	static constexpr Vector3 kBossLaserWarningEmissive = { 0.85f, 0.2f, 1.0f };
+	void UpdateBossLaserTransform(float yaw, float radius); // bossLaserの位置・向き・太さを設定する
+	void StopBossLaser(); // レーザーを非表示・判定なしに戻す
 	float bossAttackTimer = 0.0f;
 	Vector3 bossDashDir = {}; // kMeleeDash中に固定して使い続ける突進方向
 	float bossDashCurrentSpeed = 0.0f; // kMeleeDash中、加速しながら変化していく現在の突進速度
@@ -183,6 +233,52 @@ private:
 	static constexpr float kBossMeleeDamage = 20.0f;
 	static constexpr float kBossRangedWindupDuration = 0.5f;  // グレネード投擲前の予備動作時間
 	static constexpr float kBossAttackCooldown = 1.5f;        // 攻撃後、次の攻撃判定が始まるまでの追跡専念時間
+	float BossAttackCooldown() const; // フェーズに応じた攻撃後クールダウン（P3は短縮）
+
+	// --- P3固有の挙動 ---
+	static constexpr Vector3 kBossPhase3Emissive = { 1.0f, 0.08f, 0.08f }; // P3のくさびの基本発光色（赤）
+	static constexpr float kBossPhase3EmissiveBase = 0.25f;
+	static constexpr float kBossPhase3EmissivePulse = 0.15f;
+	static constexpr float kBossPhase3PulseSpeed = 6.0f;
+	static constexpr float kBossPhase3SpeedMultiplier = 1.3f;
+	static constexpr float kBossPhase3CooldownScale = 0.6f;
+	float bossPhase3PulseTimer = 0.0f; // P3の脈打ち用の累積時間[秒]
+
+	// 短距離テレポート
+	static constexpr float kBossFarLaserChance = 0.35f;     // P2以降の遠距離でレーザーを選ぶ確率
+	static constexpr float kBossFarTeleportChance = 0.30f;  // P2以降の遠距離でテレポートを選ぶ確率（残りはグレネード）
+	static constexpr float kBossTeleportMinDistance = 8.0f;
+	static constexpr float kBossTeleportMaxDistance = 12.0f;
+	static constexpr float kBossTeleportArenaLimit = 26.0f;
+	static constexpr int kBossTeleportMaxTries = 8;
+	static constexpr float kBossTeleportOutDuration = 0.6f;
+	static constexpr float kBossTeleportInDuration = 0.5f;
+	static constexpr float kBossTeleportGlitch = 0.4f;
+	static constexpr float kBossTeleportMarkerRadius = 2.2f;
+	static constexpr float kBossTeleportMarkerHeight = 0.15f;
+	Vector3 bossTeleportDest = { 0.0f, 0.0f, 0.0f };
+	std::unique_ptr<Object3d> bossTeleportMarker;
+	bool bossTeleportMarkerVisible = false;
+	bool TryPickBossTeleportDest(); // 行き先を探してbossTeleportDestに保存する。見つからなければfalse
+	void StopBossTeleport();        // テレポート関連の見た目（ディゾルブ・マーカー・グリッチ）を止める
+
+	// 衝撃波リング
+	static constexpr float kBossP3ShockwaveChance = 0.5f;  // P3の近距離で衝撃波を選ぶ確率（残りは突進）
+	static constexpr float kBossShockwaveWindupDuration = 0.7f;
+	static constexpr float kBossShockwaveStartRadius = 2.0f;
+	static constexpr float kBossShockwaveSpeed = 14.0f;    // 1秒あたりの広がる速さ[m/s]
+	static constexpr float kBossShockwaveMaxRadius = 32.0f;
+	static constexpr float kBossShockwaveHeight = 0.7f;
+	static constexpr float kBossShockwaveHitHalfWidth = 0.4f;
+	static constexpr float kBossShockwaveDamage = 20.0f;
+	static constexpr float kBossShockwaveShakeDuration = 0.3f;
+	static constexpr float kBossShockwaveShakeStrength = 0.02f;
+	std::unique_ptr<Object3d> bossShockwave;
+	bool shockwaveActive = false;
+	bool shockwaveHasHit = false;
+	Vector3 shockwaveCenter = { 0.0f, 0.0f, 0.0f };
+	float shockwaveRadius = 0.0f;
+	void StopBossShockwave(); // 広がっている衝撃波を消す
 
 	// 遠距離グレネードの3連射（kRangedWindup終了後、kRangedBurst中に一定間隔で発射する）
 	int bossGrenadeBurstRemaining = 0;
@@ -391,6 +487,13 @@ private:
 	Portal portalA; // 青
 	Portal portalB; // オレンジ
 	static constexpr float kPortalRadius = 1.0f;
+	// 2つのポータルの間の距離の上限。もう一方が置いてあるとき、これより離れた場所には置けない
+	static constexpr float kPortalMaxPairDistance = 25.0f;
+	// 置けなかったときに、レティクルを一瞬この色にして知らせる
+	float portalRejectTimer = 0.0f;
+	static constexpr float kPortalRejectFlashDuration = 0.25f;
+	static constexpr Vector4 kReticleColor = { 1.0f, 0.0f, 0.0f, 1.0f };
+	static constexpr Vector4 kReticleRejectColor = { 0.45f, 0.45f, 0.45f, 1.0f };
 	static constexpr float kPortalTeleportCooldown = 0.3f;
 	float portalCooldownTimer = 0.0f;
 
