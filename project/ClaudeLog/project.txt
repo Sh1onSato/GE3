@@ -305,3 +305,12 @@
     - ユーザー要望「毎回終了して起動し直すのが面倒なので、ESCからタイトルに行けるようにしたい」→「ゲーム画面から終了もほしい」。
     - 確認画面（以前は「QUIT」だけで、Enterで終了）を、↑↓/W・Sで選んでEnterで決定する2択メニューにした。TITLEは`RequestTransition("TITLE", kReturnTitleParams)`（`SceneTransition.h`に追加、中身は終了用と同じ黒いフェード）、QUITは以前と同じ`RequestFade(kQuitParams, RequestEnd)`。ESCでキャンセル。開くたびにTITLEを初期選択にして、誤って終了しにくくした。
     - `quitConfirmText`を`std::array<BitmapText, kQuitMenuCount> quitMenuTexts`に置き換えた。選択中は白、非選択はTitleSceneと同じ灰色。`GameScene.h/.cpp`と`SceneTransition.h`のみの変更。
+- [2026/11/11] **エンジンを S1Engine（EngineFile 側で作った汎用エンジン）のコピーに置き換え**（ユーザーのビルド・動作確認OK、ブランチ`s1engine-migration`でコミット d5a426b）
+    - ユーザー要望「EngineFile の Engine を参考にエンジンを改良したい」。GE3 は学校提出用で外部フォルダに依存させないため、S1Engine を`project\Engine`へ**コピーして取り込む**方式にした（直接参照案は取りやめ）。EngineFile 側は一切編集していない。
+    - ゲーム側のコードは`project\Game\`へ移動した（git mv）。2d版`SettingsMenu`は、S1 の`ui\SettingsMenu`と名前が衝突するため`Game\ui\PauseTuningMenu`に改名。
+    - vcxproj は Prototype と同じ形（`Engine\Engine.vcxitems`と`Engine.props`を Import）。シェーダーは`Resources\shaders`の1か所に統一し、`Engine\Resources\shaders`は置いていない。
+    - GE3 にだけあった機能はエンジンに足した（既定OFF）：遷移グリッチ（PostProcess の CompositeParams の末尾に float4、ルート定数を16→20個）、ボックスブラー（F6でGaussian/Box切り替え）、Object3d のディゾルブ、`ISceneTransition`、BitmapText::SetScale など、CameraManager::RemoveCamera、MakeLookAtRotation、GetMainDsvHandle。
+    - 画面の演出（グレースケール・セピア・ぼかし・ヴィネット・ブルーム・グリッチ）は`Game\effect\ScreenEffectController`にまとめ、MyGame が持つ。シーンが呼んでいた postProcess の PreDraw/PostDraw/Draw は不要になった（RenderScaler が自動で処理）。
+    - ボスの実体化のノイズ3（頂点シェーダーでの横ズレ）は、移行の直後にはまだ移していなかったが、同じ日に追加で移した（ユーザーのビルド・表示確認OK）。Material の定義を Object3d.hlsli に移し、Object3dCommon のルートシグネチャの b0 を ALL にした。S1 版の VS はスキニングの処理を含むので、横ズレはその後ろに足している。
+    - 旧版と変わった点：ブルームのしきい値は0.95で常時ON（白に近い所が少し光る）。ヴィネットは1枚だけで、被弾中は赤が優先。F6・F9 は Debug ビルドのみで使える。
+    - 作業前に ClaudeLog を`Desktop\GE3_ClaudeLog_backup_20261111`へバックアップした。隣のセッション（Blender モデル担当）と担当を分けて進めた。`Tools\`と`Resources\models\`は隣のセッションの作業物で、このコミットには含めていない。

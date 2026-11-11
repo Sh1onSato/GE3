@@ -450,3 +450,52 @@ glTFはJSONの「構造」を決めた3Dモデル用フォーマットです。`
 - メニューを開くたびに、最初はTITLEが選ばれた状態にします。うっかりEnterを押しても、いきなり終了しないようにするためです。
 - 表示は`std::array<BitmapText, kQuitMenuCount> quitMenuTexts`で、選んでいる方は白、選んでいない方はタイトル画面と同じ灰色にしています。行の間隔は`kQuitMenuLineSpacing`（30px）です。
 - タイトルからSTARTすると`GameScene`が新しく作られるので、開始演出（ボスの実体化）も毎回フル版で見直せます。
+
+## 27. エンジンの置き換え（S1Engine の取り込み）とフォルダ構成
+2026/11/11 に、エンジン部分を S1Engine に置き換えました。S1Engine は、このプロジェクトから枝分かれさせて EngineFile 側で育てた汎用エンジンです。GE3 は学校に提出する作品なので、外のフォルダを参照せず、S1Engine をまるごとコピーして取り込んでいます。
+
+### 27-1. フォルダの役割
+- **`project\Engine\`**：エンジン本体です。どのゲームでも使える機能だけを置きます。
+  - `Engine.vcxitems`：エンジンのソースの一覧です。
+  - `Engine.props`：コンパイルの設定・インクルードの場所・DirectXTex・DXC の DLL のコピーをまとめたものです。
+  - `CG2_00_01.vcxproj`はこの2つを読み込むだけなので、エンジンにファイルを足すときは`Engine.vcxitems`に登録します。
+- **`project\Game\`**：このゲーム専用のコードです。
+  - `main.cpp`、`MyGame`、`SceneFactory`
+  - `scene\`：GameScene・TitleScene・SceneTransition・ArenaLayout
+  - `ui\PauseTuningMenu`：P キーの調整メニュー。旧名 SettingsMenu は、エンジンの UI 版と名前がかぶるため改名しました。
+  - `effect\ScreenEffectController`：画面の演出の担当です。
+- **`project\Resources\shaders\`**：シェーダーはここ1か所だけです。`ShaderCompiler`は実行時のフォルダの`Resources/shaders`を先に探します。
+
+### 27-2. 描画の流れが自動になった
+- 以前はシーンが自分で`postProcess->PreDraw()`→3D描画→`PostDraw()`→`Draw()`と呼んでいました。今は Framework と`RenderScaler`（内部解像度スケール）が、3Dの描画先の用意と画面への書き出しを自動でやります。シーンは 3D とスプライトを描くだけです。
+- スプライトは、`Draw()`を呼んだ時点では描かれません。キューに積まれ、最後に`SpriteCommon::Flush()`でまとめて描かれます。同じ layer の中では、呼んだ順に描かれます。
+- 武器を壁にめり込ませないための深度クリアには、`DirectXCommon::GetMainDsvHandle()`（今 3D を描いている深度）を使います。RenderScaler を使っていると、3D の深度は画面の深度とは別のものになるためです。
+
+### 27-3. 画面の演出は ScreenEffectController を通す
+- エンジンの`PostProcess`は、`PostEffectSettings`という「値の入れ物」を毎フレーム見て描きます（彩度・セピア・ヴィネット・ぼかし・ブルーム・グリッチなど）。
+- `ScreenEffectController`（MyGame が1つ持ち、シーンをまたいで ON/OFF を保つ）は、ゲームの「白黒にする」「被弾した」などの指示をタイマーで管理します。そして毎フレーム、`Apply()`で自分の担当する値だけを`PostEffectSettings`に書き込みます。
+  - 白黒 → saturation（彩度）を下げる
+  - セピア → sepia
+  - 被弾 → 赤いヴィネット
+  - ぼかし → blur と blurType（Gaussian / Box）
+  - 遷移 → glitchIntensity / glitchTime
+- 演出の長さなどの定数（`kWarpGrayscaleFlashDuration`、`kDamageVignetteDuration`など）も、このクラスにあります。
+- Debug ビルドの F6 で調整窓が出ます。ただし、上の担当項目は毎フレーム上書きされるので、F6 で動かしても戻ります。
+
+### 27-4. シーン遷移の差し込み口（ISceneTransition）
+- エンジンの`SceneManager`は、何も設定しなければ黒い内蔵フェードで切り替えます。
+- `ISceneTransition`を継承した演出を`SetTransition()`で渡すと、そちらを使います。このゲームでは`Game\scene\SceneTransition`（タイル＋グリッチ）を MyGame が持って渡しています。
+- シーンから遷移するときは`MyGame::GetInstance()->RequestTransition(名前, パラメータ)`、暗転だけなら`RequestFade(パラメータ, 暗転したときの処理)`を使います。
+
+### 27-5. 取り込みで増えた主なエンジン機能（今はゲームで未使用）
+- glTF（.glb）の読み込み（サブメッシュ・発光 emissive）、スキンアニメーション、GameObject と当たり判定の一括管理、Rigidbody、経路探索（NavGrid）、3D の音、ゲーム内 UI、DebugDraw（確認用の線）、SSAO など。
+- 使い方は、EngineFile 側の codeLog に詳しい説明があります。
+
+### 27-6. 注意
+- ボスの実体化のノイズ3（頂点シェーダーでの横ズレ、25-2）は、まだ移していません。ノイズ1・4と発光は動きます。
+- 旧版のブルームは、しきい値が1.0だったため、8bit の画面ではほぼ効いていませんでした。
+- （追記 2026/11/11）上のノイズ3は、同じ日に移しました。
+  - 物ごとの材質`Material`の定義は`Object3d.hlsli`に移しました。PS と VS の両方で使うためです。
+  - `Object3dCommon`のルートシグネチャの b0 は`ALL`です。
+  - S1 版の`Object3d.VS.hlsl`は、スキニング（ボーンで頂点を動かす処理）をしてから座標を出します。横ズレは、その計算の後ろに足しています。
+  - 新しいボスのモデル（`Resources\models\boss_cube\`）は、高さ方向に 0.15m 間隔で輪切りにしてあるので、横ズレがきれいに効きます。今はしきい値0.95で常にONなので、白に近い部分が少し光ります。
