@@ -2,8 +2,52 @@
 #include "Logger.h"
 #include <algorithm>
 #include <cstring>
+#include <format>
 
 TextureManager* TextureManager::instance = nullptr;
+
+// ===== TextureHandle =====
+
+TextureHandle::TextureHandle(const TextureHandle& other) : index(other.index) {
+	if (IsValid() && TextureManager::instance) {
+		TextureManager::instance->AddRef(index);
+	}
+}
+
+TextureHandle& TextureHandle::operator=(const TextureHandle& other) {
+	if (this != &other) {
+		// 同じ画像のときに先に減らして 0 にならないよう、増やしてから減らす
+		if (other.IsValid() && TextureManager::instance) {
+			TextureManager::instance->AddRef(other.index);
+		}
+		Reset();
+		index = other.index;
+	}
+	return *this;
+}
+
+TextureHandle::TextureHandle(TextureHandle&& other) noexcept : index(other.index) {
+	other.index = kInvalidIndex;
+}
+
+TextureHandle& TextureHandle::operator=(TextureHandle&& other) noexcept {
+	if (this != &other) {
+		Reset();
+		index = other.index;
+		other.index = kInvalidIndex;
+	}
+	return *this;
+}
+
+void TextureHandle::Reset() {
+	// エンジンの終了処理で TextureManager が先に消えていることがある
+	if (IsValid() && TextureManager::instance) {
+		TextureManager::instance->Release(index);
+	}
+	index = kInvalidIndex;
+}
+
+// ===== TextureManager =====
 
 TextureManager* TextureManager::GetInstance() {
 	if (instance == nullptr) {
@@ -21,16 +65,38 @@ void TextureManager::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
 	CreateInternalWhiteTexture();
 }
 
+uint32_t TextureManager::AllocateSlot(const std::string& name) {
+	uint32_t index = 0;
+	if (!freeSlots.empty()) {
+		index = freeSlots.back();
+		freeSlots.pop_back();
+		textureDatas[index] = TextureData{};
+	} else {
+		index = static_cast<uint32_t>(textureDatas.size());
+		textureDatas.emplace_back();
+	}
+	TextureData& textureData = textureDatas[index];
+	textureData.filePath = name;
+	textureData.srvIndex = srvManager->Allocate();
+	textureData.sceneSerial = currentSceneSerial;
+	indexByPath[name] = index;
+	return index;
+}
+
+uint32_t TextureManager::FindIndex(const std::string& filePath) const {
+	auto it = indexByPath.find(filePath);
+	return it != indexByPath.end() ? it->second : kNotFound;
+}
+
 void TextureManager::CreateInternalWhiteTexture() {
 	const std::string name = "white";
 	// 既に存在するかチェック
-	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
-	if (it != textureDatas.end()) return;
+	if (FindIndex(name) != kNotFound) return;
 
 	// 1x1ピクセルの白色データを作成
 	DirectX::ScratchImage image{};
 	HRESULT hr = image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, 1, 1, 1, 1);
-	assert(SUCCEEDED(hr));
+	Logger::CheckHResult(hr, "TextureManager: Initialize2D(white)");
 
 	// 白色を書き込む
 	uint8_t* pixels = image.GetPixels();
@@ -39,86 +105,32 @@ void TextureManager::CreateInternalWhiteTexture() {
 	pixels[2] = 255; // B
 	pixels[3] = 255; // A
 
-	// テクスチャデータを追加
-	textureDatas.resize(textureDatas.size() + 1);
-	TextureData& textureData = textureDatas.back();
-
-	textureData.filePath = name;
+	// テクスチャデータを追加（エンジンのあちこちで使うので解放しない）
+	TextureData& textureData = textureDatas[AllocateSlot(name)];
+	textureData.isPersistent = true;
 	textureData.metadata = image.GetMetadata();
 	textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
 
 	// SRVの作成
-	textureData.srvIndex = srvManager->Allocate();
 	srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, 1);
 
 	// アップロード
 	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(), image, dxCommon);
 
 	// コマンド実行と待機
-	hr = dxCommon->GetCommandList()->Close();
-	assert(SUCCEEDED(hr));
-	ID3D12CommandList* commandLists[] = { dxCommon->GetCommandList() };
-	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
-	dxCommon->WaitForGpu();
-
-	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
-	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
+	ExecuteUploadAndWait();
 }
 
 void TextureManager::CreateInternalDigitFontTexture() {
 	const std::string name = "digitFont";
 	// 既に存在するかチェック
-	auto it = std::find_if(textureDatas.begin(), textureDatas.end(), [&](TextureData& d) { return d.filePath == name; });
-	if (it != textureDatas.end()) return;
+	if (FindIndex(name) != kNotFound) return;
 
-	// 5x7ドットマトリクスのビットパターン（1=点灯）。"0"-"9" "." "-" 空白 に続き、
-	// 勝敗演出（WIN/LOSE）・終了確認（QUIT）表示のためW/I/N/L/O/S/E/Q/U/Tのみ追加、さらにタイトル画面用にA/B/C/D/F/G/H/J/K/M/P/R/V/X/Y/Zと'>'を末尾に追加、全40グリフ
-	constexpr int kGlyphCount = 40;
+	// 5x7ドットマトリクスのビットパターン（1=点灯）。文字とビットパターンの対応表本体は
+	// TextureManager::kBitmapFontGlyphs（TextureManager.h）に一覧化してまとめてある。
+	const int kGlyphCount = kBitmapFontGlyphCount;
 	constexpr int kGlyphWidth = 5;
 	constexpr int kGlyphHeight = 7;
-	static const uint8_t kGlyphs[kGlyphCount][kGlyphHeight] = {
-		{0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110}, // 0
-		{0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110}, // 1
-		{0b01110,0b10001,0b00001,0b00010,0b00100,0b01000,0b11111}, // 2
-		{0b11111,0b00010,0b00100,0b00010,0b00001,0b10001,0b01110}, // 3
-		{0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010}, // 4
-		{0b11111,0b10000,0b11110,0b00001,0b00001,0b10001,0b01110}, // 5
-		{0b00110,0b01000,0b10000,0b11110,0b10001,0b10001,0b01110}, // 6
-		{0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000}, // 7
-		{0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110}, // 8
-		{0b01110,0b10001,0b10001,0b01111,0b00001,0b00010,0b01100}, // 9
-		{0b00000,0b00000,0b00000,0b00000,0b00000,0b01100,0b01100}, // .
-		{0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000}, // -
-		{0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000}, // (空白)
-		{0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001}, // W
-		{0b01110,0b00100,0b00100,0b00100,0b00100,0b00100,0b01110}, // I
-		{0b10001,0b11001,0b10101,0b10101,0b10011,0b10001,0b10001}, // N
-		{0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111}, // L
-		{0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // O
-		{0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110}, // S
-		{0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111}, // E
-		{0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101}, // Q
-		{0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110}, // U
-		{0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100}, // T
-		// --- ここからタイトル画面用の追加分（既存インデックスを変えないよう末尾に追加） ---
-		{0b01110,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001}, // A (23)
-		{0b11110,0b10001,0b10001,0b11110,0b10001,0b10001,0b11110}, // B (24)
-		{0b01110,0b10001,0b10000,0b10000,0b10000,0b10001,0b01110}, // C (25)
-		{0b11110,0b10001,0b10001,0b10001,0b10001,0b10001,0b11110}, // D (26)
-		{0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b10000}, // F (27)
-		{0b01110,0b10001,0b10000,0b10111,0b10001,0b10001,0b01111}, // G (28)
-		{0b10001,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001}, // H (29)
-		{0b00111,0b00010,0b00010,0b00010,0b00010,0b10010,0b01100}, // J (30)
-		{0b10001,0b10010,0b10100,0b11000,0b10100,0b10010,0b10001}, // K (31)
-		{0b10001,0b11011,0b10101,0b10101,0b10001,0b10001,0b10001}, // M (32)
-		{0b11110,0b10001,0b10001,0b11110,0b10000,0b10000,0b10000}, // P (33)
-		{0b11110,0b10001,0b10001,0b11110,0b10100,0b10010,0b10001}, // R (34)
-		{0b10001,0b10001,0b10001,0b10001,0b10001,0b01010,0b00100}, // V (35)
-		{0b10001,0b10001,0b01010,0b00100,0b01010,0b10001,0b10001}, // X (36)
-		{0b10001,0b10001,0b01010,0b00100,0b00100,0b00100,0b00100}, // Y (37)
-		{0b11111,0b00001,0b00010,0b00100,0b01000,0b10000,0b11111}, // Z (38)
-		{0b10000,0b01000,0b00100,0b00010,0b00100,0b01000,0b10000}, // > (39) メニューのカーソル用
-	};
 
 	// 各グリフは7x9セル（5x7の実体＋周囲1pxの透明パディング）に配置。
 	// パディングはサンプラーが線形補間のため、隣接グリフのにじみ（バイリニアブリーディング）を防ぐ目的
@@ -129,7 +141,7 @@ void TextureManager::CreateInternalDigitFontTexture() {
 
 	DirectX::ScratchImage image{};
 	HRESULT hr = image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1);
-	assert(SUCCEEDED(hr));
+	Logger::CheckHResult(hr, "TextureManager: Initialize2D(digit font)");
 
 	uint8_t* pixels = image.GetPixels();
 	std::memset(pixels, 0, static_cast<size_t>(width) * height * 4); // 全体を透明で初期化
@@ -137,7 +149,7 @@ void TextureManager::CreateInternalDigitFontTexture() {
 	for (int g = 0; g < kGlyphCount; ++g) {
 		for (int row = 0; row < kGlyphHeight; ++row) {
 			for (int col = 0; col < kGlyphWidth; ++col) {
-				bool lit = (kGlyphs[g][row] >> (kGlyphWidth - 1 - col)) & 1;
+				bool lit = (kBitmapFontGlyphs[g].rows[row] >> (kGlyphWidth - 1 - col)) & 1;
 				if (!lit) continue;
 				int px = g * kCellWidth + 1 + col; // 1pxパディング
 				int py = 1 + row;
@@ -150,79 +162,118 @@ void TextureManager::CreateInternalDigitFontTexture() {
 		}
 	}
 
-	// テクスチャデータを追加
-	textureDatas.resize(textureDatas.size() + 1);
-	TextureData& textureData = textureDatas.back();
-
-	textureData.filePath = name;
+	// テクスチャデータを追加（BitmapText が使い回すので解放しない）
+	TextureData& textureData = textureDatas[AllocateSlot(name)];
+	textureData.isPersistent = true;
 	textureData.metadata = image.GetMetadata();
 	textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
 
 	// SRVの作成
-	textureData.srvIndex = srvManager->Allocate();
 	srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, 1);
 
 	// アップロード
 	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(), image, dxCommon);
 
 	// コマンド実行と待機
-	hr = dxCommon->GetCommandList()->Close();
-	assert(SUCCEEDED(hr));
-	ID3D12CommandList* commandLists[] = { dxCommon->GetCommandList() };
-	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
-	dxCommon->WaitForGpu();
-
-	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
-	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
+	ExecuteUploadAndWait();
 }
 
 void TextureManager::LoadTexture(const std::string& filePath){
 	// 読み込み済みテクスチャを検索
-	auto it = std::find_if(
-		textureDatas.begin(),
-		textureDatas.end(),
-		[&](TextureData& textureData) {
-			return textureData.filePath == filePath;
-		}
-	);
-	if(it!= textureDatas.end()){
-		// 見つかった場合は何もしない
+	if (uint32_t found = FindIndex(filePath); found != kNotFound) {
+		// 見つかった場合は読み直さない（このシーンで使う印だけ付けて、シーン切り替えで解放されないようにする）
+		textureDatas[found].sceneSerial = currentSceneSerial;
 		return;
 	}
-
-	assert(textureDatas.size() < SrvManager::kMaxSRVCount);
 
 	// テクスチャの読み込み
 	DirectX::ScratchImage image{};
 	std::wstring filePathW = ConvertString(filePath);
+	const bool isDds = filePath.find(".dds") != std::string::npos;
 	HRESULT hr;
-	if (filePath.find(".dds") != std::string::npos) {
+	if (isDds) {
 		hr = DirectX::LoadFromDDSFile(filePathW.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
 	} else {
 		hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
 	}
-	assert(SUCCEEDED(hr));
+	Logger::CheckHResult(hr, "TextureManager: Load texture file(" + filePath + ")");
 
+	RegisterImage(filePath, image, isDds);
+}
+
+void TextureManager::LoadTextureFromMemory(const std::string& name, const uint8_t* data, size_t size) {
+	// 読み込み済みなら読み直さない（LoadTexture と同じ）
+	if (uint32_t found = FindIndex(name); found != kNotFound) {
+		textureDatas[found].sceneSerial = currentSceneSerial;
+		return;
+	}
+
+	DirectX::ScratchImage image{};
+	HRESULT hr = DirectX::LoadFromWICMemory(data, size, DirectX::WIC_FLAGS_FORCE_SRGB, nullptr, image);
+	Logger::CheckHResult(hr, "TextureManager: Load texture from memory(" + name + ")");
+
+	RegisterImage(name, image, false);
+}
+
+namespace {
+	// 数値の画像（LoadDataTexture）の登録名。色の画像として読んだ同じファイルと分ける
+	std::string MakeDataTextureName(const std::string& name) {
+		return name + "#data";
+	}
+}
+
+std::string TextureManager::LoadDataTexture(const std::string& filePath) {
+	const std::string name = MakeDataTextureName(filePath);
+	if (uint32_t found = FindIndex(name); found != kNotFound) {
+		textureDatas[found].sceneSerial = currentSceneSerial;
+		return name;
+	}
+	DirectX::ScratchImage image{};
+	std::wstring filePathW = ConvertString(filePath);
+	const bool isDds = filePath.find(".dds") != std::string::npos;
+	HRESULT hr;
+	if (isDds) {
+		hr = DirectX::LoadFromDDSFile(filePathW.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+	} else {
+		// 画像に「sRGB です」と書かれていても無視して、そのままの数値で読む
+		hr = DirectX::LoadFromWICFile(filePathW.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
+	}
+	Logger::CheckHResult(hr, "TextureManager: Load data texture file(" + filePath + ")");
+	RegisterImage(name, image, isDds, true);
+	return name;
+}
+
+std::string TextureManager::LoadDataTextureFromMemory(const std::string& name, const uint8_t* data, size_t size) {
+	const std::string dataName = MakeDataTextureName(name);
+	if (uint32_t found = FindIndex(dataName); found != kNotFound) {
+		textureDatas[found].sceneSerial = currentSceneSerial;
+		return dataName;
+	}
+	DirectX::ScratchImage image{};
+	HRESULT hr = DirectX::LoadFromWICMemory(data, size, DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
+	Logger::CheckHResult(hr, "TextureManager: Load data texture from memory(" + name + ")");
+	RegisterImage(dataName, image, false, true);
+	return dataName;
+}
+
+void TextureManager::RegisterImage(const std::string& name, DirectX::ScratchImage& image, bool isDds, bool isData) {
 	// ミニマップの作成（DDSの場合は既に含まれていることが多いのでチェック）
 	DirectX::ScratchImage mipChain{};
-	if (DirectX::IsCompressed(image.GetMetadata().format) || filePath.find(".dds") != std::string::npos) {
+	if (DirectX::IsCompressed(image.GetMetadata().format) || isDds) {
 		mipChain = std::move(image);
 	} else {
-		hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::TEX_FILTER_SRGB, 0, mipChain);
-		assert(SUCCEEDED(hr));
+		// 数値の画像は数値のまま平均する（色の画像は明るさの補正を考えて平均する）
+		const DirectX::TEX_FILTER_FLAGS filter = isData ? DirectX::TEX_FILTER_DEFAULT : DirectX::TEX_FILTER_SRGB;
+		HRESULT hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(), filter, 0, mipChain);
+		Logger::CheckHResult(hr, "TextureManager: GenerateMipMaps(" + name + ")");
 	}
 
 	// テクスチャデータを追加
-	textureDatas.resize(textureDatas.size() + 1);
-	// 追加したテクスチャデータの参照を取得
-	TextureData& textureData = textureDatas.back();
-
-	textureData.filePath = filePath;
+	TextureData& textureData = textureDatas[AllocateSlot(name)];
 	textureData.metadata = mipChain.GetMetadata();
 	textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
 
 	// SRVの作成
-	textureData.srvIndex = srvManager->Allocate();
 	if (textureData.metadata.miscFlags & DirectX::TEX_MISC_TEXTURECUBE) {
 		srvManager->CreateSRVForTextureCube(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, static_cast<UINT>(textureData.metadata.mipLevels));
 	} else {
@@ -233,45 +284,158 @@ void TextureManager::LoadTexture(const std::string& filePath){
 	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(),mipChain,dxCommon);
 
 
-	// コマンドリストを閉じて実行、アップロード完了を待機
-	hr = dxCommon->GetCommandList()->Close();
-	assert(SUCCEEDED(hr));
-	ID3D12CommandList* commandListsForUpload[] = { dxCommon->GetCommandList() };
-	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandListsForUpload);
+	// コマンドリストを閉じて実行、アップロード完了を待機。リセットしてメインループで再度使用できるようにする
+	ExecuteUploadAndWait();
+
+}
+
+uint32_t TextureManager::CreateOrUpdateTexture(const std::string& name, uint32_t width, uint32_t height, const uint8_t* rgbaPixels) {
+	assert(width > 0 && height > 0);
+
+	DirectX::ScratchImage image{};
+	HRESULT hr = image.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, width, height, 1, 1);
+	Logger::CheckHResult(hr, "TextureManager: Initialize2D(" + name + ")");
+	std::memcpy(image.GetPixels(), rgbaPixels, static_cast<size_t>(width) * height * 4);
+
+	uint32_t index = FindIndex(name);
+	bool isNew = index == kNotFound;
+	if (isNew) {
+		index = AllocateSlot(name);
+		// 作った本人（Text など）しか使わないので、使う物が 0 になったらすぐ解放する
+		textureDatas[index].isDynamic = true;
+	}
+	TextureData& textureData = textureDatas[index];
+
+	bool sameSize = !isNew && textureData.metadata.width == width && textureData.metadata.height == height;
+	if (sameSize) {
+		// 同じサイズなら既存のリソースに上書きする（UploadTextureDataはCOPY_DEST前提なので戻しておく）
+		D3D12_RESOURCE_BARRIER barrier{};
+		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+		barrier.Transition.pResource = textureData.resource.Get();
+		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_GENERIC_READ;
+		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+		dxCommon->GetCommandList()->ResourceBarrier(1, &barrier);
+	} else {
+		// サイズが変わる場合は作り直し、同じSRV番号にビューを作り直す
+		// （前フレームの描画はPostDraw()でGPU完了を待っているので、古いリソースを解放しても安全）
+		textureData.metadata = image.GetMetadata();
+		textureData.resource = CreateTextureResource(dxCommon->GetDevice(), textureData.metadata);
+		srvManager->CreateSRVForTexture2D(textureData.srvIndex, textureData.resource.Get(), textureData.metadata.format, 1);
+	}
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> intermediateResource = dxCommon->UploadTextureData(textureData.resource.Get(), image, dxCommon);
+	ExecuteUploadAndWait();
+
+	return index;
+}
+
+bool TextureManager::HasTexture(const std::string& filePath) const {
+	return FindIndex(filePath) != kNotFound;
+}
+
+TextureHandle TextureManager::Acquire(const std::string& filePath) {
+	uint32_t index = GetTextureIndexByFilePath(filePath);
+	textureDatas[index].sceneSerial = currentSceneSerial;
+	AddRef(index);
+	return TextureHandle(index);
+}
+
+TextureHandle TextureManager::AcquireByIndex(uint32_t textureIndex) {
+	GetLoadedData(textureIndex);
+	textureDatas[textureIndex].sceneSerial = currentSceneSerial;
+	AddRef(textureIndex);
+	return TextureHandle(textureIndex);
+}
+
+void TextureManager::MarkPersistent(const std::string& filePath) {
+	textureDatas[GetTextureIndexByFilePath(filePath)].isPersistent = true;
+}
+
+void TextureManager::ReleaseUnused() {
+	isReleaseAllRequested = true;
+}
+
+void TextureManager::OnSceneChanged() {
+	++currentSceneSerial;
+	releaseBeforeSerial = currentSceneSerial;
+}
+
+void TextureManager::Update() {
+	for (uint32_t i = 0; i < textureDatas.size(); ++i) {
+		const TextureData& textureData = textureDatas[i];
+		if (!textureData.resource || textureData.refCount > 0 || textureData.isPersistent) {
+			continue;
+		}
+		const bool isFromPreviousScene = releaseBeforeSerial != 0 && textureData.sceneSerial < releaseBeforeSerial;
+		if (textureData.isDynamic || isReleaseAllRequested || isFromPreviousScene) {
+			ReleaseSlot(i);
+		}
+	}
+	isReleaseAllRequested = false;
+	releaseBeforeSerial = 0;
+}
+
+uint32_t TextureManager::GetLoadedCount() const {
+	return static_cast<uint32_t>(std::count_if(textureDatas.begin(), textureDatas.end(),
+		[](const TextureData& textureData) { return textureData.resource != nullptr; }));
+}
+
+void TextureManager::AddRef(uint32_t textureIndex) {
+	assert(textureIndex < textureDatas.size() && textureDatas[textureIndex].resource);
+	++textureDatas[textureIndex].refCount;
+}
+
+void TextureManager::Release(uint32_t textureIndex) {
+	assert(textureIndex < textureDatas.size() && textureDatas[textureIndex].refCount > 0);
+	// 0 になってもここでは解放しない（描画中かもしれないので、次のフレームの始めの Update で解放する）
+	--textureDatas[textureIndex].refCount;
+}
+
+void TextureManager::ReleaseSlot(uint32_t textureIndex) {
+	TextureData& textureData = textureDatas[textureIndex];
+	srvManager->Free(textureData.srvIndex);
+	indexByPath.erase(textureData.filePath);
+	textureData = TextureData{}; // resource も解放される
+	freeSlots.push_back(textureIndex);
+}
+
+void TextureManager::ExecuteUploadAndWait() {
+	HRESULT hr = dxCommon->GetCommandList()->Close();
+	Logger::CheckHResult(hr, "TextureManager: CommandList Close");
+	ID3D12CommandList* commandLists[] = { dxCommon->GetCommandList() };
+	dxCommon->GetCommandQueue()->ExecuteCommandLists(1, commandLists);
 	dxCommon->WaitForGpu();
 
-	// コマンドリストとアロケーターをリセットして、メインループで再度使用できるようにする
-	hr = dxCommon->GetCommandAllocator()->Reset(); assert(SUCCEEDED(hr));
-	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr); assert(SUCCEEDED(hr));
-
+	hr = dxCommon->GetCommandAllocator()->Reset();
+	Logger::CheckHResult(hr, "TextureManager: CommandAllocator Reset");
+	hr = dxCommon->GetCommandList()->Reset(dxCommon->GetCommandAllocator(), nullptr);
+	Logger::CheckHResult(hr, "TextureManager: CommandList Reset");
 }
 
 uint32_t TextureManager::GetTextureIndexByFilePath(const std::string& filePath){
-	auto it = std::find_if(
-		textureDatas.begin(),
-		textureDatas.end(),
-		[&](TextureData& textureData) {
-			return textureData.filePath == filePath;
-		}
-	);
-	if(it!= textureDatas.end()) {
-		uint32_t textureIndex = static_cast<uint32_t>(std::distance(textureDatas.begin(), it));
-		return textureIndex;
+	uint32_t index = FindIndex(filePath);
+	if (index != kNotFound) {
+		return index;
 	}
-	assert(0);
-	return 0;
+	// 見つからない＝LoadTexture忘れ（か、前のシーンで読んだ画像が解放された）。
+	// Releaseで黙って0番を返すと別の画像が出て原因が分かりにくいので止める
+	Logger::Fatal("TextureManager: texture not loaded (" + filePath + "). Call LoadTexture first");
+}
+
+const TextureManager::TextureData& TextureManager::GetLoadedData(uint32_t textureIndex) const {
+	if (textureIndex >= textureDatas.size() || !textureDatas[textureIndex].resource) {
+		Logger::Fatal(std::format("TextureManager: released texture used (index {})", textureIndex));
+	}
+	return textureDatas[textureIndex];
 }
 
 uint32_t TextureManager::GetSrvIndex(uint32_t textureIndex) const {
-	assert(textureIndex < textureDatas.size());
-	return textureDatas[textureIndex].srvIndex;
+	return GetLoadedData(textureIndex).srvIndex;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE TextureManager::GetSrvHandleGPU(uint32_t textureIndex){
-	assert(textureIndex < textureDatas.size());
-
-	TextureData& textureData = textureDatas[textureIndex];
-	return srvManager->GetGPUDescriptorHandle(textureData.srvIndex);
+	return srvManager->GetGPUDescriptorHandle(GetLoadedData(textureIndex).srvIndex);
 }
 
 void TextureManager::Finalize() {
@@ -298,15 +462,10 @@ Microsoft::WRL::ComPtr<ID3D12Resource> TextureManager::CreateTextureResource(ID3
 	// Resourceの生成
 	Microsoft::WRL::ComPtr <ID3D12Resource> resource = nullptr;
 	HRESULT hr = device->CreateCommittedResource(&heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource));
-	assert(SUCCEEDED(hr));
+	Logger::CheckHResult(hr, "TextureManager: CreateCommittedResource(texture)");
 	return resource;
 }
 
 const DirectX::TexMetadata& TextureManager::GetMetadata(uint32_t textureIndex){
-	assert(textureIndex < textureDatas.size());
-	
-	TextureData& textureData = textureDatas[textureIndex];
-	return textureData.metadata;
+	return GetLoadedData(textureIndex).metadata;
 }
-
-// uint32_t TextureManager::kSRVIndexTop = 1; // 削除

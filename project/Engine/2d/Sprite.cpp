@@ -1,23 +1,27 @@
 #include "Sprite.h"
 #include "SpriteCommon.h"
+#include "Camera2D.h"
 #include"Calculation.h"
 #include"externals/imgui/imgui.h"
 #include"externals/imgui/imgui_impl_dx12.h"
 #include"externals/imgui/imgui_impl_win32.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #include"TextureManager.h"
+#include "Screen.h"
+#include "Logger.h"
 
 
 void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath){
     this->spriteCommon = spriteCommon;
     this->dxCommon = spriteCommon->GetDxCommon();
     // 単位行列を書き込んでおく
-    textureIndex = TextureManager::GetInstance()->GetTextureIndexByFilePath(textureFilePath);
+    texture = TextureManager::GetInstance()->Acquire(textureFilePath);
+    const uint32_t textureIndex = texture.GetIndex();
     // Commonに「住所を教えて！」と頼んで、自分の中にメモ（変数）しておく
-    this->textureSrvHandleGPU = spriteCommon->GetTextureHandle(textureIndex);
+    this->textureSrvHandleGPU = spriteCommon->GetTextureHandle(TextureManager::GetInstance()->GetSrvIndex(textureIndex));
     this->name = textureFilePath; // メンバ変数にファイル名を保存しておく
     // 1. 頂点リソースの設定 (4頂点分でOK)
-    vertexResourceSprite = dxCommon->CreatBufferResource(sizeof(VertexData) * 4);
+    vertexResourceSprite = dxCommon->CreatBufferResource(sizeof(SpriteVertex) * 4);
 
     float left = 0.0f - anchorPoint.x;
     float right = 1.0f - anchorPoint.x;
@@ -40,8 +44,9 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     float tex_top = texLeftTop.y / static_cast<float>(metadate.height);
     float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
 
-    // 頂点データの書き込み
-    vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    // 頂点データの書き込み（Mapしたポインタは保持し、Update()でも使い回す）
+    HRESULT hr = vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    Logger::CheckHResult(hr, "Sprite: Map vertexResource");
     VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
     VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
     VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };
@@ -49,8 +54,8 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
 
     // .hのメンバ変数 vertexBufferViewSprite に代入
     vertexBufferViewSprite.BufferLocation = vertexResourceSprite->GetGPUVirtualAddress();
-    vertexBufferViewSprite.SizeInBytes = sizeof(VertexData) * 4;
-    vertexBufferViewSprite.StrideInBytes = sizeof(VertexData);
+    vertexBufferViewSprite.SizeInBytes = sizeof(SpriteVertex) * 4;
+    vertexBufferViewSprite.StrideInBytes = sizeof(SpriteVertex);
 
     
     // インデックスリソースの設定 (6要素)
@@ -59,25 +64,26 @@ void Sprite::Initialize(SpriteCommon* spriteCommon, std::string textureFilePath)
     indexBuffViewSprite.SizeInBytes = sizeof(uint32_t) * 6;
     indexBuffViewSprite.Format = DXGI_FORMAT_R32_UINT;
 
-    indexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&indexDataSprite));
+    hr = indexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&indexDataSprite));
+    Logger::CheckHResult(hr, "Sprite: Map indexResource");
     indexDataSprite[0] = 0; indexDataSprite[1] = 1; indexDataSprite[2] = 2;
     indexDataSprite[3] = 1; indexDataSprite[4] = 3; indexDataSprite[5] = 2;
 
-    // マテリアルリソースの設定
-    materialResourceSprite = dxCommon->CreatBufferResource(sizeof(Material));
-    materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
+    // マテリアルリソースの設定（Sprite.PS.hlslのSpriteMaterial）
+    materialResourceSprite = dxCommon->CreatBufferResource(sizeof(SpriteMaterial));
+    hr = materialResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&materialData));
+    Logger::CheckHResult(hr, "Sprite: Map materialResource");
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    materialData->enableLighting = false;
-    materialData->dissolveHeight = 0.0f;
-    materialData->dissolveEdgeWidth = 0.0f; // Object3d.PS.hlslを共用しているため、実体化演出を明示的に無効化
-    materialData->dissolveTime = 0.0f;
-    materialData->dissolveBlockStrength = 0.0f;
     materialData->uvTransform = Calculation::MakeIdentity4x4();
+    materialData->usePointFilter = 0; // 既定はリニア補間
+    materialData->padding[0] = materialData->padding[1] = materialData->padding[2] = 0.0f;
 
-    // 行列リソースの設定
+    // 行列リソースの設定（Sprite.VS.hlslは先頭のWVPのみ参照する）
     transformationMatrixResourceSprite = dxCommon->CreatBufferResource(sizeof(TransformationMatrix));
-    transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
-    transformetionMatrixDataSprite->World = Calculation::MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    hr = transformationMatrixResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&transformetionMatrixDataSprite));
+    Logger::CheckHResult(hr, "Sprite: Map transformationMatrixResource");
+    worldMatrix = Calculation::MakeAffineMatrix(transform.scale, transform.rotate, transform.translate);
+    transformetionMatrixDataSprite->World = worldMatrix;
     transformetionMatrixDataSprite->WVP = Calculation::MakeIdentity4x4();
 
     AdjustTextureSize();
@@ -101,45 +107,22 @@ void Sprite::Update() {
         bottom = -bottom;
     }
     //
-    const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
+    const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(texture.GetIndex());
     float tex_left = texLeftTop.x / static_cast<float>(metadate.width);
     float tex_right = (texLeftTop.x + texSize.x) / static_cast<float>(metadate.width);
     float tex_top = texLeftTop.y / static_cast<float>(metadate.height);
     float tex_bottom = (texLeftTop.y + texSize.y) / static_cast<float>(metadate.height);
 
-    // 頂点データの書き込み
-    vertexResourceSprite->Map(0, nullptr, reinterpret_cast<void**>(&VertexDataSprite));
+    // 頂点データの書き込み（Initialize()でMap済みのポインタに直接書き込む）
     VertexDataSprite[0].position = { left, bottom, 0.0f, 1.0f }; VertexDataSprite[0].texcoord = { tex_left, tex_bottom };
     VertexDataSprite[1].position = { left, top, 0.0f, 1.0f };   VertexDataSprite[1].texcoord = { tex_left, tex_top };
     VertexDataSprite[2].position = { right, bottom, 0.0f, 1.0f }; VertexDataSprite[2].texcoord = { tex_right, tex_bottom };
     VertexDataSprite[3].position = { right, top, 0.0f, 1.0f };   VertexDataSprite[3].texcoord = { tex_right, tex_top };
 
-    // 外部から設定された size と transform.scale を掛け合わせる
-    Vector3 actualScale = {
-        size.x * transform.scale.x,
-        size.y * transform.scale.y,
-        1.0f
-    };
-    // 外部から設定されたサイズを反映させる
+    // 外部から設定されたサイズ（size * transform.scale）を反映させる
     Vector3 scale = { size.x * transform.scale.x, size.y * transform.scale.y, 1.0f };
-    // スプライトのワールド行列を計算
-    Matrix4x4 worldMatrix = Calculation::MakeAffineMatrix(scale, transform.rotate, transform.translate);
-
-    // ビュー行列（スプライトは通常単位行列）
-    Matrix4x4 viewMatrix = Calculation::MakeIdentity4x4();
-
-    // プロジェクション行列（平行投影 / 正射影行列）
-    Matrix4x4 projectionMatrix = Calculation::MakeOrthographicMatrix(
-        0.0f, 0.0f, screenResolution.x, screenResolution.y, 0.0f, 100.0f);
-
-    // 4. WVP行列の合成
-    Matrix4x4 wvpMatrix = worldMatrix * viewMatrix * projectionMatrix;
-
-    // 5. GPU上のリソース（定数バッファ）に書き込む
-    // Initialize で Map したポインタを保持している場合は、そこに直接代入するだけでOK
-    transformetionMatrixDataSprite->WVP = wvpMatrix;
-    transformetionMatrixDataSprite->World = worldMatrix;
-
+    // スプライトのワールド行列を計算して保持する（WVPは RecordDrawCommand で計算する）
+    worldMatrix = Calculation::MakeAffineMatrix(scale, transform.rotate, transform.translate);
 
     Matrix4x4 uvTransformMatrix = Calculation::MakeScaleMatrix(uvTransformSprite.scale) * 
                                   Calculation::MakeRotationZMatrix(uvTransformSprite.rotate.z) * 
@@ -149,7 +132,7 @@ void Sprite::Update() {
 }
 
 void Sprite::Draw() {
-    Draw(this->textureIndex);
+    Draw(texture.GetIndex());
 }
 
 void Sprite::Draw(uint32_t textureIndex) {
@@ -157,7 +140,36 @@ void Sprite::Draw(uint32_t textureIndex) {
 }
 
 void Sprite::DrawSRV(uint32_t srvIndex) {
+    // ここではコマンドを積まず、SpriteCommonの描画キューに登録するだけ
+    // （実際の描画は SpriteCommon::Flush でレイヤー順に行われる）
+    spriteCommon->Enqueue(this, srvIndex);
+}
+
+void Sprite::UpdateTransformationMatrix() {
+    // ビュー行列（カメラを使うSpriteだけカメラのビュー行列。UIは単位行列＝画面座標のまま）
+    Camera2D* camera = spriteCommon->GetCamera2D();
+    Matrix4x4 viewMatrix = (useCamera && camera != nullptr)
+        ? camera->GetViewMatrix()
+        : Calculation::MakeIdentity4x4();
+
+    // プロジェクション行列（平行投影 / 正射影行列）。ゲーム座標の範囲をビューポート全体に写す
+    Vector2 gameSize = Screen::GetGameSize();
+    Matrix4x4 projectionMatrix = Calculation::MakeOrthographicMatrix(
+        0.0f, 0.0f, gameSize.x, gameSize.y, 0.0f, 100.0f);
+
+    // GPU上のリソース（定数バッファ）に書き込む（Initialize で Map 済みのポインタ）
+    transformetionMatrixDataSprite->WVP = worldMatrix * viewMatrix * projectionMatrix;
+    transformetionMatrixDataSprite->World = worldMatrix;
+}
+
+void Sprite::RecordDrawCommand(uint32_t srvIndex) {
     ID3D12GraphicsCommandList* commandList = dxCommon->GetCommandList();
+
+    // 0. ブレンドモードに対応したPSOへ切り替え（同じなら何もしない）
+    spriteCommon->SetBlendMode(blendMode);
+
+    // WVPは描画直前に計算する（カメラをSpriteのUpdateより後に動かしても1フレーム遅れない）
+    UpdateTransformationMatrix();
 
     // 1. 頂点とインデックスをセット
     commandList->IASetVertexBuffers(0, 1, &vertexBufferViewSprite);
@@ -191,8 +203,21 @@ void Sprite::ImGui(){
             // ImGui::ColorEdit4 は 0.0f ~ 1.0f の float4 を自動で扱えます
             ImGui::ColorEdit4("Color", &materialData->color.x);
 
-            // ついでにライティングの有効/無効も切り替えられるように
-            ImGui::Checkbox("Enable Lighting", reinterpret_cast<bool*>(&materialData->enableLighting));
+            // ブレンドモードの切り替え
+            int blendIndex = static_cast<int>(blendMode);
+            const char* blendNames[kSpriteBlendModeCount] = {};
+            for (size_t i = 0; i < kSpriteBlendModeCount; ++i) {
+                blendNames[i] = GetSpriteBlendModeName(static_cast<SpriteBlendMode>(i));
+            }
+            if (ImGui::Combo("Blend Mode", &blendIndex, blendNames, static_cast<int>(kSpriteBlendModeCount))) {
+                blendMode = static_cast<SpriteBlendMode>(blendIndex);
+            }
+
+            // ポイントフィルタ（ドット絵向け）の切り替え
+            bool usePointFilter = materialData->usePointFilter != 0;
+            if (ImGui::Checkbox("Point Filter", &usePointFilter)) {
+                SetTextureFilter(usePointFilter ? TextureFilter::kPoint : TextureFilter::kLinear);
+            }
             ImGui::EndTabItem();
         }
         // --- UV変換 ---
@@ -208,7 +233,7 @@ void Sprite::ImGui(){
 }
 
 void Sprite::AdjustTextureSize(){
-	const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(textureIndex);
+	const DirectX::TexMetadata& metadate = TextureManager::GetInstance()->GetMetadata(texture.GetIndex());
     texSize.x = static_cast<float>(metadate.width);
 	texSize.y = static_cast<float>(metadate.height);
     // 画像サイズをテクスチャサイズに合わせる

@@ -1,4 +1,6 @@
 #include "Object3dCommon.h"
+#include "Camera.h"
+#include "CameraManager.h"
 #include "ShaderCompiler.h"
 #include "Logger.h"
 #include <cmath>
@@ -11,44 +13,49 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
 	this->dxCommon = dxCommon;
 	this->srvManager = srvManager;
     HRESULT hr = DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&dxcUtils));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "Object3dCommon: DxcCreateInstance(DxcUtils)");
     hr = DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&dxcCompiler));
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "Object3dCommon: DxcCreateInstance(DxcCompiler)");
     hr = dxcUtils->CreateDefaultIncludeHandler(&includeHandler);
-    assert(SUCCEEDED(hr));
+    CheckHResult(hr, "Object3dCommon: CreateDefaultIncludeHandler");
 	// 1. ルートシグネチャの作成
 	CreateRootSignature();
 	// 2. パイプラインの作成
 	CreateGraphicsPipeline();
 
+    // カメラの位置用のリソース（照り返しの計算に使う。PreDraw で書く）
+    cameraResource = dxCommon->CreatBufferResource(sizeof(CameraForGPU));
+    CheckHResult(cameraResource->Map(0, nullptr, reinterpret_cast<void**>(&cameraData)), "Object3dCommon: Map cameraResource");
+    *cameraData = { { 0.0f, 0.0f, 0.0f }, 0.0f };
+
     // DirectionalLight用のリソース
     directionalLightResource = dxCommon->CreatBufferResource(sizeof(DirectionalLight));
-    directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData));
+    CheckHResult(directionalLightResource->Map(0, nullptr, reinterpret_cast<void**>(&directionalLightData)), "Object3dCommon: Map directionalLightResource");
 
     directionalLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     directionalLightData->direction = Calculation::Normalize(Vector3{ -0.5f, -1.0f, 0.3f }); // 斜め上からの太陽光
     directionalLightData->intensity = 1.0f;
 
-    // PointLight用のリソース（{-12,1,0}のカバー上空に配置）
+    // PointLight用のリソース（デフォルトでは無効。呼び出し側(GetPointLightData()経由)で位置・intensityを設定して有効化する想定）
     pointLightResource = dxCommon->CreatBufferResource(sizeof(PointLight));
-    pointLightResource->Map(0, nullptr, reinterpret_cast<void**>(&pointLightData));
-    pointLightData->color = { 1.0f, 0.85f, 0.6f, 1.0f };
-    pointLightData->position = { -12.0f, 3.0f, 0.0f };
-    pointLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(2.0fが元の値)
+    CheckHResult(pointLightResource->Map(0, nullptr, reinterpret_cast<void**>(&pointLightData)), "Object3dCommon: Map pointLightResource");
+    pointLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    pointLightData->position = { 0.0f, 0.0f, 0.0f };
+    pointLightData->intensity = 0.0f; // デフォルトは無効(0)。シーン側で用途に応じて設定する
     pointLightData->radius = 8.0f;
     pointLightData->decay = 1.0f;
 
-    // SpotLight用のリソース（{0,1,-12}のカバーを真上から照らすダウンライト）
+    // SpotLight用のリソース（デフォルトでは無効。呼び出し側(GetSpotLightData()経由)で位置・向き・intensityを設定して有効化する想定）
     spotLightResource = dxCommon->CreatBufferResource(sizeof(SpotLight));
-    spotLightResource->Map(0, nullptr, reinterpret_cast<void**>(&spotLightData));
-    spotLightData->color = { 0.6f, 0.8f, 1.0f, 1.0f };
-    spotLightData->position = { 0.0f, 4.0f, -12.0f };
-    spotLightData->intensity = 0.0f; // TODO: 太陽光の影確認のため一時的に無効化(6.0fが元の値)
+    CheckHResult(spotLightResource->Map(0, nullptr, reinterpret_cast<void**>(&spotLightData)), "Object3dCommon: Map spotLightResource");
+    spotLightData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    spotLightData->position = { 0.0f, 0.0f, 0.0f };
+    spotLightData->intensity = 0.0f; // デフォルトは無効(0)。シーン側で用途に応じて設定する
     spotLightData->direction = Calculation::Normalize(Vector3{ 0.0f, -1.0f, 0.0f });
     spotLightData->distance = 6.0f;
     spotLightData->decay = 2.0f;
-    spotLightData->cosAngle = cosf(3.14159265f / 3.0f);       // 外側角(60度)
-    spotLightData->cosFalloffStart = cosf(3.14159265f / 4.0f); // 内側角(45度、cosAngleより大きい値)
+    spotLightData->cosAngle = cosf(Calculation::kPi / 3.0f);       // 外側角(60度)
+    spotLightData->cosFalloffStart = cosf(Calculation::kPi / 4.0f); // 内側角(45度、cosAngleより大きい値)
 
     // --- シャドウマップ（ディレクショナルライト用、正射影 + PCF） ---
     shadowMapResource = dxCommon->CreateShadowMapResource(kShadowMapSize, kShadowMapSize);
@@ -66,22 +73,39 @@ void Object3dCommon::Initialize(DirectXCommon* dxCommon, SrvManager* srvManager)
 
     // ShadowData用のリソース
     shadowDataResource = dxCommon->CreatBufferResource(sizeof(ShadowData));
-    shadowDataResource->Map(0, nullptr, reinterpret_cast<void**>(&shadowData));
+    CheckHResult(shadowDataResource->Map(0, nullptr, reinterpret_cast<void**>(&shadowData)), "Object3dCommon: Map shadowDataResource");
     shadowData->lightViewProjection = Calculation::MakeIdentity4x4();
-    shadowData->bias = 0.0025f;
+    // 影のずらし（ライトから見た奥行き 0〜1 の単位。奥行きの範囲が約 80 なので 0.0005 ≒ 0.04）。
+    // 大きいと影が物の根元から離れて浮いて見え、小さすぎると面に縞模様（シャドウアクネ）が出る
+    shadowData->bias = 0.0005f;
+    shadowData->orthoExtentWorld = shadowOrthoExtent;
+    shadowData->orthoDepthRangeWorld = shadowFarClip - shadowNearClip;
 
     // シャドウ用ルートシグネチャ・パイプラインの作成
     CreateShadowRootSignature();
     CreateShadowPipeline();
+
+    // --- スキニング未使用のObject3d用デフォルトボーンパレット（単位行列1個） ---
+    // SetBonePalette()を呼ばないObject3dは常にこれをt2にバインドすることで、
+    // ルートSRV未バインドによる「ゴミ変形」を防ぐ（頂点シェーダー側は必ずgSkinMatrices[0]等を参照するため）。
+    defaultBonePaletteResource = dxCommon->CreatBufferResource(sizeof(Matrix4x4));
+    Matrix4x4* defaultBonePaletteData = nullptr;
+    HRESULT hrPalette = defaultBonePaletteResource->Map(0, nullptr, reinterpret_cast<void**>(&defaultBonePaletteData));
+    if (FAILED(hrPalette)) {
+        Log("Object3dCommon: defaultBonePaletteResource Map failed.\n");
+        CheckHResult(hrPalette, "Object3dCommon: Map defaultBonePaletteResource");
+    }
+    *defaultBonePaletteData = Calculation::MakeIdentity4x4();
+    defaultBonePaletteResource->Unmap(0, nullptr);
 }
 
 void Object3dCommon::CreateRootSignature() {
-    D3D12_ROOT_PARAMETER rootParameters[8] = {};
+    D3D12_ROOT_PARAMETER rootParameters[kRootParameterCount] = {};
 
-    // CBV: Material (b0)。VSも実体化演出の横ズレで読むためALL
+    // CBV: Material (b0)
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
-    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     // CBV: TransformationMatrix (b1)
     rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -132,6 +156,41 @@ void Object3dCommon::CreateRootSignature() {
     rootParameters[7].DescriptorTable.pDescriptorRanges = shadowDescriptorRange;
     rootParameters[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    // SRV: スキニング用ボーン行列パレット (t2、StructuredBuffer<float4x4>)
+    // ParticleCommon::CreateRootSignature()のt0直接バインドと同じ「ディスクリプタヒープ経由不要」の方式
+    rootParameters[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[8].Descriptor.ShaderRegister = 2; // t2
+    rootParameters[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    // SRV: インスタンシング用のインスタンスデータ (t3、StructuredBuffer。Object3dInstanced.VS だけが使う)
+    // 既存のインデックスを変えないよう末尾に追加している。通常の Object3d.VS は読まないので未設定のままでよい
+    rootParameters[kRootIndexInstances].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[kRootIndexInstances].Descriptor.ShaderRegister = 3; // t3
+    rootParameters[kRootIndexInstances].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    // ここから材質（法線マップなど）。既存のインデックスを変えないよう末尾に追加している
+    // CBV: モデルの部分ごとの材質 (b6。Model::Draw が部分ごとにセット)
+    rootParameters[kRootIndexSurfaceMaterial].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParameters[kRootIndexSurfaceMaterial].Descriptor.ShaderRegister = 6;
+    rootParameters[kRootIndexSurfaceMaterial].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    // DescriptorTable: 法線マップ・金属/粗さ・発光・影の画像 (t4〜t7。1枚ずつ別の表。画像は SRV ヒープの離れた所にあるため)
+    D3D12_DESCRIPTOR_RANGE materialTextureRanges[kMaterialTextureCount] = {};
+    for (UINT i = 0; i < kMaterialTextureCount; ++i) {
+        materialTextureRanges[i].BaseShaderRegister = 4 + i;
+        materialTextureRanges[i].NumDescriptors = 1;
+        materialTextureRanges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        materialTextureRanges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        D3D12_ROOT_PARAMETER& parameter = rootParameters[kRootIndexMaterialTextures + i];
+        parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameter.DescriptorTable.NumDescriptorRanges = 1;
+        parameter.DescriptorTable.pDescriptorRanges = &materialTextureRanges[i];
+        parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    }
+    // CBV: カメラの位置 (b7。照り返しの計算用。PreDraw でセット)
+    rootParameters[kRootIndexCamera].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParameters[kRootIndexCamera].Descriptor.ShaderRegister = 7;
+    rootParameters[kRootIndexCamera].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature = {};
     descriptionRootSignature.pParameters = rootParameters;
     descriptionRootSignature.NumParameters = _countof(rootParameters);
@@ -167,14 +226,16 @@ void Object3dCommon::CreateRootSignature() {
     Microsoft::WRL::ComPtr<ID3DBlob> errorBlob = nullptr;
     HRESULT hr = D3D12SerializeRootSignature(&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
     if (FAILED(hr)) {
-        Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
-        assert(false);
+        if (errorBlob) {
+            Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
+        }
+        CheckHResult(hr, "Object3dCommon: D3D12SerializeRootSignature(main)");
     }
 
     hr = dxCommon->GetDevice()->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
     if (FAILED(hr)) {
         Log("Object3dCommon: CreateRootSignature (main) failed.\n");
-        assert(false);
+        CheckHResult(hr, "Object3dCommon: CreateRootSignature(main)");
     }
     Log(std::format("Object3dCommon: main root signature created. NumParameters={}\n", descriptionRootSignature.NumParameters));
 }
@@ -193,19 +254,35 @@ void Object3dCommon::CreateGraphicsPipeline() {
         dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), std::cout);
     assert(pixelShaderBlob != nullptr);
 
+    instancedVertexShaderBlob = CompileShader(
+        L"resources/shaders/Object3dInstanced.VS.hlsl",
+        L"vs_6_0",
+        dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), std::cout);
+    assert(instancedVertexShaderBlob != nullptr);
+
+    // 通常の Object3d 用と、インスタンシング用（VS だけ違う）
+    BuildMainPipelines(vertexShaderBlob.Get(), pipelineState, pipelineStateAdditive);
+    BuildMainPipelines(instancedVertexShaderBlob.Get(), pipelineStateInstanced, pipelineStateInstancedAdditive);
+}
+
+void Object3dCommon::BuildMainPipelines(IDxcBlob* vertexShader, Microsoft::WRL::ComPtr<ID3D12PipelineState>& outNormal,
+                                        Microsoft::WRL::ComPtr<ID3D12PipelineState>& outAdditive) {
     // --- 2. PSOの設定 ---
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.pRootSignature = rootSignature.Get();
 
     // コンパイルしたシェーダをセット
-    psoDesc.VS = { vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize() };
+    psoDesc.VS = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
     psoDesc.PS = { pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize() };
 
-    // InputLayout設定（3D頂点用：POSITION, TEXCOORD, NORMAL）
-    D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+    // InputLayout設定（3D頂点用：POSITION, TEXCOORD, NORMAL, BLENDWEIGHT0, BLENDINDICES0）
+    // VertexDataのフィールド順(position,texcoord,normal,boneWeights,boneIndices)と一致させること
+    D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
     inputElementDescs[0] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[1] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[2] = { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[3] = { "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[4] = { "BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     psoDesc.InputLayout.pInputElementDescs = inputElementDescs;
     psoDesc.InputLayout.NumElements = _countof(inputElementDescs);
 
@@ -233,8 +310,8 @@ void Object3dCommon::CreateGraphicsPipeline() {
     psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
     // --- 3. パイプラインステート生成 (有効化) ---
-    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineState));
-    assert(SUCCEEDED(hr));
+    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&outNormal));
+    CheckHResult(hr, "Object3dCommon: CreateGraphicsPipelineState(main)");
 
     // --- 4. 加算合成用パイプラインステート生成（発光表現用） ---
     // ParticleCommonの加算ブレンド設定と同じ式（Src*alpha + Dest*1）を使う
@@ -248,16 +325,25 @@ void Object3dCommon::CreateGraphicsPipeline() {
     // 加算合成は重ね書きが前提のため、深度書き込みは行わない（パーティクルと同じ考え方）
     psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 
-    hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStateAdditive));
-    assert(SUCCEEDED(hr));
+    hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&outAdditive));
+    CheckHResult(hr, "Object3dCommon: CreateGraphicsPipelineState(additive)");
 }
 
 void Object3dCommon::CreateShadowRootSignature() {
-    // b0（WVPのみ）・VSのみの最小ルートシグネチャ
-    D3D12_ROOT_PARAMETER rootParameters[1] = {};
+    // b0（WVP。インスタンシング時はライトのVP）・t2（スキニング用ボーン行列パレット）・t3（インスタンスデータ）・VSのみの最小ルートシグネチャ
+    D3D12_ROOT_PARAMETER rootParameters[3] = {};
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
     rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[1].Descriptor.ShaderRegister = 2; // t2
+    rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+    // インスタンシング用（ShadowInstanced.VS だけが使う。末尾に追加）
+    rootParameters[kShadowRootIndexInstances].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    rootParameters[kShadowRootIndexInstances].Descriptor.ShaderRegister = 3; // t3
+    rootParameters[kShadowRootIndexInstances].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
     D3D12_ROOT_SIGNATURE_DESC descriptionRootSignature = {};
     descriptionRootSignature.pParameters = rootParameters;
@@ -268,14 +354,16 @@ void Object3dCommon::CreateShadowRootSignature() {
     Microsoft::WRL::ComPtr<ID3DBlob> errorBlob = nullptr;
     HRESULT hr = D3D12SerializeRootSignature(&descriptionRootSignature, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
     if (FAILED(hr)) {
-        Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
-        assert(false);
+        if (errorBlob) {
+            Log(reinterpret_cast<char*>(errorBlob->GetBufferPointer()));
+        }
+        CheckHResult(hr, "Object3dCommon: D3D12SerializeRootSignature(shadow)");
     }
 
     hr = dxCommon->GetDevice()->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&rootSignatureShadow));
     if (FAILED(hr)) {
         Log("Object3dCommon: CreateRootSignature (shadow) failed.\n");
-        assert(false);
+        CheckHResult(hr, "Object3dCommon: CreateRootSignature(shadow)");
     }
 }
 
@@ -286,16 +374,29 @@ void Object3dCommon::CreateShadowPipeline() {
         dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), std::cout);
     assert(shadowVertexShaderBlob != nullptr);
 
+    shadowInstancedVertexShaderBlob = CompileShader(
+        L"resources/shaders/ShadowInstanced.VS.hlsl",
+        L"vs_6_0",
+        dxcUtils.Get(), dxcCompiler.Get(), includeHandler.Get(), std::cout);
+    assert(shadowInstancedVertexShaderBlob != nullptr);
+
+    BuildShadowPipeline(shadowVertexShaderBlob.Get(), pipelineStateShadow);
+    BuildShadowPipeline(shadowInstancedVertexShaderBlob.Get(), pipelineStateShadowInstanced);
+}
+
+void Object3dCommon::BuildShadowPipeline(IDxcBlob* vertexShader, Microsoft::WRL::ComPtr<ID3D12PipelineState>& outPipeline) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.pRootSignature = rootSignatureShadow.Get();
-    psoDesc.VS = { shadowVertexShaderBlob->GetBufferPointer(), shadowVertexShaderBlob->GetBufferSize() };
+    psoDesc.VS = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
     // PSは使用しない（深度のみ書き込む）
 
-    // InputLayoutはメインと同じ頂点バッファを使い回すため同一（POSITIONのみ使用）
-    D3D12_INPUT_ELEMENT_DESC inputElementDescs[3] = {};
+    // InputLayoutはメインと同じ頂点バッファを使い回すため同一（POSITIONとスキニング属性のみ使用）
+    D3D12_INPUT_ELEMENT_DESC inputElementDescs[5] = {};
     inputElementDescs[0] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[1] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     inputElementDescs[2] = { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[3] = { "BLENDWEIGHT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    inputElementDescs[4] = { "BLENDINDICES", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
     psoDesc.InputLayout.pInputElementDescs = inputElementDescs;
     psoDesc.InputLayout.NumElements = _countof(inputElementDescs);
 
@@ -316,12 +417,14 @@ void Object3dCommon::CreateShadowPipeline() {
     psoDesc.NumRenderTargets = 0; // カラーバッファには書き込まない
     psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
-    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStateShadow));
-    assert(SUCCEEDED(hr));
+    HRESULT hr = dxCommon->GetDevice()->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&outPipeline));
+    CheckHResult(hr, "Object3dCommon: CreateGraphicsPipelineState(shadow)");
 }
 
 void Object3dCommon::PreDraw(Object3dBlendMode blendMode) {
     auto commandList = dxCommon->GetCommandList();
+    currentBlendMode = blendMode;
+    isShadowPass = false;
 
     // 4. パイプライン設定 ---
     commandList->SetGraphicsRootSignature(rootSignature.Get());
@@ -342,31 +445,45 @@ void Object3dCommon::PreDraw(Object3dBlendMode blendMode) {
     // 定数バッファのセット（ShadowData / ShadowMap）
     commandList->SetGraphicsRootConstantBufferView(6, shadowDataResource->GetGPUVirtualAddress());
     commandList->SetGraphicsRootDescriptorTable(7, srvManager->GetGPUDescriptorHandle(shadowMapSrvIndex));
+
+    // カメラの位置（揺れも含めた、実際に描いているカメラの位置 = ビュー行列の逆の平行移動）
+    if (const Camera* camera = CameraManager::GetInstance()->GetActiveCamera()) {
+        const Matrix4x4 cameraWorld = Calculation::Inverse(camera->GetViewMatrix());
+        cameraData->worldPosition = { cameraWorld.m[3][0], cameraWorld.m[3][1], cameraWorld.m[3][2] };
+    }
+    commandList->SetGraphicsRootConstantBufferView(kRootIndexCamera, cameraResource->GetGPUVirtualAddress());
 }
 
 void Object3dCommon::UpdateLightViewProjection() {
     // ディレクショナルライトの向きから、ライト視点の正射影ビュープロジェクション行列を再計算する
     // （ImGuiでの向き変更にリアルタイム追従させるため）
-    // 外壁を高くした際に一番遠い壁角の深度がニアクリップを割り込まないよう30→40に拡大
-    const float kLightDistance = 40.0f;
-    // 光源が斜めのため、この左右/上下軸はワールドのX・Zが混ざった向きになる。
-    // 部屋の角(x,z=±30付近、アリーナ拡張後)をこの傾いた軸に投影すると約42まで達するため、55まで余裕を持たせる
-    // ※この値を変える場合はObject3d.PS.hlslのkOrthoExtentWorldも同じ値に合わせること
-    const float kOrthoExtent = 55.0f;
-    const float kNearClip = 0.1f;
-    const float kFarClip = 80.0f; // アリーナ拡張に合わせて余裕を持たせる。変更時はkOrthoDepthRangeWorld(HLSL側)も追従させること
-
+    // 正射影範囲(shadowLightDistance/shadowOrthoExtent/shadowNearClip/shadowFarClip)は
+    // シーンのスケール（マップの広さ・高さ）に依存する値。デフォルトは従来のマジックナンバーと同値。
+    // 外部から変更する場合はSetShadowOrthoRange()を呼ぶこと（PS側のkOrthoExtentWorld等は
+    // 定数バッファ経由で自動的に同期されるため、シェーダーの手動修正は不要）。
     Vector3 lightDirection = Calculation::Normalize(directionalLightData->direction);
-    Vector3 lightPosition = Vector3{ 0.0f, 0.0f, 0.0f } - lightDirection * kLightDistance;
+    Vector3 lightPosition = Vector3{ 0.0f, 0.0f, 0.0f } - lightDirection * shadowLightDistance;
     Vector3 up = (std::abs(lightDirection.y) > 0.99f) ? Vector3{ 0.0f, 0.0f, 1.0f } : Vector3{ 0.0f, 1.0f, 0.0f };
 
     Matrix4x4 lightViewMatrix = Calculation::MakeLookAtMatrix(lightPosition, Vector3{ 0.0f, 0.0f, 0.0f }, up);
-    Matrix4x4 lightProjectionMatrix = Calculation::MakeOrthographicMatrix(-kOrthoExtent, kOrthoExtent, kOrthoExtent, -kOrthoExtent, kNearClip, kFarClip);
+    Matrix4x4 lightProjectionMatrix = Calculation::MakeOrthographicMatrix(-shadowOrthoExtent, shadowOrthoExtent, shadowOrthoExtent, -shadowOrthoExtent, shadowNearClip, shadowFarClip);
     shadowData->lightViewProjection = lightViewMatrix * lightProjectionMatrix;
+
+    // PS側のPCSS計算がワールド距離⇔UV距離の換算に使う値を定数バッファ経由で渡す
+    shadowData->orthoExtentWorld = shadowOrthoExtent;
+    shadowData->orthoDepthRangeWorld = shadowFarClip - shadowNearClip;
+}
+
+void Object3dCommon::SetShadowOrthoRange(float lightDistance, float orthoExtent, float nearClip, float farClip) {
+    shadowLightDistance = lightDistance;
+    shadowOrthoExtent = orthoExtent;
+    shadowNearClip = nearClip;
+    shadowFarClip = farClip;
 }
 
 void Object3dCommon::PreDrawShadow() {
     UpdateLightViewProjection();
+    isShadowPass = true;
 
     auto commandList = dxCommon->GetCommandList();
 
@@ -418,4 +535,26 @@ void Object3dCommon::PostDrawShadow() {
     // メインのビューポート・シザーに戻す
     commandList->RSSetViewports(1, &dxCommon->GetViewport());
     commandList->RSSetScissorRects(1, &dxCommon->GetScissorRect());
+    isShadowPass = false;
+}
+
+void Object3dCommon::SetInstancedPipeline() {
+    // ルートシグネチャは通常用・影用それぞれと共通なので、PSO だけ差し替える
+    ID3D12PipelineState* pipeline = nullptr;
+    if (isShadowPass) {
+        pipeline = pipelineStateShadowInstanced.Get();
+    } else {
+        pipeline = currentBlendMode == Object3dBlendMode::kAdditive ? pipelineStateInstancedAdditive.Get() : pipelineStateInstanced.Get();
+    }
+    dxCommon->GetCommandList()->SetPipelineState(pipeline);
+}
+
+void Object3dCommon::RestorePipeline() {
+    ID3D12PipelineState* pipeline = nullptr;
+    if (isShadowPass) {
+        pipeline = pipelineStateShadow.Get();
+    } else {
+        pipeline = currentBlendMode == Object3dBlendMode::kAdditive ? pipelineStateAdditive.Get() : pipelineState.Get();
+    }
+    dxCommon->GetCommandList()->SetPipelineState(pipeline);
 }

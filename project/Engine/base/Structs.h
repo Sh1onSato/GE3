@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <stdint.h>
+#include <cstddef>
 
 // --- 基本構造体 ---
 
@@ -79,23 +80,82 @@ struct VertexData {
 	Vector4 position;
 	Vector2 texcoord;
 	Vector3 normal;
+	// --- スキニング用（フェーズ1で追加。デフォルト値により既存の初期化箇所は無修正で動作する） ---
+	Vector4 boneWeights = { 1.0f, 0.0f, 0.0f, 0.0f };
+	uint32_t boneIndices[4] = { 0, 0, 0, 0 };
 };
 
+// 物ごとの材質（Object3d・ModelInstancer が持つ。Object3d.PS.hlsl の Material と同じ並び）
 struct Material {
 	Vector4 color;
 	int32_t enableLighting;
-	float dissolveHeight;    // 実体化演出：このワールドY座標より上のピクセルを描かない
-	float dissolveEdgeWidth; // 実体化演出：境界の発光幅。0以下で演出無効
-	float dissolveTime;      // 実体化演出：ノイズを動かすための経過時間[秒]
+	// 実体化（ディゾルブ）演出。dissolveEdgeWidth が 0 以下なら演出なし（既定）。Object3d::SetDissolve で設定する。
+	// 以前は padding[3] だった所（大きさ・並びは変えていない）。HLSL の Material（Object3d.PS.hlsl）と同じ並びにすること
+	float dissolveHeight = 0.0f;    // このワールドY座標より上のピクセルを描かない
+	float dissolveEdgeWidth = 0.0f; // 境界の発光幅。0 以下で演出無効
+	float dissolveTime = 0.0f;      // ノイズを動かすための経過時間[秒]
 	Matrix4x4 uvTransform;
-	float dissolveBlockStrength; // 実体化演出：ブロック欠けの強さ（0～1）。全体が見えた時点で0にする
-	float padding[3];
+	// 自分で光る色（rgb に強さを掛けた物。0 なら光らない）。モデルの発光に足される
+	Vector4 emissive = { 0.0f, 0.0f, 0.0f, 0.0f };
+	// 0 以上ならモデルの値の代わりに使う（-1 = モデルのまま）
+	float metallicOverride = -1.0f;
+	float roughnessOverride = -1.0f;
+	// 光の当たり方: -1 = モデルのまま、0 = 今までの簡単な当たり方、1 = 金属・粗さを使う当たり方
+	int32_t lightingModelOverride = -1;
+	// 実体化演出：ブロック欠けの強さ（0～1）。以前は padding2 だった所
+	float dissolveBlockStrength = 0.0f;
+};
+static_assert(sizeof(Material) == 128);
+static_assert(offsetof(Material, uvTransform) == 32);
+static_assert(offsetof(Material, dissolveBlockStrength) == 124);
+
+// モデルの部分ごとの材質（Model が持つ。Object3d.PS.hlsl の SurfaceMaterial と同じ並び）
+struct SurfaceMaterial {
+	// 自分で光る色（rgb に強さを掛けた物）
+	Vector4 emissive = { 0.0f, 0.0f, 0.0f, 0.0f };
+	float metallic = 0.0f;           // 0 = 金属でない、1 = 金属
+	float roughness = 0.5f;          // 0 = つるつる（光が小さく強く映る）、1 = ざらざら
+	float normalStrength = 1.0f;     // 法線マップの強さ
+	float occlusionStrength = 1.0f;  // 影になりやすい所の画像の強さ
+	// どの画像を使うか（SurfaceMaterialFlags を足した物）
+	uint32_t flags = 0;
+	float padding[3] = {};
+};
+static_assert(sizeof(SurfaceMaterial) == 48);
+
+// SurfaceMaterial::flags
+namespace SurfaceMaterialFlags {
+	constexpr uint32_t kNormalMap = 1u << 0;
+	constexpr uint32_t kMetallicRoughnessMap = 1u << 1; // glTF と同じ: 緑 = 粗さ、青 = 金属
+	constexpr uint32_t kEmissiveMap = 1u << 2;
+	constexpr uint32_t kOcclusionMap = 1u << 3;         // 赤を使う
+	constexpr uint32_t kPhysicalLighting = 1u << 4;     // 金属・粗さを使う当たり方にする
+}
+
+// カメラの位置（光の照り返しの計算に使う。Object3d.PS.hlsl の Camera と同じ並び）
+struct CameraForGPU {
+	Vector3 worldPosition;
+	float padding;
 };
 
 struct TransformationMatrix {
 	Matrix4x4 WVP;
 	Matrix4x4 World;
 };
+
+// --- スプライト専用（Sprite.VS.hlsl / Sprite.PS.hlsl と対応） ---
+struct SpriteVertex {
+	Vector4 position;
+	Vector2 texcoord;
+};
+
+struct SpriteMaterial {
+	Vector4 color;
+	Matrix4x4 uvTransform;
+	int32_t usePointFilter; // 0: リニア補間 / 1: ポイント(ニアレスト)
+	float padding[3];
+};
+static_assert(sizeof(SpriteMaterial) == 96);
 
 struct DirectionalLight {
 	Vector4 color;
@@ -129,12 +189,21 @@ static_assert(sizeof(SpotLight) == 64);
 struct ShadowData {
 	Matrix4x4 lightViewProjection;
 	float bias;
-	float padding[3];
+	float orthoExtentWorld;     // 正射影の片側半幅（PS側のPCSS計算でワールド距離⇔UV距離の換算に使用）
+	float orthoDepthRangeWorld; // ファークリップ - ニアクリップ
+	float padding;
 };
 static_assert(sizeof(ShadowData) == 80);
 
 struct MaterialData {
 	std::string textureFilePath;
+	// .mtl の追加の項目（無ければ空・-1）
+	std::string normalMapFilePath;   // map_Bump / bump / norm
+	float normalStrength = 1.0f;     // map_Bump の -bm
+	std::string emissiveMapFilePath; // map_Ke
+	Vector3 emissive = { 0.0f, 0.0f, 0.0f }; // Ke
+	float metallic = -1.0f;          // Pm（あれば金属・粗さを使う当たり方にする）
+	float roughness = -1.0f;         // Pr
 };
 
 struct ModelData {

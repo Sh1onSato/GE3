@@ -1,11 +1,25 @@
 #include "ShaderCompiler.h"
+#include <filesystem>
 using namespace Logger;
 using namespace StringUtility;
 
 namespace ShaderCompiler{
+	std::wstring ResolveShaderPath(const std::wstring& filePath) {
+		if (std::filesystem::exists(filePath)) {
+			return filePath;
+		}
+#ifdef ENGINE_ROOT_DIR
+		const std::wstring enginePath = ConvertString(std::string(ENGINE_ROOT_DIR)) + filePath;
+		if (std::filesystem::exists(enginePath)) {
+			return enginePath;
+		}
+#endif
+		return filePath; // どちらにも無ければそのまま（読めずにエラーになる）
+	}
+
 	Microsoft::WRL::ComPtr<IDxcBlob> CompileShader(
 		// CompileするShaderのファイルへのパス
-		const std::wstring& filePath,
+		const std::wstring& requestedFilePath,
 		// Compileに使用するProfilae
 		const wchar_t* profile,
 		// 初期化で生成したものを3つ
@@ -14,13 +28,14 @@ namespace ShaderCompiler{
 		IDxcIncludeHandler* includeHandler,
 		std::ostream& os)
 	{
+		const std::wstring filePath = ResolveShaderPath(requestedFilePath);
 		// ここからシェーダーをコンパイルする旨をログに出す
 		Log(os, ConvertString(std::format(L"Begin CompileShader,path:{}\n", filePath, profile)));
 		// hlslファイルを読む
 		Microsoft::WRL::ComPtr <IDxcBlobEncoding> shaderSource = nullptr;
 		HRESULT hr = dxcUtils->LoadFile(filePath.c_str(), nullptr, &shaderSource);
 		// 読めなかったら止める
-		assert(SUCCEEDED(hr));
+		CheckHResult(hr, "ShaderCompiler: LoadFile(" + ConvertString(filePath) + ")");
 		// 読み込んだファイルの内容を設定する
 		DxcBuffer shaderSourceBuffer;
 		shaderSourceBuffer.Ptr = shaderSource->GetBufferPointer();
@@ -44,7 +59,7 @@ namespace ShaderCompiler{
 			IID_PPV_ARGS(&shaderResult)
 		);
 		// コンパイルエラーではなくdxcが起動できないなど致命的な状況
-		assert(SUCCEEDED(hr));
+		CheckHResult(hr, "ShaderCompiler: Compile(" + ConvertString(filePath) + ")");
 
 		// 警告・エラーが出たらログに出して止める
 		Microsoft::WRL::ComPtr<IDxcBlobUtf8> shaderError = nullptr; // 変更点: ComPtr を使用
@@ -53,12 +68,12 @@ namespace ShaderCompiler{
 		if (shaderError != nullptr && shaderError->GetStringLength() != 0) {
 			// エラーがあった場合は、エラーメッセージをログに出す
 			Log(shaderError->GetStringPointer());
-			assert(false);
+			Fatal("ShaderCompiler: compile error in " + ConvertString(filePath) + "\n" + shaderError->GetStringPointer());
 		}
 		// コンパイル結果を取得する
 		Microsoft::WRL::ComPtr<IDxcBlob> shaderBlob = nullptr; // 変更点: ComPtr を使用
 		hr = shaderResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&shaderBlob), nullptr);
-		assert(SUCCEEDED(hr));
+		CheckHResult(hr, "ShaderCompiler: GetOutput(DXC_OUT_OBJECT)");
 		// 成功したログを出す
 		Log(os, ConvertString(std::format(L"Compile Success,path:{}, profile:{}\n", filePath, profile)));
 

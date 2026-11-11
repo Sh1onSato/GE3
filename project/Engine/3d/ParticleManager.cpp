@@ -1,13 +1,14 @@
 #include "ParticleManager.h"
 #include "CameraManager.h"
 #include "Framework.h"
+#include "GameTime.h"
 #include <random>
 #include <algorithm>
 #include <cmath>
 
 void ParticleManager::Initialize(ParticleCommon* common, uint32_t textureIndex, ParticleDrawType drawType) {
     this->common = common;
-    this->textureIndex = textureIndex;
+    this->texture = TextureManager::GetInstance()->AcquireByIndex(textureIndex);
     this->drawType = drawType;
 
     // 1. インスタンシング用リソースの作成 (StructuredBuffer)
@@ -97,32 +98,37 @@ void ParticleManager::Update() {
     Matrix4x4 viewProjectionMatrix = camera ? camera->GetViewProjectionMatrix() : Calculation::MakeIdentity4x4();
     Matrix4x4 viewMatrix = camera ? camera->GetViewMatrix() : Calculation::MakeIdentity4x4();
 
+    const float deltaTime = Time::GetDeltaTime();
+    // velocity/gravity/dragは「60FPSでの1フレームあたりの量」で調整されているため、
+    // 実フレーム時間を60FPS換算のフレーム数に直して掛ける（60FPS時は1.0で従来と同じ挙動）
+    const float frameScale = deltaTime * 60.0f;
+
     instanceCount = 0;
     for (auto it = particles.begin(); it != particles.end(); ) {
         // 寿命チェック
-        it->currentTime += 1.0f / 60.0f; // 暫定 60FPS
+        it->currentTime += deltaTime;
         if (it->currentTime >= it->lifeTime) {
             it = particles.erase(it);
             continue;
         }
 
-        // 空気抵抗（毎フレーム速度を減衰させる。値が大きいほど急激に減速する）
+        // 空気抵抗（1フレームあたりdrag割合ずつ速度を減衰させる。値が大きいほど急激に減速する）
         if (it->drag > 0.0f) {
-            float dragFactor = (std::max)(0.0f, 1.0f - it->drag);
+            float dragFactor = std::pow((std::max)(0.0f, 1.0f - it->drag), frameScale);
             it->velocity.x *= dragFactor;
             it->velocity.y *= dragFactor;
             it->velocity.z *= dragFactor;
         }
 
-        // 重力（毎フレーム速度に加算）
-        it->velocity.x += it->gravity.x;
-        it->velocity.y += it->gravity.y;
-        it->velocity.z += it->gravity.z;
+        // 重力（速度に加算）
+        it->velocity.x += it->gravity.x * frameScale;
+        it->velocity.y += it->gravity.y * frameScale;
+        it->velocity.z += it->gravity.z * frameScale;
 
         // 移動
-        it->transform.translate.x += it->velocity.x;
-        it->transform.translate.y += it->velocity.y;
-        it->transform.translate.z += it->velocity.z;
+        it->transform.translate.x += it->velocity.x * frameScale;
+        it->transform.translate.y += it->velocity.y * frameScale;
+        it->transform.translate.z += it->velocity.z * frameScale;
 
         // 経過割合 (0.0〜1.0)
         float t = it->currentTime / it->lifeTime;
@@ -185,7 +191,7 @@ void ParticleManager::Update() {
                     // defaultUpとtargetDirがほぼ同じ（または正反対）の場合
                     if (Calculation::Dot(defaultUp, targetDir) < 0.0f) {
                         // 正反対（速度がY-方向）: Z軸で180度回転
-                        Quaternion q = Calculation::MakeAxisAngleQuaternion({ 0.0f, 0.0f, 1.0f }, 3.14159265f);
+                        Quaternion q = Calculation::MakeAxisAngleQuaternion({ 0.0f, 0.0f, 1.0f }, Calculation::kPi);
                         rotMatrix = Calculation::MakeRotateMatrix(q);
                     } else {
                         // 同じ方向: 単位行列
@@ -285,9 +291,8 @@ void ParticleManager::Draw() {
     // StructuredBuffer (t0) をセット
     commandList->SetGraphicsRootShaderResourceView(0, instancingResource->GetGPUVirtualAddress());
 
-    // テクスチャ (t1) をセット (Framework経由でSrvManagerを取得)
-    SrvManager* srvManager = Framework::GetInstance()->GetSrvManager();
-    D3D12_GPU_DESCRIPTOR_HANDLE textureHandle = srvManager->GetGPUDescriptorHandle(textureIndex);
+    // テクスチャ (t1) をセット（テクスチャ番号と SRV 番号は別物なので TextureManager に聞く）
+    D3D12_GPU_DESCRIPTOR_HANDLE textureHandle = TextureManager::GetInstance()->GetSrvHandleGPU(texture.GetIndex());
     commandList->SetGraphicsRootDescriptorTable(1, textureHandle);
 
     // 描画タイプに応じた頂点数でインスタンシング描画

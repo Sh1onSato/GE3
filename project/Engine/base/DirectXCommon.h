@@ -50,6 +50,10 @@ public:
 
     void WaitForGpu();
 	void CreateSwapChainRTV();
+    // メインの深度バッファとDSVを作成（リサイズ時は作り直す）
+    void CreateDepthBuffer(uint32_t width, uint32_t height);
+    // バックバッファと深度バッファを新しいサイズで作り直す（Framework::Update()の先頭から呼ぶ）
+    void Resize(uint32_t width, uint32_t height);
 
     // --- ゲッター ----
     // --- デバイス・コマンド系 ---
@@ -98,8 +102,26 @@ public:
     ID3D12Resource* GetDepthStencilResource() const { return depthStencilResource.Get(); }
 
     // --- ビューポート・シザー矩形 ---
-const D3D12_VIEWPORT& GetViewport() const { return viewport; }
-const D3D12_RECT& GetScissorRect() const { return scissorRect; }
+    // 今の描画先でゲームの絵を描く範囲（普段はバックバッファ内の Screen のレイアウト。
+    // 内部解像度を下げて 3D を描いている間は、その小さい描画先の全体）
+    const D3D12_VIEWPORT& GetViewport() const { return viewport; }
+    const D3D12_RECT& GetScissorRect() const { return scissorRect; }
+
+    // --- メインの描画先 ---
+    // 3D・スプライトを描く今の描画先を、もう一度設定する（シャドウパスなどで別の描画先にした後に呼ぶ）
+    void BindMainRenderTarget();
+    // 今 3D を描いているメインの深度（DSV）。内部解像度を下げている間や画面の効果を掛けるフレームは
+    // RenderScaler の別の深度バッファを指す（GetDsvHandle はバックバッファ側の深度で別物）。
+    // 武器の手前描画などで「深度だけクリアする」ときはこちらを使う
+    D3D12_CPU_DESCRIPTOR_HANDLE GetMainDsvHandle() const { return mainDsvHandle; }
+    // メインの描画先を差し替えて設定する（RenderScaler が内部解像度を下げるときに使う）
+    void SetMainRenderTarget(D3D12_CPU_DESCRIPTOR_HANDLE rtv, D3D12_CPU_DESCRIPTOR_HANDLE dsv,
+                             const D3D12_VIEWPORT& newViewport, const D3D12_RECT& newScissor);
+    // メインの描画先をバックバッファ（PreDraw と同じ）に戻して設定する
+    void ResetMainRenderTarget();
+    // 現在のバックバッファのサイズ
+    uint32_t GetBackBufferWidth() const { return backBufferWidth; }
+    uint32_t GetBackBufferHeight() const { return backBufferHeight; }
 
     // --- 暫定保持用 ---
     ID3D12RootSignature* GetRootSignature() const { return rootSignature.Get(); }
@@ -113,8 +135,16 @@ const D3D12_RECT& GetScissorRect() const { return scissorRect; }
     [[nodiscard]]
     Microsoft::WRL::ComPtr<ID3D12Resource> UploadTextureData(Microsoft::WRL::ComPtr<ID3D12Resource> texture, const DirectX::ScratchImage& mipImages, DirectXCommon* dxCommon);
 
-    // 最大SRV数(最大テクスチャ数)
-    static const uint32_t kMaxSrvCount;
+    // RTV/DSVヒープのサイズ上限（用途別に分離。SRV用の上限はSrvManager::kMaxSRVCountを参照）
+    static const uint32_t kMaxRtvCount;
+    static const uint32_t kMaxDsvCount;
+
+    // 画面クリアカラー（背景色）。PostProcessのオフスクリーンRTVクリアもこの値を共用する
+    static constexpr float kClearColor[4] = { 0.1f, 0.25f, 0.5f, 1.0f };
+    // レターボックスの余白（黒帯）の色
+    static constexpr float kLetterboxColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    // スワップチェーンのバッファ数
+    static constexpr uint32_t kSwapChainBufferCount = 2;
 private:
     // --- 基盤系 ---
     WinApp* winApp = nullptr;
@@ -129,7 +159,9 @@ private:
 
     // --- 表示・リソース系 ---
     Microsoft::WRL::ComPtr<IDXGISwapChain4> swapChain;
-    Microsoft::WRL::ComPtr<ID3D12Resource> swapChainResources[2];
+    Microsoft::WRL::ComPtr<ID3D12Resource> swapChainResources[kSwapChainBufferCount];
+    uint32_t backBufferWidth = 0;
+    uint32_t backBufferHeight = 0;
     Microsoft::WRL::ComPtr<ID3D12Resource> depthStencilResource;
 
     // --- ディスクリプタヒープ ---
@@ -148,6 +180,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
     D3D12_VIEWPORT viewport{};
     D3D12_RECT scissorRect{};
+    // 今のメインの描画先（BindMainRenderTarget で設定する物）
+    D3D12_CPU_DESCRIPTOR_HANDLE mainRtvHandle{};
+    D3D12_CPU_DESCRIPTOR_HANDLE mainDsvHandle{};
 
     D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
     uint32_t rtvDescriptorSize;

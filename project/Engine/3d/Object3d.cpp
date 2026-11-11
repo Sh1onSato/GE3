@@ -22,12 +22,10 @@ void Object3d::Initialize(Object3dCommon* common) {
     wvpData->World = Calculation::MakeIdentity4x4();
     wvpData->WVP = Calculation::MakeIdentity4x4();
 
+    // 新しく足した項目（発光・金属/粗さの上書き）も既定値にする（GPU のメモリはそのままだと中身が決まっていない）
+    *materialData = Material{};
     materialData->color = { 1.0f, 1.0f, 1.0f, 1.0f };
     materialData->enableLighting = 1;
-    materialData->dissolveHeight = 0.0f;
-    materialData->dissolveEdgeWidth = 0.0f; // 実体化演出は無効
-    materialData->dissolveTime = 0.0f;
-    materialData->dissolveBlockStrength = 0.0f;
     materialData->uvTransform = Calculation::MakeIdentity4x4();
 
     // デフォルトのトランスフォーム
@@ -80,6 +78,11 @@ void Object3d::Draw() {
     // WVPバッファをセット (b1)
     commandList->SetGraphicsRootConstantBufferView(1, wvpResource->GetGPUVirtualAddress());
 
+    // スキニング用ボーン行列パレットをセット (t2、ルートSRV)
+    // 未設定ならObject3dCommon側のデフォルト単位行列パレットにフォールバックする
+    D3D12_GPU_VIRTUAL_ADDRESS paletteAddress = bonePaletteResource ? bonePaletteResource->GetGPUVirtualAddress() : common->GetDefaultBonePaletteGPUAddress();
+    commandList->SetGraphicsRootShaderResourceView(8, paletteAddress);
+
     // モデル自身の描画処理
     model->Draw(commandList);
 }
@@ -92,8 +95,13 @@ void Object3d::DrawShadow(const Matrix4x4& lightViewProjection) {
     // ライト視点のWVP行列を計算して転送
     *shadowWvpData = worldMatrix * lightViewProjection;
 
-    // WVPバッファをセット (b0、シャドウ用ルートシグネチャはこれのみ)
+    // WVPバッファをセット (b0、シャドウ用ルートシグネチャの構成は[0]=b0, [1]=t2)
     commandList->SetGraphicsRootConstantBufferView(0, shadowWvpResource->GetGPUVirtualAddress());
+
+    // スキニング用ボーン行列パレットをセット (t2、ルートSRV、index1)
+    // ここを忘れると影だけバインドポーズのまま焼き付くので注意
+    D3D12_GPU_VIRTUAL_ADDRESS shadowPaletteAddress = bonePaletteResource ? bonePaletteResource->GetGPUVirtualAddress() : common->GetDefaultBonePaletteGPUAddress();
+    commandList->SetGraphicsRootShaderResourceView(1, shadowPaletteAddress);
 
     // 深度のみの描画（Model::Drawはテクスチャ用のディスクリプタテーブルをb2にセットするため、
     // シャドウ用ルートシグネチャ(b0のみ)では使えない。頂点バッファのバインドとDrawInstancedのみ直接発行する）

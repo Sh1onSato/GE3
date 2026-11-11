@@ -1,40 +1,26 @@
+// PostProcess のぼかし（ボックス型。横か縦の一方向）。横 → 縦の2回で、四角い範囲をぼかしたのと同じになる
+// GaussianBlur.PS.hlsl と同じ cbuffer・タップ数・ルートシグネチャにしてあり、PostProcess は PSO だけ切り替えて使う。
+// ガウシアン（中心ほど重みが大きい）と違い、全タップを均等な重みで平均するので、輪郭がはっきり残ったままざらっとぼける
 struct VertexShaderOutput {
     float4 position : SV_POSITION;
     float2 texcoord : TEXCOORD0;
 };
 
 Texture2D<float4> gTexture : register(t0);
-SamplerState gSampler : register(s0);
+SamplerState gLinearSampler : register(s0);
 
-// texelSize: 1テクセル分のUVオフセット, direction: 0.0=水平/1.0=垂直, blurStrength: ボケ幅の倍率
-// GaussianBlur.PS.hlslと同じCBuffer構成・タップ数にしてあり、PostProcess側は同じ描画関数から
-// PSOだけ切り替えて呼び出せる（ルートシグネチャ共用）
-cbuffer BlurParam : register(b0) {
-    float2 gTexelSize;
-    float gDirection;
-    float gBlurStrength;
+cbuffer BlurParams : register(b0) {
+    float2 gStep; // 1 回にずらす量（UV）。横なら (半径 / 幅, 0)、縦なら (0, 半径 / 高さ)
 };
 
-struct PixelShaderOutput {
-    float4 color : SV_TARGET0;
-};
+static const int kTapCount = 9; // 中心 + 左右4つずつ
 
-// ボックスフィルター：ガウシアン（中心ほど重みが大きい）と違い、全タップを均等重みで平均する
-static const int kTapCount = 9; // 中心 + 左右対称4タップずつ
-
-PixelShaderOutput main(VertexShaderOutput input) {
-    PixelShaderOutput output;
-
-    float2 offsetDir = (gDirection < 0.5f) ? float2(gTexelSize.x, 0.0f) : float2(0.0f, gTexelSize.y);
-    offsetDir *= gBlurStrength;
-
-    float3 result = gTexture.Sample(gSampler, input.texcoord).rgb;
+float4 main(VertexShaderOutput input) : SV_TARGET {
+    float3 result = gTexture.Sample(gLinearSampler, input.texcoord).rgb;
     for (int i = 1; i <= 4; ++i) {
-        float2 offset = offsetDir * float(i);
-        result += gTexture.Sample(gSampler, input.texcoord + offset).rgb;
-        result += gTexture.Sample(gSampler, input.texcoord - offset).rgb;
+        float2 offset = gStep * float(i);
+        result += gTexture.Sample(gLinearSampler, input.texcoord + offset).rgb;
+        result += gTexture.Sample(gLinearSampler, input.texcoord - offset).rgb;
     }
-
-    output.color = float4(result / float(kTapCount), 1.0f);
-    return output;
+    return float4(result / float(kTapCount), 1.0f);
 }

@@ -4,14 +4,15 @@
 #include <assert.h>
 #include <stdint.h>
 #include <iostream>
+#include <numbers>
 
 class Calculation {
 public:
 	// インスタンス化を禁止
 	Calculation() = delete;
 
-	static const int kColumnWidth = 1280;
-	static const int kRowHeight = 720;
+	// 円周率（各所で桁数の違う値がバラバラに直書きされていたのをここに集約）
+	static constexpr float kPi = std::numbers::pi_v<float>;
 
 	// ベクトル演算
 	static Vector3 Add(const Vector3& a, const Vector3& b) { return a + b; }
@@ -49,11 +50,16 @@ public:
 	// eyeからtargetを見るビュー行列を作成（行ベクトル規約。Inverse(MakeAffineMatrix(...))と等価）
 	static Matrix4x4 MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up);
 	// eyeからtargetを向くカメラのrotate（x=ピッチ, y=ヨー, z=0）を返す。
-	// GameScene（マウス視点・射撃方向）の規約に合わせ、forward=(cosX*sinY, -sinX, cosX*cosY)となる角度を求める
+	// forward=(cosX*sinY, -sinX, cosX*cosY)となる角度を求める（rotate.xは正で下を向く規約）
 	static Vector3 MakeLookAtRotation(const Vector3& eye, const Vector3& target);
 
 	// 当たり判定
 	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);
+	// 球 vs AABB（最近接点法）。outPushDirにはAABB内の最近接点から球の中心へ向かう正規化方向（めり込み解消・スライド移動に使う押し出し方向）を返す
+	static bool TestSphereAABB(const Sphere& sphere, const AABB& aabb, Vector3* outPushDir = nullptr);
+	// Transformからaxis-aligned AABBを作る（translateを中心、scaleを各軸の半辺長とみなす。箱型のObject3dのTransformをそのまま渡せる）
+	// ※クラス内に同名の関数Transform()が既にあるため、型のTransformと区別するためstructを明示している
+	static AABB MakeAABBFromTransform(const struct Transform& transform);
 
 	// クォータニオン演算
 	static Quaternion Multiply(const Quaternion& q, const Quaternion& r);
@@ -67,6 +73,13 @@ public:
 	static Quaternion DirectionToDirection(const Vector3& from, const Vector3& to);
 	static Matrix4x4 MakeRotateMatrix(const Quaternion& q);
 	static Quaternion Slerp(const Quaternion& q0, const Quaternion& q1, float t);
+	// オイラー角（transform.rotate。X→Y→Z の順に回す、MakeAffineMatrix と同じ）とクォータニオンの変換
+	static Quaternion MakeQuaternionFromEuler(const Vector3& euler);
+	static Vector3 MakeEulerFromQuaternion(const Quaternion& q);
+	// 回転行列（MakeRotateMatrix と同じ並び。各行がローカル軸のワールドの向き）からクォータニオン
+	static Quaternion MakeQuaternionFromMatrix(const Matrix4x4& m);
+	// クォータニオンで v を回す
+	static Vector3 RotateVector(const Vector3& v, const Quaternion& q);
 
 	// デバッグ用描画（実際の実装は描画クラスで行うべきだが、現状維持）
 	static void DrawSphere(const Sphere& sphere, const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix, uint32_t color);

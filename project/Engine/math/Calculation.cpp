@@ -1,7 +1,7 @@
 #include "Calculation.h"
-#include <algorithm>
 #include <cmath>
-#include <numbers> 
+#include <numbers>
+#include <algorithm>
 
 // --- Matrix4x4 演算子オーバーロード ---
 
@@ -313,6 +313,14 @@ Matrix4x4 Calculation::MakeViewportMatrix(float left, float top, float width, fl
 	return result;
 }
 
+Vector3 Calculation::MakeLookAtRotation(const Vector3& eye, const Vector3& target) {
+	Vector3 direction = Normalize(target - eye);
+	// forward=(cosX*sinY, -sinX, cosX*cosY) の逆算。rotate.xは正で下を向く規約
+	float yaw = std::atan2(direction.x, direction.z);
+	float pitch = -std::asin((std::clamp)(direction.y, -1.0f, 1.0f));
+	return { pitch, yaw, 0.0f };
+}
+
 Matrix4x4 Calculation::MakeLookAtMatrix(const Vector3& eye, const Vector3& target, const Vector3& up) {
 	Vector3 forward = Normalize(target - eye);
 	Vector3 right = Normalize(Cross(up, forward));
@@ -327,14 +335,6 @@ Matrix4x4 Calculation::MakeLookAtMatrix(const Vector3& eye, const Vector3& targe
 	result.m[3][2] = -Dot(forward, eye);
 	result.m[3][3] = 1.0f;
 	return result;
-}
-
-Vector3 Calculation::MakeLookAtRotation(const Vector3& eye, const Vector3& target) {
-	Vector3 direction = Normalize(target - eye);
-	// forward=(cosX*sinY, -sinX, cosX*cosY) の逆算。rotate.xは正で下を向く規約
-	float yaw = std::atan2(direction.x, direction.z);
-	float pitch = -std::asin((std::clamp)(direction.y, -1.0f, 1.0f));
-	return { pitch, yaw, 0.0f };
 }
 
 bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit) {
@@ -405,6 +405,40 @@ bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outH
 	return true;
 }
 
+bool Calculation::TestSphereAABB(const Sphere& sphere, const AABB& aabb, Vector3* outPushDir) {
+	// AABB内で球の中心に最も近い点（各軸ごとにAABBの範囲内へクランプするだけで求まる）
+	float closestX = (std::max)(aabb.min.x, (std::min)(sphere.center.x, aabb.max.x));
+	float closestY = (std::max)(aabb.min.y, (std::min)(sphere.center.y, aabb.max.y));
+	float closestZ = (std::max)(aabb.min.z, (std::min)(sphere.center.z, aabb.max.z));
+
+	float dx = sphere.center.x - closestX;
+	float dy = sphere.center.y - closestY;
+	float dz = sphere.center.z - closestZ;
+	float distanceSq = dx * dx + dy * dy + dz * dz;
+
+	if (distanceSq > sphere.radius * sphere.radius) {
+		return false;
+	}
+
+	if (outPushDir) {
+		if (distanceSq > 0.0001f) {
+			float dist = std::sqrt(distanceSq);
+			*outPushDir = { dx / dist, dy / dist, dz / dist };
+		} else {
+			// 球の中心がAABBの面/辺/角の真上にある特異点。呼び出し側でゼロ扱いにして個別に対処すること
+			*outPushDir = { 0.0f, 0.0f, 0.0f };
+		}
+	}
+	return true;
+}
+
+AABB Calculation::MakeAABBFromTransform(const struct Transform& transform) {
+	AABB aabb;
+	aabb.min = { transform.translate.x - transform.scale.x, transform.translate.y - transform.scale.y, transform.translate.z - transform.scale.z };
+	aabb.max = { transform.translate.x + transform.scale.x, transform.translate.y + transform.scale.y, transform.translate.z + transform.scale.z };
+	return aabb;
+}
+
 Quaternion Calculation::Multiply(const Quaternion& q, const Quaternion& r) {
 	return {
 		q.w * r.x + q.x * r.w + q.y * r.z - q.z * r.y,
@@ -461,7 +495,7 @@ Quaternion Calculation::DirectionToDirection(const Vector3& from, const Vector3&
 		if (Length(axis) < 1e-6f) {
 			axis = Cross({ 0.0f, 1.0f, 0.0f }, f);
 		}
-		return MakeAxisAngleQuaternion(Normalize(axis), 3.14159265358979323846f);
+		return MakeAxisAngleQuaternion(Normalize(axis), kPi);
 	}
 
 	Vector3 axis = Cross(f, t);
@@ -521,4 +555,68 @@ void Calculation::DrawSphere(const Sphere& sphere, const Matrix4x4& viewProjecti
 
 void Calculation::DrawGrid(const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMatrix) {
     // 描画の実装は現状維持
+}
+
+Quaternion Calculation::MakeQuaternionFromMatrix(const Matrix4x4& m) {
+	// MakeRotateMatrix の逆。行列は「列ベクトルの回転行列」を転置した並びなので、添字を入れ替えて読む
+	Quaternion q;
+	const float trace = m.m[0][0] + m.m[1][1] + m.m[2][2];
+	if (trace > 0.0f) {
+		const float s = std::sqrt(trace + 1.0f) * 2.0f; // 4w
+		q.w = 0.25f * s;
+		q.x = (m.m[1][2] - m.m[2][1]) / s;
+		q.y = (m.m[2][0] - m.m[0][2]) / s;
+		q.z = (m.m[0][1] - m.m[1][0]) / s;
+	} else if (m.m[0][0] > m.m[1][1] && m.m[0][0] > m.m[2][2]) {
+		const float s = std::sqrt(1.0f + m.m[0][0] - m.m[1][1] - m.m[2][2]) * 2.0f; // 4x
+		q.w = (m.m[1][2] - m.m[2][1]) / s;
+		q.x = 0.25f * s;
+		q.y = (m.m[1][0] + m.m[0][1]) / s;
+		q.z = (m.m[2][0] + m.m[0][2]) / s;
+	} else if (m.m[1][1] > m.m[2][2]) {
+		const float s = std::sqrt(1.0f + m.m[1][1] - m.m[0][0] - m.m[2][2]) * 2.0f; // 4y
+		q.w = (m.m[2][0] - m.m[0][2]) / s;
+		q.x = (m.m[1][0] + m.m[0][1]) / s;
+		q.y = 0.25f * s;
+		q.z = (m.m[2][1] + m.m[1][2]) / s;
+	} else {
+		const float s = std::sqrt(1.0f + m.m[2][2] - m.m[0][0] - m.m[1][1]) * 2.0f; // 4z
+		q.w = (m.m[0][1] - m.m[1][0]) / s;
+		q.x = (m.m[2][0] + m.m[0][2]) / s;
+		q.y = (m.m[2][1] + m.m[1][2]) / s;
+		q.z = 0.25f * s;
+	}
+	return Normalize(q);
+}
+
+Quaternion Calculation::MakeQuaternionFromEuler(const Vector3& euler) {
+	// MakeAffineMatrix と同じ順番（X → Y → Z）で回した行列から作る
+	return MakeQuaternionFromMatrix(MakeRotationXMatrix(euler.x) * MakeRotationYMatrix(euler.y) * MakeRotationZMatrix(euler.z));
+}
+
+Vector3 Calculation::MakeEulerFromQuaternion(const Quaternion& q) {
+	// 行列 Rx(a) * Ry(b) * Rz(c) の成分: m02 = -sin b、m12 / m22 = tan a、m01 / m00 = tan c
+	const Matrix4x4 m = MakeRotateMatrix(q);
+	const float sinY = std::clamp(-m.m[0][2], -1.0f, 1.0f);
+	Vector3 euler;
+	euler.y = std::asin(sinY);
+	if (std::abs(sinY) < 0.9999f) {
+		euler.x = std::atan2(m.m[1][2], m.m[2][2]);
+		euler.z = std::atan2(m.m[0][1], m.m[0][0]);
+	} else {
+		// 真上・真下を向いて X と Z の回転が区別できないときは、X を 0 にして Z にまとめる
+		euler.x = 0.0f;
+		euler.z = std::atan2(-m.m[1][0], m.m[1][1]);
+	}
+	return euler;
+}
+
+Vector3 Calculation::RotateVector(const Vector3& v, const Quaternion& q) {
+	// 行ベクトル × 回転行列（MakeRotateMatrix と同じ向きに回る）
+	const Matrix4x4 m = MakeRotateMatrix(q);
+	return {
+		v.x * m.m[0][0] + v.y * m.m[1][0] + v.z * m.m[2][0],
+		v.x * m.m[0][1] + v.y * m.m[1][1] + v.z * m.m[2][1],
+		v.x * m.m[0][2] + v.y * m.m[1][2] + v.z * m.m[2][2],
+	};
 }

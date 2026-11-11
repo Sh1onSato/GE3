@@ -4,6 +4,7 @@
 #include "Object3dCommon.h"
 #include "Structs.h"
 #include "Camera.h"
+#include <memory>
 #include <wrl.h>
 
 class Object3d {
@@ -16,7 +17,13 @@ public:
     void ImGui(); // 追加
 
     // Setter
-    void SetModel(Model* model) { this->model = model; }
+    // ModelManager のモデル（持っている間は解放されない）
+    void SetModel(std::shared_ptr<Model> model) { modelHolder = std::move(model); this->model = modelHolder.get(); }
+    // 自分で作って持っているモデル（借りるだけ。この Object3d より先に消さないこと）
+    void SetModel(Model* model) { modelHolder.reset(); this->model = model; }
+    // スキニング用ボーン行列パレットのセット（非所有ポインタ。SetModel()と同じ方針）
+    // 未設定の場合はObject3dCommonのデフォルト単位行列パレットが使われる
+    void SetBonePalette(ID3D12Resource* paletteResource) { this->bonePaletteResource = paletteResource; }
     void SetScale(const Vector3& scale) { transform.scale = scale; }
     void SetRotate(const Vector3& rotate);
     void SetRotateQuaternion(const Quaternion& rotate) { quaternionRotation = rotate; }
@@ -25,21 +32,51 @@ public:
     void SetColor(const Vector4& color) { materialData->color = color; }
     const Vector4& GetColor() const { return materialData->color; }
     void SetEnableLighting(bool enable) { materialData->enableLighting = enable ? 1 : 0; }
-    // 実体化演出：ワールドY座標heightより上を描かず、境界をedgeWidthの幅で発光させる（edgeWidth<=0で無効）
-    // timeはノイズを動かすための経過時間[秒]、blockStrengthはブロック欠けの強さ（0～1）
+
+    // --- この物だけの材質（モデルの材質より優先。同じモデルを使う他の物には効かない） ---
+    // 自分で光る（強さ 1 を超えると画面の効果のブルームで光って見える。被弾で一瞬光らせる・光る弾など）。0 で消す
+    void SetEmissive(const Vector3& color, float intensity = 1.0f) {
+        materialData->emissive = { color.x * intensity, color.y * intensity, color.z * intensity, 0.0f };
+    }
+    // 金属らしさ（0〜1）・粗さ（0 = つるつる 〜 1 = ざらざら）。呼ぶと金属・粗さを使う当たり方になる。-1 でモデルの値に戻す
+    void SetMetallic(float metallic) { materialData->metallicOverride = metallic; UsePhysicalLightingIfOverridden(); }
+    void SetRoughness(float roughness) { materialData->roughnessOverride = roughness; UsePhysicalLightingIfOverridden(); }
+    // 光の当たり方を決める（true = 金属・粗さを使う、false = 今までの簡単な当たり方）。ClearLightingModel でモデルの設定に戻す
+    void SetPhysicalLighting(bool enable) { materialData->lightingModelOverride = enable ? 1 : 0; }
+    void ClearLightingModel() { materialData->lightingModelOverride = -1; }
+
+    // 実体化（ディゾルブ）演出。height より上のワールドYのピクセルを描かず、境界を edgeWidth の幅で光らせる。
+    // edgeWidth が 0 以下なら演出なし（既定）。ClearDissolve で止める。
+    // time はノイズを動かすための経過時間[秒]、blockStrength はブロック欠けの強さ（0〜1。全体が見えた時点で 0 にする）
     void SetDissolve(float height, float edgeWidth, float time, float blockStrength = 1.0f) {
         materialData->dissolveHeight = height;
         materialData->dissolveEdgeWidth = edgeWidth;
         materialData->dissolveTime = time;
         materialData->dissolveBlockStrength = blockStrength;
     }
+    void ClearDissolve() { materialData->dissolveEdgeWidth = 0.0f; materialData->dissolveBlockStrength = 0.0f; }
 
     // Getter
     const Transform& GetTransform() const { return transform; }
+    // Update で計算したワールド行列
+    const Matrix4x4& GetWorldMatrix() const { return worldMatrix; }
 
 private:
+    // 金属・粗さを自分で決めたなら、その当たり方にする（決めていなければモデルの設定のまま）
+    void UsePhysicalLightingIfOverridden() {
+        const bool isOverridden = materialData->metallicOverride >= 0.0f || materialData->roughnessOverride >= 0.0f;
+        if (isOverridden && materialData->lightingModelOverride < 0) {
+            materialData->lightingModelOverride = 1;
+        }
+    }
+
     Object3dCommon* common = nullptr;
+    // 描画に使うモデル
     Model* model = nullptr;
+    // ModelManager のモデルを渡されたときだけ持つ（解放されないように）
+    std::shared_ptr<Model> modelHolder;
+    // スキニング用ボーン行列パレット（非所有）。nullptrならcommonのデフォルト単位行列パレットを使う
+    ID3D12Resource* bonePaletteResource = nullptr;
 
     // 行列計算用のリソース
     Microsoft::WRL::ComPtr<ID3D12Resource> wvpResource;

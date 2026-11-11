@@ -1,25 +1,62 @@
 #include"object3d.hlsli"
 
-// 実体化の境界の発光色（1超えでブルームに乗せる。FIGHT文字・タイル遷移と揃えたシアン）
+// 物ごとの材質（C++ の Material と同じ並び）
+struct Material
+{
+    float4 color;
+    int enableLighting;
+    float dissolveHeight;        // 実体化演出：このワールドY座標より上のピクセルを描かない
+    float dissolveEdgeWidth;     // 実体化演出：境界の発光幅。0以下で演出無効
+    float dissolveTime;          // 実体化演出：ノイズを動かすための経過時間[秒]
+    float4x4 uvTransform;
+    float4 emissive;             // 自分で光る色（rgb。モデルの発光に足す）
+    float metallicOverride;      // 0 以上ならモデルの値の代わりに使う
+    float roughnessOverride;
+    int lightingModelOverride;   // -1 = モデルのまま、0 = 簡単な当たり方、1 = 金属・粗さを使う当たり方
+    float dissolveBlockStrength; // 実体化演出：ブロック欠けの強さ（0～1）。全体が見えた時点で0にする
+};
+
+// ===== 実体化（ディゾルブ）演出の定数 =====
+// 実体化の境界の発光色（1超えでブルームに乗せる）
 static const float3 kDissolveGlowColor = float3(0.3f, 1.0f, 1.0f) * 3.0f;
 // 境界付近を走査線状に欠けさせる密度（ワールド1mあたりの本数）
 static const float kDissolveScanlineDensity = 24.0f;
 // ノイズの切り替え頻度[回/秒]（連続的に動かさずカクつかせてデジタル感を出す）
 static const float kDissolveNoiseRate = 20.0f;
-// (1) 境界の揺らぎ：ブロックの細かさ（ワールド1mあたりの個数）と上下の振れ幅[m]
+// 境界の揺らぎ：ブロックの細かさ（ワールド1mあたりの個数）と上下の振れ幅[m]
 static const float kDissolveEdgeBlockDensity = 3.0f;
 static const float kDissolveEdgeNoiseAmplitude = 0.4f;
-// (2) 横帯ノイズ：帯の細かさ（1mあたりの本数）、上へ流れる速さ[本/秒]、帯が出る確率、帯の発光強度
-static const float kDissolveBandDensity = 8.0f;
-static const float kDissolveBandSpeed = 6.0f;
-static const float kDissolveBandRate = 0.12f;
-static const float kDissolveBandGlow = 0.5f;
-// (4) ブロック欠け：ブロックの細かさ（1mあたりの個数）、境界直下での欠ける確率、
+// ブロック欠け：ブロックの細かさ（1mあたりの個数）、境界直下での欠ける確率、
 // 欠けが届く範囲[m]（境界からこの距離まで下るにつれ確率が0へ減る）、欠ける寸前のブロックの発光強度
 static const float kDissolveBlockDensity = 4.0f;
 static const float kDissolveBlockDropRate = 0.35f;
 static const float kDissolveBlockDropRange = 2.5f;
 static const float kDissolveBlockGlow = 0.6f;
+
+// モデルの部分ごとの材質（C++ の SurfaceMaterial と同じ並び）
+struct SurfaceMaterial
+{
+    float4 emissive;
+    float metallic;
+    float roughness;
+    float normalStrength;
+    float occlusionStrength;
+    uint flags;
+    float3 padding;
+};
+
+struct Camera
+{
+    float3 worldPosition;
+    float padding;
+};
+
+// SurfaceMaterial::flags（C++ の SurfaceMaterialFlags と同じ）
+static const uint kFlagNormalMap = 1u << 0;
+static const uint kFlagMetallicRoughnessMap = 1u << 1;
+static const uint kFlagEmissiveMap = 1u << 2;
+static const uint kFlagOcclusionMap = 1u << 3;
+static const uint kFlagPhysicalLighting = 1u << 4;
 
 struct DirectionalLight
 {
@@ -55,7 +92,9 @@ struct ShadowData
 {
     float4x4 lightViewProjection;
     float bias;
-    float3 padding;
+    float orthoExtentWorld;     // 正射影の片側半幅（C++側Object3dCommon::SetShadowOrthoRange()で設定）
+    float orthoDepthRangeWorld; // ファークリップ - ニアクリップ
+    float padding;
 };
 
 ConstantBuffer<Material> gMaterial : register(b0);
@@ -70,16 +109,24 @@ ConstantBuffer<ShadowData> gShadowData : register(b5);
 Texture2D<float> gShadowMap : register(t1);
 SamplerComparisonState gShadowSampler : register(s1);
 
+// 材質の画像（使わない物には白が入っている。flags で使うかを決める）。t2・t3 は頂点シェーダーが使っている
+ConstantBuffer<SurfaceMaterial> gSurface : register(b6);
+ConstantBuffer<Camera> gCamera : register(b7);
+Texture2D<float4> gNormalMap : register(t4);
+Texture2D<float4> gMetallicRoughnessMap : register(t5);
+Texture2D<float4> gEmissiveMap : register(t6);
+Texture2D<float4> gOcclusionMap : register(t7);
+
 // ディレクショナルライトのシャドウ係数を計算する（1.0=影なし、0.0=完全に影）
 // PCSS(Percentage-Closer Soft Shadows)風に、遮蔽物と受光面の距離が離れているほど影の輪郭をぼかす
+// ※HLSLの制約上cbuffer経由の値から静的定数を導出できないため直書き。変更時はC++側
+//   Object3dCommon::kShadowMapSizeも同じ値に手動で合わせること
 static const float kShadowMapResolution = 4096.0f;
 static const float kShadowMapTexelSize = 1.0f / kShadowMapResolution;
 // 法線方向のオフセット量（壁のように光に対してほぼ真横を向く面でのシャドウアクネ対策）
 static const float kNormalOffsetScale = 0.05f;
-// Object3dCommon.cpp の UpdateLightViewProjection() 内の定数と一致させること
-// （正射影の全幅・深度レンジをワールド距離⇔UV距離の換算に使うため）
-static const float kOrthoExtentWorld = 55.0f;     // kOrthoExtent
-static const float kOrthoDepthRangeWorld = 79.9f; // kFarClip - kNearClip
+// 正射影の全幅・深度レンジ（ワールド距離⇔UV距離の換算に使用）は
+// C++側Object3dCommon::SetShadowOrthoRange()から定数バッファ(gShadowData)経由で渡される
 // 影のぼかしやすさ（大きいほど、遮蔽物から受光面までの距離に対してペナンブラが広がりやすい）
 static const float kPenumbraSlope = 0.3f;
 static const float kMinFilterRadiusUV = kShadowMapTexelSize;      // 接触影は硬く保つための下限
@@ -143,9 +190,9 @@ float CalculateDirectionalShadow(float3 worldPosition, float3 normal, float Ndot
 
     // 2. ペナンブラ幅の推定：遮蔽物と受光面のギャップ(ワールド距離)が大きいほど輪郭を広くぼかす
     //    正射影(平行光線)は遠近除算が不要なため、ギャップ距離に比例させるだけでよい
-    float gapWorld = (receiverZ - avgBlockerZ) * kOrthoDepthRangeWorld;
+    float gapWorld = (receiverZ - avgBlockerZ) * gShadowData.orthoDepthRangeWorld;
     float penumbraWorld = kPenumbraSlope * gapWorld;
-    float filterRadiusUV = clamp(penumbraWorld / (2.0f * kOrthoExtentWorld), kMinFilterRadiusUV, kMaxFilterRadiusUV);
+    float filterRadiusUV = clamp(penumbraWorld / (2.0f * gShadowData.orthoExtentWorld), kMinFilterRadiusUV, kMaxFilterRadiusUV);
 
     // 3. 可変半径のPCF（ペナンブラ幅に応じてサンプリング範囲を広げ、ぼかし具合を距離に応じて変える）
     float shadowFactor = 0.0f;
@@ -159,32 +206,116 @@ float CalculateDirectionalShadow(float3 worldPosition, float3 normal, float Ndot
     return shadowFactor;
 }
 
+// ===== 材質 =====
+static const float kPi = 3.14159265f;
+// 環境光（どの光源も直接当たらない面が完全な黒潰れにならないよう底上げする）
+static const float kAmbientIntensity = 0.08f;
+// 金属・粗さを使う当たり方の、周りの景色の照り返しの代わり（空の明るさの目安。金属が真っ黒にならないように）
+static const float kAmbientSpecularIntensity = 0.3f;
+// 粗さの下限（0 だと光が点になって見えなくなる・ちらつく）
+static const float kMinRoughness = 0.04f;
+
+// 法線マップで法線を曲げる。画面上での位置と UV の変化から「u が増える向き・v が増える向き」を作るので、頂点に接線は要らない。
+// 法線マップは glTF・Blender と同じ並び（赤 = u の向き、緑 = 画像の上 = v が減る向き、青 = 面から外向き）
+float3 ApplyNormalMap(float3 normal, float3 worldPosition, float2 uv, float3 mapValue, float strength)
+{
+    float3 dpdx = ddx(worldPosition);
+    float3 dpdy = ddy(worldPosition);
+    float2 duvdx = ddx(uv);
+    float2 duvdy = ddy(uv);
+    float3 dpdyPerp = cross(dpdy, normal);
+    float3 dpdxPerp = cross(normal, dpdx);
+    float3 tangent = dpdyPerp * duvdx.x + dpdxPerp * duvdy.x;
+    float3 bitangent = dpdyPerp * duvdx.y + dpdxPerp * duvdy.y;
+    float lengthSquared = max(dot(tangent, tangent), dot(bitangent, bitangent));
+    if (lengthSquared <= 1e-20f) {
+        return normal; // UV が付いていない（全部同じ UV）
+    }
+    float scale = rsqrt(lengthSquared);
+    float3 local = mapValue * 2.0f - 1.0f;
+    local.xy *= strength;
+    return normalize(tangent * scale * local.x - bitangent * scale * local.y + normal * local.z);
+}
+
+// 光が細かい凹凸でどれだけこちらへ跳ね返るか（GGX）
+float DistributionGGX(float NdotH, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    return a2 / (kPi * d * d);
+}
+
+// 細かい凹凸が互いに光を遮る分（Smith / Schlick-GGX）
+float GeometrySmith(float NdotV, float NdotL, float roughness)
+{
+    float k = (roughness + 1.0f) * (roughness + 1.0f) / 8.0f;
+    float gv = NdotV / (NdotV * (1.0f - k) + k);
+    float gl = NdotL / (NdotL * (1.0f - k) + k);
+    return gv * gl;
+}
+
+// 斜めから見るほど強く反射する（フレネル。Schlick の近似）
+float3 FresnelSchlick(float cosTheta, float3 f0)
+{
+    return f0 + (1.0f - f0) * pow(1.0f - cosTheta, 5.0f);
+}
+
+// 金属・粗さを使う当たり方で、光1つ分の明るさ。radiance は光の色 × 強さ × 減衰
+float3 PhysicalLight(float3 normal, float3 toCamera, float3 toLight, float3 radiance, float3 baseColor, float metallic, float roughness)
+{
+    float NdotL = saturate(dot(normal, toLight));
+    if (NdotL <= 0.0f) {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+    float NdotV = max(dot(normal, toCamera), 1e-4f);
+    float3 halfVector = normalize(toCamera + toLight);
+    float NdotH = saturate(dot(normal, halfVector));
+    float3 f0 = lerp(float3(0.04f, 0.04f, 0.04f), baseColor, metallic);
+    float3 fresnel = FresnelSchlick(saturate(dot(halfVector, toCamera)), f0);
+    float3 specular = DistributionGGX(NdotH, roughness) * GeometrySmith(NdotV, NdotL, roughness) * fresnel / (4.0f * NdotV * NdotL + 1e-4f);
+    float3 diffuse = (1.0f - fresnel) * (1.0f - metallic) * baseColor;
+    // ライトの強さは「π を掛けた単位」とする（今までの簡単な当たり方と、同じ光で同じくらいの明るさになるように）
+    return (diffuse + specular * kPi) * radiance * NdotL;
+}
+
+// 周りの景色の照り返しの近似（景色の画像を使わない。Karis の式）
+float3 EnvironmentBRDF(float3 f0, float roughness, float NdotV)
+{
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f);
+    const float4 c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28f * NdotV)) * r.x + r.y;
+    float2 ab = float2(-1.04f, 1.04f) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
 struct PixelShaderOutput
 {
     float4 color : SV_TARGET0;
 };
 
-
 PixelShaderOutput main(VertexShaderOutput input)
 {
     PixelShaderOutput output;
     float4 transformedUV = mul(float4(input.texcoord,0.0f, 1.0f), gMaterial.uvTransform);
-    float4 textureColor = gTexture.Sample(gSampler, transformedUV.xy);
-    
+    float2 uv = transformedUV.xy;
+    float4 textureColor = gTexture.Sample(gSampler, uv);
+
     // 基本色を設定
-    output.color = gMaterial.color * textureColor;
+    output.color = gMaterial.color * textureColor * input.instanceColor;
 
     // アルファ値が0.5以下ならピクセルを破棄（2値抜き）
     if (output.color.a <= 0.5f) {
         discard;
     }
 
-    // 実体化演出：境界より上は破棄、境界に近いほど走査線状に欠けさせつつ発光させる
+    // 実体化演出：境界より上は破棄、境界に近いほど走査線状に欠けさせつつ発光させる（dissolveEdgeWidth > 0 のときだけ）
     float dissolveGlow = 0.0f;
     if (gMaterial.dissolveEdgeWidth > 0.0f) {
         float noiseStep = floor(gMaterial.dissolveTime * kDissolveNoiseRate);
 
-        // (1) 境界をXZのブロック単位で上下に揺らし、凸凹に組み上がって見せる
+        // 境界をXZのブロック単位で上下に揺らし、凸凹に組み上がって見せる
         float2 edgeBlock = floor(input.worldPosition.xz * kDissolveEdgeBlockDensity);
         float edgeOffset = (Hash21(edgeBlock + noiseStep * float2(17.0f, 31.0f)) - 0.5f) * kDissolveEdgeNoiseAmplitude;
         float distanceToEdge = gMaterial.dissolveHeight + edgeOffset - input.worldPosition.y;
@@ -196,18 +327,7 @@ PixelShaderOutput main(VertexShaderOutput input)
             discard;
         }
 
-        // (2) 実体化済みの部分に横帯ノイズを下から上へ流す（帯の一部は欠け、残りは光る）
-        // ※現在は不使用。後で使うため残しておく（有効化するときはコメントを外すだけでよい）
-        //float band = floor(input.worldPosition.y * kDissolveBandDensity - gMaterial.dissolveTime * kDissolveBandSpeed);
-        //float bandRandom = Hash21(float2(band, noiseStep));
-        //if (bandRandom < kDissolveBandRate) {
-        //    if (bandRandom < kDissolveBandRate * 0.4f) {
-        //        discard;
-        //    }
-        //    dissolveGlow = max(dissolveGlow, kDissolveBandGlow);
-        //}
-
-        // (4) 立方体ブロック単位でランダムに欠けさせる。境界に近いほど欠けやすく、下の安定した部分ほど埋まっていく
+        // 立方体ブロック単位でランダムに欠けさせる。境界に近いほど欠けやすく、下の安定した部分ほど埋まっていく
         float3 block = floor(input.worldPosition * kDissolveBlockDensity);
         float blockRandom = Hash21(float2(dot(block, float3(1.0f, 57.0f, 113.0f)), noiseStep));
         float dropRate = kDissolveBlockDropRate * saturate(1.0f - distanceToEdge / kDissolveBlockDropRange) * gMaterial.dissolveBlockStrength;
@@ -219,51 +339,120 @@ PixelShaderOutput main(VertexShaderOutput input)
         }
     }
 
+    // 自分で光る色（ライトが無くても見える。明るければ画面の効果のブルームで光って見える）
+    float3 emissive = gSurface.emissive.rgb + gMaterial.emissive.rgb;
+    if (gSurface.flags & kFlagEmissiveMap) {
+        emissive *= gEmissiveMap.Sample(gSampler, uv).rgb;
+    }
+
     // ライティングの計算と適用
     if (gMaterial.enableLighting != 0){
         float3 baseColor = output.color.rgb;
         float3 normal = normalize(input.normal);
-        float3 lightingResult = float3(0.0f, 0.0f, 0.0f);
-
-        // ディレクショナルライト（シャドウマップ + PCFで影を落とす）
-        {
-            float NdotL = dot(normal, -gDirectionLight.direction);
-            float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
-            float shadowFactor = CalculateDirectionalShadow(input.worldPosition, normal, NdotL);
-            lightingResult += gDirectionLight.color.rgb * gDirectionLight.intensity * cosFactor * shadowFactor;
+        if (gSurface.flags & kFlagNormalMap) {
+            normal = ApplyNormalMap(normal, input.worldPosition, uv, gNormalMap.Sample(gSampler, uv).rgb, gSurface.normalStrength);
+        }
+        // 影になりやすい所（くぼみ・すき間）は周りの光が届きにくい
+        float occlusion = 1.0f;
+        if (gSurface.flags & kFlagOcclusionMap) {
+            occlusion = lerp(1.0f, gOcclusionMap.Sample(gSampler, uv).r, gSurface.occlusionStrength);
         }
 
-        // 点光源
-        {
-            float3 toLight = gPointLight.position - input.worldPosition;
-            float distance = length(toLight);
-            float3 lightDirection = toLight / distance;
-            float NdotL = dot(normal, lightDirection);
-            float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
-            float attenuation = pow(saturate(-distance / gPointLight.radius + 1.0f), gPointLight.decay);
-            lightingResult += gPointLight.color.rgb * gPointLight.intensity * cosFactor * attenuation;
+        bool isPhysical = gMaterial.lightingModelOverride == 1 ||
+                          (gMaterial.lightingModelOverride < 0 && (gSurface.flags & kFlagPhysicalLighting) != 0);
+        if (isPhysical) {
+            // --- 金属・粗さを使う当たり方 ---
+            float metallic = gSurface.metallic;
+            float roughness = gSurface.roughness;
+            if (gSurface.flags & kFlagMetallicRoughnessMap) {
+                float4 metallicRoughness = gMetallicRoughnessMap.Sample(gSampler, uv);
+                roughness *= metallicRoughness.g;
+                metallic *= metallicRoughness.b;
+            }
+            if (gMaterial.metallicOverride >= 0.0f) {
+                metallic = gMaterial.metallicOverride;
+            }
+            if (gMaterial.roughnessOverride >= 0.0f) {
+                roughness = gMaterial.roughnessOverride;
+            }
+            metallic = saturate(metallic);
+            roughness = clamp(roughness, kMinRoughness, 1.0f);
+            float3 toCamera = normalize(gCamera.worldPosition - input.worldPosition);
+            float3 lightingResult = float3(0.0f, 0.0f, 0.0f);
+
+            // ディレクショナルライト（影あり）
+            {
+                float3 toLight = -gDirectionLight.direction;
+                float shadowFactor = CalculateDirectionalShadow(input.worldPosition, normal, dot(normal, toLight));
+                lightingResult += PhysicalLight(normal, toCamera, toLight, gDirectionLight.color.rgb * gDirectionLight.intensity * shadowFactor,
+                                                baseColor, metallic, roughness);
+            }
+            // 点光源
+            {
+                float3 toLight = gPointLight.position - input.worldPosition;
+                float distance = length(toLight);
+                float attenuation = pow(saturate(-distance / gPointLight.radius + 1.0f), gPointLight.decay);
+                lightingResult += PhysicalLight(normal, toCamera, toLight / distance, gPointLight.color.rgb * gPointLight.intensity * attenuation,
+                                                baseColor, metallic, roughness);
+            }
+            // スポットライト
+            {
+                float3 toLight = gSpotLight.position - input.worldPosition;
+                float distance = length(toLight);
+                float3 lightDirection = toLight / distance;
+                float attenuation = pow(saturate(-distance / gSpotLight.distance + 1.0f), gSpotLight.decay);
+                float cosAngle = dot(-lightDirection, gSpotLight.direction);
+                float falloffFactor = saturate((cosAngle - gSpotLight.cosAngle) / (gSpotLight.cosFalloffStart - gSpotLight.cosAngle));
+                lightingResult += PhysicalLight(normal, toCamera, lightDirection,
+                                                gSpotLight.color.rgb * gSpotLight.intensity * attenuation * falloffFactor, baseColor, metallic, roughness);
+            }
+
+            // 周りの光（散らばる光と、景色の照り返しの代わり）
+            float3 f0 = lerp(float3(0.04f, 0.04f, 0.04f), baseColor, metallic);
+            float3 ambientDiffuse = baseColor * (1.0f - metallic) * kAmbientIntensity;
+            float3 ambientSpecular = EnvironmentBRDF(f0, roughness, max(dot(normal, toCamera), 1e-4f)) * kAmbientSpecularIntensity;
+            output.color.rgb = lightingResult + (ambientDiffuse + ambientSpecular) * occlusion;
+        } else {
+            // --- 今までの簡単な当たり方（光の向きだけで明るさが決まる。照り返しなし） ---
+            float3 lightingResult = float3(0.0f, 0.0f, 0.0f);
+
+            // ディレクショナルライト（シャドウマップ + PCFで影を落とす）
+            {
+                float NdotL = dot(normal, -gDirectionLight.direction);
+                float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
+                float shadowFactor = CalculateDirectionalShadow(input.worldPosition, normal, NdotL);
+                lightingResult += gDirectionLight.color.rgb * gDirectionLight.intensity * cosFactor * shadowFactor;
+            }
+
+            // 点光源
+            {
+                float3 toLight = gPointLight.position - input.worldPosition;
+                float distance = length(toLight);
+                float3 lightDirection = toLight / distance;
+                float NdotL = dot(normal, lightDirection);
+                float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
+                float attenuation = pow(saturate(-distance / gPointLight.radius + 1.0f), gPointLight.decay);
+                lightingResult += gPointLight.color.rgb * gPointLight.intensity * cosFactor * attenuation;
+            }
+
+            // スポットライト
+            {
+                float3 toLight = gSpotLight.position - input.worldPosition;
+                float distance = length(toLight);
+                float3 lightDirection = toLight / distance;
+                float NdotL = dot(normal, lightDirection);
+                float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
+                float attenuation = pow(saturate(-distance / gSpotLight.distance + 1.0f), gSpotLight.decay);
+                float cosAngle = dot(-lightDirection, gSpotLight.direction);
+                float falloffFactor = saturate((cosAngle - gSpotLight.cosAngle) / (gSpotLight.cosFalloffStart - gSpotLight.cosAngle));
+                lightingResult += gSpotLight.color.rgb * gSpotLight.intensity * cosFactor * attenuation * falloffFactor;
+            }
+
+            float3 ambient = baseColor * kAmbientIntensity * occlusion;
+            output.color.rgb = baseColor * lightingResult + ambient;
         }
-
-        // スポットライト
-        {
-            float3 toLight = gSpotLight.position - input.worldPosition;
-            float distance = length(toLight);
-            float3 lightDirection = toLight / distance;
-            float NdotL = dot(normal, lightDirection);
-            float cosFactor = pow(NdotL * 0.5f + 0.5f, 2.0f);
-            float attenuation = pow(saturate(-distance / gSpotLight.distance + 1.0f), gSpotLight.decay);
-            float cosAngle = dot(-lightDirection, gSpotLight.direction);
-            float falloffFactor = saturate((cosAngle - gSpotLight.cosAngle) / (gSpotLight.cosFalloffStart - gSpotLight.cosAngle));
-            lightingResult += gSpotLight.color.rgb * gSpotLight.intensity * cosFactor * attenuation * falloffFactor;
-        }
-
-        // 環境光（どの光源も直接当たらない面が完全な黒潰れにならないよう底上げする）
-        static const float kAmbientIntensity = 0.08f;
-        float3 ambient = baseColor * kAmbientIntensity;
-
-        output.color.rgb = baseColor * lightingResult + ambient;
     }
-
+    output.color.rgb += emissive;
     output.color.rgb += kDissolveGlowColor * dissolveGlow;
 
     return output;

@@ -17,42 +17,22 @@ void BitmapText::Initialize(SpriteCommon* spriteCommon, size_t maxChars) {
         sprite->SetTexSize({ kGlyphCellWidth, kGlyphCellHeight });
         sprite->SetSize({ kGlyphCellWidth * scale, kGlyphCellHeight * scale });
         sprite->SetColor(color);
+        sprite->SetLayer(layer);
         charSprites.push_back(std::move(sprite));
     }
 }
 
 int BitmapText::GlyphIndex(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c == '.') return 10;
-    if (c == '-') return 11;
-    switch (c) {
-        case 'W': return 13;
-        case 'I': return 14;
-        case 'N': return 15;
-        case 'L': return 16;
-        case 'O': return 17;
-        case 'S': return 18;
-        case 'E': return 19;
-        case 'Q': return 20;
-        case 'U': return 21;
-        case 'T': return 22;
-        case 'A': return 23;
-        case 'B': return 24;
-        case 'C': return 25;
-        case 'D': return 26;
-        case 'F': return 27;
-        case 'G': return 28;
-        case 'H': return 29;
-        case 'J': return 30;
-        case 'K': return 31;
-        case 'M': return 32;
-        case 'P': return 33;
-        case 'R': return 34;
-        case 'V': return 35;
-        case 'X': return 36;
-        case 'Y': return 37;
-        case 'Z': return 38;
-        case '>': return 39;
+    // 小文字は大文字にフォールバック（小文字専用のビットパターンは持たない）
+    if (c >= 'a' && c <= 'z') {
+        c = static_cast<char>(c - 'a' + 'A');
+    }
+    // TextureManager::kBitmapFontGlyphs（文字→ビットパターンの一覧テーブル）を線形探索し、
+    // 一致した文字のインデックス＝グリフアトラス上の並び順を返す
+    for (int i = 0; i < TextureManager::kBitmapFontGlyphCount; ++i) {
+        if (TextureManager::kBitmapFontGlyphs[i].character == c) {
+            return i;
+        }
     }
     return kBlankGlyphIndex;
 }
@@ -95,6 +75,13 @@ void BitmapText::SetColor(const Vector4& newColor) {
     color = newColor;
     for (auto& sprite : charSprites) {
         sprite->SetColor(color);
+    }
+}
+
+void BitmapText::SetLayer(int newLayer) {
+    layer = newLayer;
+    for (auto& sprite : charSprites) {
+        sprite->SetLayer(layer);
     }
 }
 
