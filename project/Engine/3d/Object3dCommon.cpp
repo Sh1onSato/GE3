@@ -105,7 +105,7 @@ void Object3dCommon::CreateRootSignature() {
     // CBV: Material (b0)
     rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameters[0].Descriptor.ShaderRegister = 0;
-    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // Material は PS に加え、VS（実体化の横ズレ）でも読む
 
     // CBV: TransformationMatrix (b1)
     rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
