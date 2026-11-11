@@ -146,6 +146,22 @@ def build_data_platform(mats):
     return b.finish("data_platform", mats, engine_scale=(h, hz_up, h))
 
 
+def build_data_pylon(mats):
+    """データ足場の中央に立てる柱（1m角・高さ2.5m）。地上から足場の上面は見えないので、
+    この柱の側面にポータルを貼って足場へ上がる。scale {0.5, 1.25, 0.5} で使う"""
+    h, hz_up = 0.5, 1.25
+    b = c.MeshBuilder()
+    b.prism_z(c.chamfer_rect_profile(-h, h, -h, h, 0.06), -hz_up, hz_up, BODY)
+    t = GLOW_PROTRUDE
+    b.band_around(h, h, hz_up - 0.12, hz_up - 0.06, t, GLOW, inset=0.06)    # 上端
+    b.band_around(h, h, -hz_up + 0.06, -hz_up + 0.12, t, GLOW, inset=0.06)  # 下端
+    # 4つの面の中央に縦の発光ライン（「ここに貼れる」目印）
+    for ang in (0, 90, 180, 270):
+        m = c.Matrix.Rotation(math.radians(ang), 4, "Z")
+        b.box((-0.03, h, -hz_up + 0.25), (0.03, h + t, hz_up - 0.25), GLOW, matrix=m)
+    return b.finish("data_pylon", mats, engine_scale=(h, hz_up, h))
+
+
 # ---------------------------------------------------------------------------
 # プレビュー：ArenaLayout の配置どおりに並べて、アリーナ全体を確認する
 # ---------------------------------------------------------------------------
@@ -171,8 +187,9 @@ def build_preview_layout(p):
             place(p["platform_low"], (sx, 1.25, sz), (3, 1.25, 3))
             place(p["platform_high"], (sx, 3.75, sz), (1.5, 1.25, 1.5))
     # データ足場の配置例（位置は仮）
-    for pos in ((-6, 6, 8), (6, 7, 4), (0, 8, -4)):
+    for pos in ((-8, 6.5, 4), (8, 6.5, 4), (0, 7.0, -4)):
         place(p["data_platform"], pos, (2, 0.2, 2))
+        place(p["data_pylon"], (pos[0], pos[1] + 0.2 + 1.25, pos[2]), (0.5, 1.25, 0.5))
     for obj in p.values():
         obj.hide_render = True  # 原点に置いた元の部品は写さない
 
@@ -195,6 +212,7 @@ def main():
         "platform_low": build_block(arena, "platform_low", 3.0, 1.25, 3.0, 0.2),
         "platform_high": build_block(arena, "platform_high", 1.5, 1.25, 1.5, 0.15, mid_band=False),
         "data_platform": build_data_platform(data),
+        "data_pylon": build_data_pylon(data),
     }
     c.save_blend(out_dir, "arena")
     for name, obj in parts.items():

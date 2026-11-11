@@ -105,6 +105,8 @@ void GameScene::Initialize() {
             weaponPanelLines[i]->Update();
         }
 
+        InitializePortalHint();
+
         weaponSlotTextFront.Initialize(framework->GetSpriteCommon(), 1);
         weaponSlotTextFront.SetScale(kWeaponSlotTextFrontScale);
         weaponSlotTextFront.SetPosition(kWeaponSlotTextFrontPos);
@@ -278,6 +280,28 @@ void GameScene::Initialize() {
         grenades.push_back(std::move(grenade));
     }
 
+    // 床の破損マス（floor_tile.glb）とデータ足場（data_platform.glb）。最初は非表示・判定なし
+    for (auto& tile : corruptTiles) {
+        tile.object = std::make_unique<Object3d>();
+        tile.object->Initialize(framework->GetObject3dCommon());
+        tile.object->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, kCorruptTileModelFile));
+        tile.object->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        tile.object->SetScale(kCorruptTileScale);
+    }
+    for (auto& platform : dataPlatforms) {
+        platform.object = std::make_unique<Object3d>();
+        platform.object->Initialize(framework->GetObject3dCommon());
+        platform.object->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, kDataPlatformModelFile));
+        platform.object->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        platform.object->SetScale(kDataPlatformScale);
+
+        platform.pylon = std::make_unique<Object3d>();
+        platform.pylon->Initialize(framework->GetObject3dCommon());
+        platform.pylon->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, kDataPylonModelFile));
+        platform.pylon->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        platform.pylon->SetScale(kDataPylonScale);
+    }
+
     portalModelA = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_a.glb");
     portalModelB = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_b.glb");
 
@@ -377,6 +401,7 @@ bool GameScene::CheckCollision(const Vector3& pos, float* outMaxY, float radius,
     std::vector<Object3d*> colliders;
     if (floor) colliders.push_back(floor.get());
     for (auto& w : walls) colliders.push_back(w.get());
+    AppendDataPlatformColliders(colliders);
 
     bool isHit = false;
     float highestY = -10000.0f; // 十分低い値
@@ -596,6 +621,8 @@ void GameScene::Update() {
         if (input->TriggerKey(DIK_R)) {
             portalA.isPlaced = false;
             portalB.isPlaced = false;
+            portalA.platformIndex = -1;
+            portalB.platformIndex = -1;
             if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
             if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
         }
@@ -739,16 +766,20 @@ void GameScene::Update() {
 
         switch (bossAttackState) {
         case BossAttackState::kChasing: {
-            if (distance > kBossStopDistance) {
-                float distanceT = std::clamp((distance - kBossStopDistance) / (kBossFarDistance - kBossStopDistance), 0.0f, 1.0f);
-                float baseSpeed = kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
+            // プレイヤーが高い場所（データ足場の上）にいる間は、真下に寄らず距離を取る（近すぎたら下がる）
+            const bool highGround = IsPlayerOnHighGround();
+            const float stopDistance = highGround ? kBossHighGroundKeepDistance : kBossStopDistance;
+            const bool retreat = highGround && distance < kBossHighGroundRetreatDistance;
+            if (distance > stopDistance || retreat) {
+                float distanceT = std::clamp((distance - stopDistance) / (kBossFarDistance - stopDistance), 0.0f, 1.0f);
+                float baseSpeed = retreat ? kBossHighGroundRetreatSpeed : kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
 
                 float hpRatio = bossHP / kBossMaxHP;
                 float enrageMultiplier = 1.0f + (kBossEnrageMaxMultiplier - 1.0f) * (1.0f - hpRatio);
 
                 float bossMoveSpeed = baseSpeed * enrageMultiplier;
                 if (bossPhase == BossPhase::kP3) bossMoveSpeed *= kBossPhase3SpeedMultiplier;
-                Vector3 dir = dirToPlayer;
+                Vector3 dir = retreat ? Vector3{ -dirToPlayer.x, 0.0f, -dirToPlayer.z } : dirToPlayer;
                 Vector3 moveDelta = { dir.x * bossMoveSpeed, 0.0f, dir.z * bossMoveSpeed };
 
                 const float kGroundOffset = 0.05f; // 床との判定を避けるためのオフセット（プレイヤー側と同じ手法）
@@ -830,8 +861,9 @@ void GameScene::Update() {
                     bossStuckTimer = 0.0f;
                 }
 
-                // 移動方向へ向きを合わせる（プレイヤーのforwardベクトルと同じsin/cos規約）
-                boss->SetRotate({ 0.0f, std::atan2(dir.x, dir.z), 0.0f });
+                // 移動方向へ向きを合わせる（プレイヤーのforwardベクトルと同じsin/cos規約）。下がるときはプレイヤーを向いたまま
+                Vector3 faceDir = retreat ? dirToPlayer : dir;
+                boss->SetRotate({ 0.0f, std::atan2(faceDir.x, faceDir.z), 0.0f });
             } else {
                 // 間合いに入って停止中も、常にプレイヤーの方を向く
                 boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
@@ -840,8 +872,14 @@ void GameScene::Update() {
             // 攻撃判定：クールダウン(bossAttackTimer)が明けたら、距離しきい値で近接突進／遠距離グレネードを自動選択する
             if (bossAttackTimer > 0.0f) {
                 bossAttackTimer -= 1.0f / 60.0f;
-            } else if (distance <= kBossMeleeRange) {
+            } else if (bossPhase != BossPhase::kP1 && arenaRebuildTimer <= 0.0f) {
+                // P2以降、再構築のタイマーが明けていたら他の攻撃より優先する
+                bossAttackState = BossAttackState::kRebuildWindup;
+                bossAttackTimer = kArenaRebuildWindupDuration;
+                bossWarningEmissive = kArenaRebuildWarningEmissive; // データの色で予兆
+            } else if (distance <= kBossMeleeRange && !highGround) {
                 // P3の近距離は、一定確率で衝撃波リング。それ以外は突進
+                // （高い場所のプレイヤーには突進も衝撃波も届かないので、距離に関係なく下の遠距離の選び方にする）
                 bool useShockwave = false;
                 if (bossPhase == BossPhase::kP3) {
                     std::random_device seedGen;
@@ -869,6 +907,10 @@ void GameScene::Update() {
                     float roll = distChance(randomEngine);
                     useLaser = roll < kBossFarLaserChance;
                     useTeleport = !useLaser && roll < kBossFarLaserChance + kBossFarTeleportChance;
+                }
+                // 床すれすれのレーザーは高い場所に届かないので、その分はグレネードにする
+                if (highGround) {
+                    useLaser = false;
                 }
                 // テレポートの行き先が見つからなければ、やめてグレネードにする
                 if (useTeleport && !TryPickBossTeleportDest()) {
@@ -921,7 +963,9 @@ void GameScene::Update() {
             }
 
             float hitDistance = Calculation::Length(Vector3{ playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z });
-            bool hitPlayer = hitDistance <= (kBossCollisionRadius + collisionRadius);
+            // 高さも見る：ボスの頭（足元＋高さ）より上にいるプレイヤー（データ足場の上など）には当たらない
+            bool hitPlayer = hitDistance <= (kBossCollisionRadius + collisionRadius)
+                && playerPos.y < bossPos.y + kBossHalfHeight * 2.0f;
 
             bossAttackTimer -= 1.0f / 60.0f;
 
@@ -978,7 +1022,8 @@ void GameScene::Update() {
             if (bossAttackTimer <= 0.0f) {
                 screenEffect->SetTransitionGlitch(0.0f, elapsed); // 確実に切る
                 bossAttackState = BossAttackState::kChasing;
-                bossAttackTimer = BossAttackCooldown();
+                // 再構築のタイマーが明けている（P2に入った直後）なら、待たずに1回目の再構築へ入る
+                bossAttackTimer = (arenaRebuildTimer <= 0.0f) ? 0.0f : BossAttackCooldown();
             } else {
                 float glitch = kBossPhaseShiftGlitch * (1.0f - Easing::OutCubic(Easing::Clamp01(elapsed / kBossPhaseShiftGlitchDuration)));
                 screenEffect->SetTransitionGlitch(glitch, elapsed);
@@ -1080,7 +1125,27 @@ void GameScene::Update() {
             }
             break;
         }
+        case BossAttackState::kRebuildWindup: {
+            // 止まってプレイヤーの方を向き、データの色で警告＋軽いグリッチを時間とともに強める
+            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
+            bossAttackTimer -= 1.0f / 60.0f;
+            float elapsed = kArenaRebuildWindupDuration - bossAttackTimer;
+            if (bossAttackTimer <= 0.0f) {
+                bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+                screenEffect->SetTransitionGlitch(0.0f, elapsed);
+                StartArenaRebuild();
+                arenaRebuildTimer = kArenaRebuildInterval;
+                bossAttackState = BossAttackState::kChasing;
+                bossAttackTimer = BossAttackCooldown();
+            } else {
+                float t = Easing::Clamp01(elapsed / kArenaRebuildWindupDuration);
+                screenEffect->SetTransitionGlitch(kArenaRebuildGlitch * t, elapsed);
+            }
+            break;
         }
+        }
+
+        UpdateArenaRebuild(); // 再構築タイマー・破損マス・足場・床ダメージ（ボスAIが動いている間だけ進む）
 
         if (bossPhase == BossPhase::kP3) {
             bossPhase3PulseTimer += 1.0f / 60.0f; // P3の発光の脈打ち用
@@ -1207,6 +1272,7 @@ void GameScene::Update() {
         StopBossLaser(); // 決着後はレーザーを消す
         StopBossTeleport();
         StopBossShockwave();
+        StopArenaRebuild(); // 破損マスと足場も消す（ポータルは足場と一緒に消える）
         phaseTextTimer = 0.0f;
         // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
         float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
@@ -1230,6 +1296,9 @@ void GameScene::UpdateRenderObjects() {
     skybox->Update();
     floor->Update();
     for (auto& wall : walls) { wall->Update(); }
+    // 破損マス・データ足場も毎フレームUpdate（呼び忘れると単位行列のまま巨大に描画される）
+    for (auto& tile : corruptTiles) { tile.object->Update(); }
+    for (auto& platform : dataPlatforms) { platform.object->Update(); platform.pylon->Update(); }
     for (auto& enemy : enemies) { enemy.object->Update(); }
     boss->Update();
     UpdateBossParts(); // bossのtranslate/rotate/scaleが確定した後に5パーツへ写す
@@ -1335,6 +1404,15 @@ void GameScene::Draw() {
     Matrix4x4 lightViewProjection = object3dCommon->GetLightViewProjection();
     floor->DrawShadow(lightViewProjection);
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
+    // データ足場：判定のあるkActive・kBreakingだけ影を落とす（kMaterializingはディゾルブが影に効かないので除く）
+    for (auto& platform : dataPlatforms) {
+        bool castsShadow = platform.state == DataPlatform::State::kActive
+            || (platform.state == DataPlatform::State::kBreaking && platform.visible);
+        if (castsShadow) {
+            platform.object->DrawShadow(lightViewProjection);
+            platform.pylon->DrawShadow(lightViewProjection);
+        }
+    }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->DrawShadow(lightViewProjection); }
     // 影パスは深度のみでピクセルシェーダーの切り取りが効かないため、実体化中は影を落とさない
     if (boss && !IsBossMaterializing()) {
@@ -1357,6 +1435,13 @@ void GameScene::Draw() {
     framework->GetObject3dCommon()->PreDraw();
     floor->Draw();
     for (auto& wall : walls) { wall->Draw(); }
+    for (auto& tile : corruptTiles) { if (tile.state != CorruptState::kHidden && tile.visible) tile.object->Draw(); }
+    for (auto& platform : dataPlatforms) {
+        if (platform.state != DataPlatform::State::kHidden && platform.visible) {
+            platform.object->Draw();
+            platform.pylon->Draw();
+        }
+    }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->Draw(); }
     if (boss) {
         for (auto& part : bossParts) { part->Draw(); }
@@ -1406,6 +1491,10 @@ void GameScene::Draw() {
             weaponIcons[kIconShotgun]->Draw();
         }
         weaponSlotTextFront.Draw();
+        // ポータルガンの操作ヒント（左右クリックとRでリセット）
+        if (isPortal) {
+            DrawPortalHint();
+        }
     }
 
     // --- 4. UI（プレイヤーHPバー）の描画 ---
@@ -1498,6 +1587,13 @@ void GameScene::DamageBoss(float amount) {
 }
 
 void GameScene::StartBossPhaseShift(BossPhase next) {
+    // 再構築の予備動作中なら打ち切る（警告色は下で戻す。グリッチはここで戻す。出ている足場・破損はそのまま）
+    if (bossAttackState == BossAttackState::kRebuildWindup) {
+        screenEffect->SetTransitionGlitch(0.0f, 0.0f);
+    }
+    if (next == BossPhase::kP2) {
+        arenaRebuildTimer = 0.0f; // 移行演出が終わった直後に1回目の再構築が起きるようにする
+    }
     bossPhase = next;
     bossAttackState = BossAttackState::kPhaseShift;
     bossAttackTimer = kBossPhaseShiftDuration;
@@ -1575,6 +1671,228 @@ void GameScene::StopBossShockwave() {
     shockwaveRadius = 0.0f;
 }
 
+void GameScene::AppendDataPlatformColliders(std::vector<Object3d*>& out) const {
+    for (const auto& platform : dataPlatforms) {
+        if (platform.state == DataPlatform::State::kActive || platform.state == DataPlatform::State::kBreaking) {
+            out.push_back(platform.object.get());
+            out.push_back(platform.pylon.get()); // 柱も足場と同じ扱い（ポータルを貼れる）
+        }
+    }
+}
+
+int GameScene::FindDataPlatformIndex(const Object3d* object) const {
+    if (!object) return -1;
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        // 柱に当たった場合も、その足場の一部として扱う（足場が消えたら柱のポータルも消える）
+        if (dataPlatforms[i].object.get() == object || dataPlatforms[i].pylon.get() == object) return i;
+    }
+    return -1;
+}
+
+void GameScene::HideDataPlatform(int index) {
+    DataPlatform& platform = dataPlatforms[index];
+    platform.state = DataPlatform::State::kHidden;
+    platform.timer = 0.0f;
+    platform.visible = false;
+    platform.object->SetDissolve(0.0f, 0.0f, 0.0f);
+    platform.object->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f); // モデル本来の発光に戻す
+    platform.pylon->SetDissolve(0.0f, 0.0f, 0.0f);
+    platform.pylon->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+
+    // この足場に付いているポータルを消す
+    for (Portal* portal : { &portalA, &portalB }) {
+        if (portal->platformIndex == index) {
+            portal->isPlaced = false;
+            portal->platformIndex = -1;
+            if (portal->visual) portal->visual->SetScale({ 0.0f, 0.0f, 0.0f });
+        }
+    }
+}
+
+void GameScene::BreakDataPlatformsByExplosion(const Vector3& center, float radius) {
+    for (auto& platform : dataPlatforms) {
+        if (platform.state != DataPlatform::State::kActive) continue;
+        const Transform& t = platform.object->GetTransform();
+        // 爆発の中心からAABBへの最短距離（各軸で箱の外側にはみ出している分だけを測る）
+        float dx = (std::max)((std::max)(t.translate.x - t.scale.x - center.x, center.x - (t.translate.x + t.scale.x)), 0.0f);
+        float dy = (std::max)((std::max)(t.translate.y - t.scale.y - center.y, center.y - (t.translate.y + t.scale.y)), 0.0f);
+        float dz = (std::max)((std::max)(t.translate.z - t.scale.z - center.z, center.z - (t.translate.z + t.scale.z)), 0.0f);
+        if (std::sqrt(dx * dx + dy * dy + dz * dz) <= radius) {
+            platform.state = DataPlatform::State::kBreaking;
+            platform.timer = 0.0f;
+        }
+    }
+}
+
+void GameScene::StartArenaRebuild() {
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+
+    // --- 床の破損：付近のマスから kCorruptTilesNearPlayer 個、残りは全体から（重複なし） ---
+    auto tileCenter = [](int index) { return kFloorTileOriginCenter + kFloorTileSize * static_cast<float>(index); };
+    std::vector<int> nearCandidates;
+    std::vector<int> allCandidates;
+    for (int tileZ = 0; tileZ < kFloorTileCountPerSide; ++tileZ) {
+        for (int tileX = 0; tileX < kFloorTileCountPerSide; ++tileX) {
+            int id = tileZ * kFloorTileCountPerSide + tileX;
+            allCandidates.push_back(id);
+            float dx = tileCenter(tileX) - playerPos.x;
+            float dz = tileCenter(tileZ) - playerPos.z;
+            if (std::sqrt(dx * dx + dz * dz) <= kCorruptNearRadius) {
+                nearCandidates.push_back(id);
+            }
+        }
+    }
+    std::shuffle(nearCandidates.begin(), nearCandidates.end(), randomEngine);
+    std::shuffle(allCandidates.begin(), allCandidates.end(), randomEngine);
+
+    std::vector<int> chosen;
+    for (int id : nearCandidates) {
+        if (static_cast<int>(chosen.size()) >= kCorruptTilesNearPlayer) break;
+        chosen.push_back(id);
+    }
+    for (int id : allCandidates) {
+        if (static_cast<int>(chosen.size()) >= kCorruptTileCount) break;
+        if (std::find(chosen.begin(), chosen.end(), id) == chosen.end()) chosen.push_back(id);
+    }
+
+    // 前の破損は打ち切って新しいものに置き換える
+    for (int i = 0; i < kCorruptTileCount; ++i) {
+        CorruptTile& tile = corruptTiles[i];
+        tile.timer = 0.0f;
+        tile.object->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+        if (i < static_cast<int>(chosen.size())) {
+            tile.center = { tileCenter(chosen[i] % kFloorTileCountPerSide), 0.0f, tileCenter(chosen[i] / kFloorTileCountPerSide) };
+            tile.object->SetTranslate({ tile.center.x, kCorruptTileCenterY + kCorruptTileLift, tile.center.z });
+            tile.state = CorruptState::kWarning;
+            tile.visible = true;
+        } else {
+            tile.state = CorruptState::kHidden;
+            tile.visible = false;
+        }
+    }
+    corruptDamageTimer = 0.0f;
+
+    // --- データ足場：残っているものも含めて全部出し直し、候補から kDataPlatformCount か所を選ぶ ---
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        HideDataPlatform(i);
+    }
+    std::array<int, kDataPlatformCandidateCount> order{};
+    for (int i = 0; i < kDataPlatformCandidateCount; ++i) order[i] = i;
+    std::shuffle(order.begin(), order.end(), randomEngine);
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        DataPlatform& platform = dataPlatforms[i];
+        const Vector3& pos = kDataPlatformPositions[order[i]];
+        platform.object->SetTranslate(pos);
+        platform.object->SetScale(kDataPlatformScale);
+        platform.pylon->SetTranslate({ pos.x, pos.y + kDataPylonOffsetY, pos.z });
+        platform.pylon->SetScale(kDataPylonScale);
+        platform.state = DataPlatform::State::kMaterializing;
+        platform.timer = 0.0f;
+        platform.visible = true;
+        // 下面より下に境界を置き、最初のフレームから何も描かれないようにする（ワールドYなので柱にも同じ値で効く）
+        platform.object->SetDissolve(pos.y - kDataPlatformScale.y, kDataPlatformDissolveEdgeWidth, 0.0f, 1.0f);
+        platform.pylon->SetDissolve(pos.y - kDataPlatformScale.y, kDataPlatformDissolveEdgeWidth, 0.0f, 1.0f);
+    }
+}
+
+void GameScene::UpdateArenaRebuild() {
+    const float deltaTime = 1.0f / 60.0f;
+
+    // 再構築のタイマー（P2以降のボスAIが動いている間だけ減る）
+    if (bossPhase != BossPhase::kP1 && arenaRebuildTimer > 0.0f) {
+        arenaRebuildTimer = (std::max)(arenaRebuildTimer - deltaTime, 0.0f);
+    }
+
+    // --- 破損マス ---
+    bool onCorruptTile = false;
+    for (int i = 0; i < kCorruptTileCount; ++i) {
+        CorruptTile& tile = corruptTiles[i];
+        if (tile.state == CorruptState::kHidden) continue;
+        tile.timer += deltaTime;
+
+        if (tile.state == CorruptState::kWarning) {
+            // 警告：ダメージなしで点滅
+            tile.visible = (static_cast<int>(tile.timer / kCorruptBlinkInterval) % 2) == 0;
+            if (tile.timer >= kCorruptWarningDuration) {
+                tile.state = CorruptState::kActive;
+                tile.timer = 0.0f;
+                tile.visible = true;
+            }
+        } else {
+            // 有効：赤いグリッチ（発光をちらつかせる）
+            float flicker = std::sin(tile.timer * kCorruptGlitchFlickerSpeed + static_cast<float>(i) * kCorruptGlitchPhaseStep);
+            tile.object->SetEmissive(kCorruptGlitchEmissive, (std::max)(kCorruptGlitchIntensityBase + kCorruptGlitchIntensityAmp * flicker, 0.0f));
+            if (tile.timer >= kCorruptActiveDuration) {
+                tile.state = CorruptState::kHidden;
+                tile.visible = false;
+                tile.object->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+            } else if (std::abs(playerPos.x - tile.center.x) <= kFloorTileHalfSize
+                && std::abs(playerPos.z - tile.center.z) <= kFloorTileHalfSize) {
+                onCorruptTile = true;
+            }
+        }
+    }
+
+    // 床ダメージ：地上にいて有効なマスの上にいる間、一定間隔でティックする（タイマーは1つを共用）
+    if (onCorruptTile && isOnGround && playerPos.y < kCorruptDamageMaxHeight) {
+        if (corruptDamageTimer <= 0.0f) {
+            TakeDamage(kCorruptDamagePerTick);
+            corruptDamageTimer = kCorruptDamageInterval;
+        } else {
+            corruptDamageTimer -= deltaTime;
+        }
+    } else {
+        corruptDamageTimer = (std::max)(corruptDamageTimer - deltaTime, 0.0f);
+    }
+
+    // --- データ足場 ---
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        DataPlatform& platform = dataPlatforms[i];
+        if (platform.state == DataPlatform::State::kMaterializing) {
+            platform.timer += deltaTime;
+            float t = Easing::Clamp01(platform.timer / kDataPlatformMaterializeDuration);
+            if (t >= 1.0f) {
+                platform.object->SetDissolve(0.0f, 0.0f, 0.0f);
+                platform.pylon->SetDissolve(0.0f, 0.0f, 0.0f);
+                platform.state = DataPlatform::State::kActive;
+                platform.timer = 0.0f;
+            } else {
+                // 足場の下面から柱の上端へ。境界の発光帯の分だけ余分に動かし、t=1で完全に現れるようにする
+                const Transform& transform = platform.object->GetTransform();
+                float bottom = transform.translate.y - transform.scale.y;
+                float height = transform.scale.y * 2.0f + kDataPylonScale.y * 2.0f;
+                float dissolveHeight = bottom + (height + kDataPlatformDissolveEdgeWidth) * t;
+                platform.object->SetDissolve(dissolveHeight, kDataPlatformDissolveEdgeWidth, platform.timer, 1.0f - t);
+                platform.pylon->SetDissolve(dissolveHeight, kDataPlatformDissolveEdgeWidth, platform.timer, 1.0f - t);
+            }
+        } else if (platform.state == DataPlatform::State::kBreaking) {
+            // 崩壊：赤く光りながら点滅（判定は残す）
+            platform.timer += deltaTime;
+            platform.visible = (static_cast<int>(platform.timer / kDataPlatformBreakBlinkInterval) % 2) == 0;
+            platform.object->SetEmissive(kDataPlatformBreakEmissive, kDataPlatformBreakEmissiveIntensity);
+            platform.pylon->SetEmissive(kDataPlatformBreakEmissive, kDataPlatformBreakEmissiveIntensity);
+            if (platform.timer >= kDataPlatformBreakDuration) {
+                HideDataPlatform(i);
+            }
+        }
+    }
+}
+
+void GameScene::StopArenaRebuild() {
+    for (auto& tile : corruptTiles) {
+        tile.state = CorruptState::kHidden;
+        tile.timer = 0.0f;
+        tile.visible = false;
+        tile.object->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+    }
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        HideDataPlatform(i);
+    }
+    arenaRebuildTimer = 0.0f;
+    corruptDamageTimer = 0.0f;
+}
+
 void GameScene::RestartGame() {
     playerHP = kPlayerMaxHP;
     bossHP = kBossMaxHP;
@@ -1619,6 +1937,7 @@ void GameScene::RestartGame() {
     StopBossLaser();
     StopBossTeleport();
     StopBossShockwave();
+    StopArenaRebuild();
     bossTeleportDest = { 0.0f, 0.0f, 0.0f };
     bossPhase3PulseTimer = 0.0f;
     // ボスの見た目の位置・向きも戻す。READY中はAIが止まっていてbossのSetTranslateが呼ばれないため、
@@ -1662,6 +1981,8 @@ void GameScene::RestartGame() {
     weaponMode = WeaponMode::kRifle;
     portalA.isPlaced = false;
     portalB.isPlaced = false;
+    portalA.platformIndex = -1;
+    portalB.platformIndex = -1;
     if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
     if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
     portalRejectTimer = 0.0f;
@@ -1806,9 +2127,12 @@ void GameScene::FireGrenade() {
         std::uniform_real_distribution<float> distRadius(0.0f, kGrenadeAimSpread);
         float angle = distAngle(randomEngine);
         float spreadRadius = distRadius(randomEngine);
+        // 落とす高さ：普段は発射点と同じ高さ（そこから床まで落ち続ける）。プレイヤーが高い場所（データ足場の上）に
+        // いるときはプレイヤーの足元の高さにして、足場の上に落とす（当たれば爆発して足場が壊れる）
+        float landingY = IsPlayerOnHighGround() ? playerPos.y : launchPos.y;
         Vector3 targetPos = {
             playerPos.x + std::cos(angle) * spreadRadius,
-            launchPos.y,
+            landingY,
             playerPos.z + std::sin(angle) * spreadRadius,
         };
 
@@ -1821,8 +2145,12 @@ void GameScene::FireGrenade() {
         // 山なり軌道：頂点の高さ(kGrenadeArcHeight)から逆算して上方向の初速を求め、
         // 頂点まで昇って同じ高さまで落ちてくる時間(flightFrames)で水平距離を割ることで、
         // 距離によらず「同じ高さまで放物線を描いて狙った位置の近くに着地する」速度を算出する
-        float launchUpSpeed = std::sqrt(2.0f * -kGrenadeGravity * kGrenadeArcHeight);
-        float flightFrames = (2.0f * launchUpSpeed) / -kGrenadeGravity;
+        // 頂点は「発射点と着地点の高い方」＋kGrenadeArcHeight。昇る時間と、頂点から着地点まで落ちる時間を足して
+        // 飛ぶ時間を求める（着地点が発射点と同じ高さなら、以前の式 2*上向き初速/重力 と同じ結果になる）
+        float gravity = -kGrenadeGravity;
+        float apexY = (std::max)(launchPos.y, targetPos.y) + kGrenadeArcHeight;
+        float launchUpSpeed = std::sqrt(2.0f * gravity * (apexY - launchPos.y));
+        float flightFrames = launchUpSpeed / gravity + std::sqrt(2.0f * (apexY - targetPos.y) / gravity);
         float horizontalSpeed = std::clamp(horizontalDistance / flightFrames, kGrenadeMinSpeed, kGrenadeMaxSpeed);
 
         grenade.position = launchPos;
@@ -1838,6 +2166,9 @@ void GameScene::ExplodeGrenade(Grenade& grenade) {
     grenade.object->SetTranslate({ 0.0f, -1000.0f, 0.0f }); // 未使用分は画面外に隠す（弾痕デカールと同じ手法）
 
     Vector3 explosionPos = grenade.position;
+
+    // 爆発範囲に入ったデータ足場を崩壊させる
+    BreakDataPlatformsByExplosion(explosionPos, kGrenadeExplosionRadius);
 
     // プレイヤーが爆発範囲内なら被弾（水平距離のみで判定。垂直方向の細かい判定は仮実装のスコープ外）
     Vector3 toPlayer = { playerPos.x - explosionPos.x, 0.0f, playerPos.z - explosionPos.z };
@@ -2048,6 +2379,7 @@ void GameScene::FireShot() {
     std::vector<Object3d*> targets;
     if (floor) targets.push_back(floor.get());
     for (auto& w : walls) targets.push_back(w.get());
+    AppendDataPlatformColliders(targets);
     for (auto& enemy : enemies) {
         if (enemy.isActive) targets.push_back(enemy.object.get());
     }
@@ -2272,14 +2604,16 @@ void GameScene::FireShot() {
 
             // ボスは移動するため、ワールド座標に固定される弾痕デカールを出すと空中に取り残されて見える。
             // 壁・床など静止オブジェクトのみ弾痕を残す（ヒットフラッシュ・カメラシェイクはボスにも残す）
-            if (!isBossHit) {
+            // データ足場も消えるので、弾痕デカール・ヒットフラッシュは出さない
+            bool isPlatformHit = FindDataPlatformIndex(closestObject) >= 0;
+            if (!isBossHit && !isPlatformHit) {
                 SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
             }
 
             if (isBossHit) {
                 // bossは描画しない芯なので色を変えても見えない。代わりにくさびの赤発光タイマーを使う
                 bossHitFlashTimer = kBossHitFlashDuration;
-            } else {
+            } else if (!isPlatformHit) {
                 // 2. 壁の色を一時的に変える
                 auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
                     return f.object == closestObject;
@@ -2414,7 +2748,83 @@ void GameScene::UpdateWeaponViewModel() {
     weaponPortalGun->Update();
 }
 
+void GameScene::InitializePortalHint() {
+    SpriteCommon* spriteCommon = Framework::GetInstance()->GetSpriteCommon();
+    auto makeRect = [spriteCommon](const Vector2& pos, const Vector2& size, const Vector4& color) {
+        auto sprite = std::make_unique<Sprite>();
+        sprite->Initialize(spriteCommon, "white");
+        sprite->SetAnchorPoint({ 0.0f, 0.0f });
+        sprite->SetPosition(pos);
+        sprite->SetSize(size);
+        sprite->SetColor(color);
+        return sprite;
+    };
+    const Vector2 o = kPortalHintOrigin;
+
+    // 下敷きのパネル（手前の武器パネルと同じ色）
+    portalHintPanel = makeRect(o, kPortalHintPanelSize, kWeaponPanelFrontColor);
+
+    // マウス2つ：本体＋押すボタン（0=左ボタン＝ポータルA、1=右ボタン＝ポータルB）
+    const std::array<Vector4, 2> buttonColors = { kPortalAColor, kPortalBColor };
+    for (int i = 0; i < 2; ++i) {
+        Vector2 bodyPos = { o.x + kPortalHintMouseOffsetX[i], o.y + kPortalHintRowOffsetY };
+        portalHintMouseBodies[i] = makeRect(bodyPos, kPortalHintMouseSize, kPortalHintMouseColor);
+        float buttonX = (i == 0) ? bodyPos.x : bodyPos.x + kPortalHintMouseSize.x - kPortalHintMouseButtonSize.x;
+        portalHintMouseButtons[i] = makeRect({ buttonX, bodyPos.y }, kPortalHintMouseButtonSize, buttonColors[i]);
+    }
+
+    // Rのキー：明るい枠の内側に暗い面を重ねて、キーの形にする
+    Vector2 keyPos = { o.x + kPortalHintKeyOffset.x, o.y + kPortalHintKeyOffset.y };
+    portalHintKeyOuter = makeRect(keyPos, { kPortalHintKeySize, kPortalHintKeySize }, kPortalHintKeyOuterColor);
+    float inner = kPortalHintKeySize - kPortalHintKeyBorder * 2.0f;
+    portalHintKeyInner = makeRect({ keyPos.x + kPortalHintKeyBorder, keyPos.y + kPortalHintKeyBorder }, { inner, inner }, kPortalHintKeyInnerColor);
+
+    portalHintKeyText.Initialize(spriteCommon, 1);
+    portalHintKeyText.SetScale(kPortalHintTextScale);
+    portalHintKeyText.SetPosition({ o.x + kPortalHintKeyTextOffset.x, o.y + kPortalHintKeyTextOffset.y });
+    portalHintKeyText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    portalHintKeyText.SetText("R");
+
+    portalHintResetText.Initialize(spriteCommon, 5);
+    portalHintResetText.SetScale(kPortalHintTextScale);
+    portalHintResetText.SetPosition({ o.x + kPortalHintResetTextOffset.x, o.y + kPortalHintResetTextOffset.y });
+    portalHintResetText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    portalHintResetText.SetText("RESET");
+}
+
+void GameScene::UpdatePortalHint() {
+    portalHintPanel->Update();
+    // もう置いた方（Rでリセットするまで置き直せない）は、ボタンも本体も灰色にする
+    const std::array<bool, 2> placed = { portalA.isPlaced, portalB.isPlaced };
+    const std::array<Vector4, 2> buttonColors = { kPortalAColor, kPortalBColor };
+    for (int i = 0; i < 2; ++i) {
+        portalHintMouseBodies[i]->SetColor(placed[i] ? kPortalHintUsedBodyColor : kPortalHintMouseColor);
+        portalHintMouseButtons[i]->SetColor(placed[i] ? kPortalHintUsedButtonColor : buttonColors[i]);
+        portalHintMouseBodies[i]->Update();
+        portalHintMouseButtons[i]->Update();
+    }
+    portalHintKeyOuter->Update();
+    portalHintKeyInner->Update();
+    portalHintKeyText.Update();
+    portalHintResetText.Update();
+}
+
+void GameScene::DrawPortalHint() {
+    // 呼んだ順に重なるので、下敷き→本体→ボタン→キー→文字の順
+    portalHintPanel->Draw();
+    for (int i = 0; i < 2; ++i) {
+        portalHintMouseBodies[i]->Draw();
+        portalHintMouseButtons[i]->Draw();
+    }
+    portalHintKeyOuter->Draw();
+    portalHintKeyInner->Draw();
+    portalHintKeyText.Draw();
+    portalHintResetText.Draw();
+}
+
 void GameScene::UpdateWeaponHud() {
+    UpdatePortalHint();
+
     // 後ろのパネル（位置・色は固定。Initializeで設定済み）
     for (size_t i = 0; i < weaponPanels.size(); ++i) {
         weaponPanels[i]->Update();
@@ -2595,6 +3005,7 @@ void GameScene::PlacePortal(Portal& portal) {
     std::vector<Object3d*> targets;
     if (floor) targets.push_back(floor.get());
     for (auto& w : walls) targets.push_back(w.get());
+    AppendDataPlatformColliders(targets); // 足場の上面・側面にも置ける
     if (boss) targets.push_back(boss.get());
 
     RaycastHit hit;
@@ -2635,6 +3046,7 @@ void GameScene::PlacePortal(Portal& portal) {
     portal.normal = normal;
     portal.orientation = Calculation::DirectionToDirection({ 0.0f, 0.0f, 1.0f }, normal);
     portal.isPlaced = true;
+    portal.platformIndex = FindDataPlatformIndex(hitObject); // 足場に置いたらインデックス、床・壁なら-1
 
     if (!portal.visual) {
         Framework* framework = Framework::GetInstance();
@@ -2730,6 +3142,11 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
     };
     velocity.y = exitVector.y;
     portalExitVelocity = { exitVector.x, 0.0f, exitVector.z };
+    // 出口が足場（の柱）のときは、横の勢いを消して足場から押し出されて落ちないようにする
+    if (exit->platformIndex >= 0) {
+        portalExitVelocity = { 0.0f, 0.0f, 0.0f };
+        velocity.y = (std::min)(velocity.y, 0.0f);
+    }
     portalExitVelocityTimer = kPortalExitVelocityDuration;
     portalCooldownTimer = kPortalTeleportCooldown;
 

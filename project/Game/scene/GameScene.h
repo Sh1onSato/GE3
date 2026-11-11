@@ -46,6 +46,7 @@ private:
 		Vector3 normal = { 0, 1, 0 };
 		Quaternion orientation = {};
 		std::unique_ptr<Object3d> visual;
+		int platformIndex = -1; // 設置面がデータ足場ならそのインデックス（足場が消えたらポータルも消す）。-1なら床・壁
 	};
 
 	// 射撃処理
@@ -172,7 +173,7 @@ private:
 	// kChasing中は既存の追跡・障害物回避ロジックで移動を続けながらbossAttackTimerを減算し、
 	// 0以下になったタイミングでその時の距離に応じてkMeleeWindup/kRangedWindupへ遷移する
 	// （＝「クールダウン中は棒立ち」ではなく、既存の追跡AIをそのまま活かして常に動き続ける設計）
-	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kShockwaveWindup };
+	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kShockwaveWindup, kRebuildWindup };
 	BossAttackState bossAttackState = BossAttackState::kChasing;
 
 	// ボスのフェーズ（HP比率で段階的に移行する。P3固有の挙動は段階2で追加予定）
@@ -198,6 +199,95 @@ private:
 	static constexpr float kPhaseTextFadeDuration = 0.5f; // 最後のこの時間でアルファを下げて消す
 	static constexpr float kPhaseTextPositionY = 320.0f;
 	static constexpr Vector4 kPhaseTextColor = { 0.85f, 0.3f, 1.0f, 1.0f };
+
+	// ===== アリーナ再構築（P2以降。床の一部を危険地帯にし、空中にデータ足場を実体化させる） =====
+	static constexpr float kArenaRebuildInterval = 20.0f;       // 再構築の間隔[秒]
+	static constexpr float kArenaRebuildWindupDuration = 1.0f;  // 予備動作の長さ
+	static constexpr Vector3 kArenaRebuildWarningEmissive = { 0.3f, 1.0f, 0.8f }; // 予兆の色（データの色）
+	static constexpr float kArenaRebuildGlitch = 0.35f;         // 予備動作の終わりに向けて強めるグリッチの最大強度
+	float arenaRebuildTimer = 0.0f;                             // 0以下で次の攻撃選択時に再構築へ入る
+	void StartArenaRebuild();   // 床の破損とデータ足場の出現を同時に始める
+	void UpdateArenaRebuild();  // タイマー・破損マス・足場・床ダメージの更新（ボスAIが動いている間だけ呼ぶ）
+	void StopArenaRebuild();    // 破損マスと足場を全て非表示・判定なしに戻す
+
+	// --- 床の破損（見た目だけのマス。当たり判定の床は1枚のまま） ---
+	static constexpr float kFloorTileSize = 4.0f;               // 1マスの一辺[m]
+	static constexpr float kFloorTileHalfSize = kFloorTileSize * 0.5f;
+	static constexpr int kFloorTileCountPerSide = 15;           // 15x15マス
+	static constexpr float kFloorTileOriginCenter = -28.0f;     // 最初のマスの中心座標（x,z共通。-28,-24,...,28）
+	static constexpr int kCorruptTileCount = 6;                 // 1回の再構築で破損させるマス数
+	static constexpr int kCorruptTilesNearPlayer = 3;           // うちプレイヤー付近から選ぶ数
+	static constexpr float kCorruptNearRadius = 8.0f;           // 「付近」とみなすXZ距離
+	static constexpr float kCorruptTileLift = 0.02f;            // 床の上面より少しだけ浮かせる量（重ね表示）
+	static constexpr float kCorruptTileCenterY = -1.0f;         // floor_tile.glb(厚さ2m)の中心Y。上面がy=0になる
+	static constexpr Vector3 kCorruptTileScale = { 2.0f, 1.0f, 2.0f };
+	static constexpr float kCorruptWarningDuration = 1.5f;      // 点滅（ダメージなし）
+	static constexpr float kCorruptActiveDuration = 8.0f;       // 危険地帯として有効な時間
+	static constexpr float kCorruptBlinkInterval = 0.1f;        // 警告点滅の切り替え間隔
+	static constexpr Vector3 kCorruptGlitchEmissive = { 1.0f, 0.1f, 0.1f };
+	static constexpr float kCorruptGlitchIntensityBase = 1.2f;  // 赤いちらつきの基準強度
+	static constexpr float kCorruptGlitchIntensityAmp = 0.8f;   // ちらつきの振れ幅
+	static constexpr float kCorruptGlitchFlickerSpeed = 40.0f;  // ちらつきの速さ
+	static constexpr float kCorruptGlitchPhaseStep = 1.7f;      // マスごとに位相をずらす量
+	static constexpr float kCorruptDamageMaxHeight = 0.5f;      // 足元がこれ未満（＝地上）の時だけダメージ
+	static constexpr float kCorruptDamageInterval = 0.5f;
+	static constexpr float kCorruptDamagePerTick = 5.0f;
+	enum class CorruptState { kHidden, kWarning, kActive };
+	struct CorruptTile {
+		std::unique_ptr<Object3d> object;
+		CorruptState state = CorruptState::kHidden;
+		float timer = 0.0f;      // 状態に入ってからの経過時間
+		Vector3 center = {};     // マス中心のXZ（yは使わない）
+		bool visible = false;    // 点滅用：今フレーム描画するか
+	};
+	std::array<CorruptTile, kCorruptTileCount> corruptTiles;
+	float corruptDamageTimer = 0.0f; // 床ダメージのティック用（1つを共用）
+
+	// --- データ足場（空中。ポータルでしか上がれず、グレネードの爆発で壊れる） ---
+	static constexpr int kDataPlatformCount = 3;
+	static constexpr int kDataPlatformCandidateCount = 5;
+	// 候補位置（板の中心）
+	static constexpr std::array<Vector3, kDataPlatformCandidateCount> kDataPlatformPositions = { {
+		{ -8.0f, 6.5f, 4.0f }, { 8.0f, 6.5f, 4.0f }, { 0.0f, 7.0f, -4.0f }, { -6.0f, 6.0f, -12.0f }, { 6.0f, 6.0f, -12.0f }
+	} };
+	static constexpr Vector3 kDataPlatformScale = { 2.0f, 0.2f, 2.0f };  // 4m四方・厚さ0.4m（そのまま当たり判定のhalf-extent）
+	static constexpr float kDataPlatformMaterializeDuration = 0.8f;
+	static constexpr float kDataPlatformBreakDuration = 0.8f;
+	static constexpr float kDataPlatformDissolveEdgeWidth = 0.15f;       // 実体化の境界の発光帯の幅[m]
+	static constexpr float kDataPlatformBreakBlinkInterval = 0.06f;      // 崩壊中の点滅間隔
+	static constexpr Vector3 kDataPlatformBreakEmissive = { 1.0f, 0.1f, 0.1f };
+	static constexpr float kDataPlatformBreakEmissiveIntensity = 1.5f;
+	static constexpr const char* kCorruptTileModelFile = "floor_tile.glb";
+	static constexpr const char* kDataPlatformModelFile = "data_platform.glb";
+	// 足場の中央に立てる柱。地上から足場の上面は見えないため、この柱の側面にポータルを貼って上がる
+	// プレイヤーが高い場所（データ足場の上）にいるときのボスの動き。
+	// 真下に寄って届かない突進・衝撃波ばかり選んでしまうため、距離を取ってグレネード（足場を壊す）中心にする
+	static constexpr float kPlayerHighGroundHeight = 5.5f;          // 足元がこれより上なら「高い場所」（角の上段の上面5.0より上）
+	static constexpr float kBossHighGroundKeepDistance = 10.0f;     // 高い場所のプレイヤーとは、水平にこの距離まで近づいたら止まる
+	static constexpr float kBossHighGroundRetreatDistance = 8.0f;   // これより近ければ下がる
+	static constexpr float kBossHighGroundRetreatSpeed = 0.08f;
+	bool IsPlayerOnHighGround() const { return playerPos.y > kPlayerHighGroundHeight; }
+	static constexpr Vector3 kDataPylonScale = { 0.5f, 1.25f, 0.5f };  // 1m角・高さ2.5m（そのまま当たり判定のhalf-extent）
+	static constexpr const char* kDataPylonModelFile = "data_pylon.glb";
+	// 柱の中心＝足場の中心から（足場の厚みの半分＋柱の高さの半分）だけ上
+	static constexpr float kDataPylonOffsetY = kDataPlatformScale.y + kDataPylonScale.y;
+	struct DataPlatform {
+		enum class State { kHidden, kMaterializing, kActive, kBreaking };
+		std::unique_ptr<Object3d> object;
+		std::unique_ptr<Object3d> pylon; // 足場と同じ状態で出たり消えたりする
+		State state = State::kHidden;
+		float timer = 0.0f;
+		bool visible = false;    // 点滅用：今フレーム描画するか
+	};
+	std::array<DataPlatform, kDataPlatformCount> dataPlatforms;
+	// 当たり判定に入る足場（kActive・kBreaking）をoutへ加える（床・壁と同じ扱いにするため）
+	void AppendDataPlatformColliders(std::vector<Object3d*>& out) const;
+	// objectが足場ならそのインデックス、そうでなければ-1
+	int FindDataPlatformIndex(const Object3d* object) const;
+	// 足場を非表示・判定なしに戻し、付いているポータルも消す
+	void HideDataPlatform(int index);
+	// 爆発の中心から足場のAABBへの最短距離が半径以内のkActive足場をkBreakingにする
+	void BreakDataPlatformsByExplosion(const Vector3& center, float radius);
 
 	// コア命中ボーナス（くさびが開いている間だけコアが狙える）
 	static constexpr float kBossCoreCenterOffsetY = 0.5f;       // bossPos.y + kBossHalfHeight からのコア中心オフセット
@@ -401,6 +491,39 @@ private:
 	static constexpr float kWeaponPanelLineHeight = 3.0f;
 	static constexpr Vector4 kWeaponPanelFrontLineColor = { 0.0f, 0.75f, 1.0f, 0.9f };  // アリーナの発光と同じシアン
 	static constexpr Vector4 kWeaponPanelBackLineColor = { 0.5f, 0.5f, 0.55f, 0.6f };
+
+	// --- ポータルガンの操作ヒント（武器パネルの左隣。ポータルガンを持っている間だけ表示） ---
+	// [マウス(左ボタン青)] [マウス(右ボタン橙)] [Rのキー] RESET
+	std::unique_ptr<Sprite> portalHintPanel;
+	std::array<std::unique_ptr<Sprite>, 2> portalHintMouseBodies;   // 0=左クリック用、1=右クリック用
+	std::array<std::unique_ptr<Sprite>, 2> portalHintMouseButtons;  // 押すボタンをポータルの色で塗る
+	std::unique_ptr<Sprite> portalHintKeyOuter;
+	std::unique_ptr<Sprite> portalHintKeyInner;
+	BitmapText portalHintKeyText;   // "R"
+	BitmapText portalHintResetText; // "RESET"
+	void InitializePortalHint();
+	void UpdatePortalHint();
+	void DrawPortalHint();
+	static constexpr Vector2 kPortalHintOrigin = { 800.0f, 674.0f };  // パネルの左上（武器パネルの左端 970 より左）
+	static constexpr Vector2 kPortalHintPanelSize = { 164.0f, 36.0f };
+	static constexpr Vector2 kPortalHintMouseSize = { 18.0f, 28.0f };
+	static constexpr Vector2 kPortalHintMouseButtonSize = { 9.0f, 12.0f };
+	static constexpr std::array<float, 2> kPortalHintMouseOffsetX = { 8.0f, 32.0f };
+	static constexpr float kPortalHintRowOffsetY = 4.0f;
+	static constexpr Vector2 kPortalHintKeyOffset = { 60.0f, 5.0f };
+	static constexpr float kPortalHintKeySize = 26.0f;
+	static constexpr float kPortalHintKeyBorder = 2.0f;
+	static constexpr float kPortalHintTextScale = 2.0f;
+	static constexpr Vector2 kPortalHintKeyTextOffset = { 66.0f, 9.0f };
+	static constexpr Vector2 kPortalHintResetTextOffset = { 92.0f, 9.0f };
+	static constexpr Vector4 kPortalHintMouseColor = { 0.55f, 0.58f, 0.62f, 1.0f };
+	// 置いた方のポータルのマウス（灰色。ボタンは本体より少し明るくして形は分かるようにする）
+	static constexpr Vector4 kPortalHintUsedBodyColor = { 0.28f, 0.29f, 0.31f, 1.0f };
+	static constexpr Vector4 kPortalHintUsedButtonColor = { 0.4f, 0.4f, 0.42f, 1.0f };
+	static constexpr Vector4 kPortalHintKeyOuterColor = { 0.75f, 0.8f, 0.85f, 0.95f };
+	static constexpr Vector4 kPortalHintKeyInnerColor = { 0.12f, 0.14f, 0.18f, 1.0f };
+	static constexpr Vector4 kPortalAColor = { 0.1f, 0.45f, 1.0f, 1.0f };   // ポータルAのモデルの色に合わせる
+	static constexpr Vector4 kPortalBColor = { 1.0f, 0.45f, 0.05f, 1.0f };  // ポータルBのモデルの色に合わせる
 	static constexpr float kWeaponSlotTextFrontScale = 3.0f;
 	static constexpr float kWeaponSlotTextBackScale = 2.0f;
 	static constexpr Vector2 kWeaponSlotTextFrontPos = { kWeaponIconFrontPos.x - kWeaponIconFrontSize.x - 24.0f, kWeaponIconFrontPos.y - 60.0f };
