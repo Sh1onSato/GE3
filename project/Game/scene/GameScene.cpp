@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "MyGame.h"
 #include "Easing.h"
+#include "AudioManager.h"
 #include "externals/imgui/imgui.h"
 #include <algorithm>
 #include <cfloat>
@@ -52,6 +53,9 @@ void GameScene::Initialize() {
     reticle->SetAnchorPoint({ 0.5f, 0.5f });
     // 赤い壁の上でも見えるように「緑色」にする
     reticle->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f });
+
+    // --- 効果音（Tools/sound/make_se.py で合成した .wav） ---
+    LoadSounds();
 
     // --- プレイヤーHPバー（画面左下、常時表示） ---
     hpBarBackground = std::make_unique<Sprite>();
@@ -161,6 +165,11 @@ void GameScene::Initialize() {
     phaseText.Initialize(framework->GetSpriteCommon(), kPhaseTextMaxChars); // "PHASE 2"/"PHASE 3"の7文字
     phaseText.SetScale(kPhaseTextScale);
     phaseText.SetText("PHASE 2"); // 未設定のままUpdateしないよう初期文字を入れておく（移行時に差し替え）
+    warningText.Initialize(framework->GetSpriteCommon(), kWarningTextMaxChars); // 床全体の消去の溜め中に出す"WARNING"の7文字
+    warningText.SetScale(kWarningTextScale);
+    warningText.SetText("WARNING");
+    warningText.SetColor(kWarningTextColor);
+    warningText.SetPosition({ ((float)WinApp::KclientWidth - warningText.GetWidth()) / 2.0f, kWarningTextPositionY });
     introBarTop = std::make_unique<Sprite>();
     introBarTop->Initialize(framework->GetSpriteCommon(), "white");
     introBarTop->SetPosition({ 0.0f, 0.0f });
@@ -337,8 +346,10 @@ void GameScene::Initialize() {
         platform.pylon->SetScale(kDataPylonScale);
     }
 
-    portalModelA = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_a.glb");
-    portalModelB = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_b.glb");
+    portalModels[0][0] = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_a.glb");
+    portalModels[0][1] = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_b.glb");
+    portalModels[1][0] = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_c.glb");
+    portalModels[1][1] = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_d.glb");
 
     planeModel = std::make_unique<Model>();
     // plane.obj相当のXY平面(法線+Z、2x2サイズ)をコード内で生成し、外部リソースファイルへの依存をなくす
@@ -647,19 +658,26 @@ void GameScene::Update() {
 
     // --- ポータルガンの操作（左クリック:青ポータル／右クリック:オレンジポータル／R:リセット） ---
     if (!isLookPaused && weaponMode == WeaponMode::kPortalGun) {
-        if (input->TriggerMouseButton(0) && !portalA.isPlaced) {
-            PlacePortal(portalA);
+        // 有効な組のうち、そのボタン側が空いている最初の組に置く
+        const int activePairs = ActivePortalPairCount();
+        if (input->TriggerMouseButton(0)) {
+            for (int i = 0; i < activePairs; ++i) {
+                if (!portalPairs[i].a.isPlaced) {
+                    PlacePortal(portalPairs[i].a, portalModels[i][0]);
+                    break;
+                }
+            }
         }
-        if (input->TriggerMouseButton(1) && !portalB.isPlaced) {
-            PlacePortal(portalB);
+        if (input->TriggerMouseButton(1)) {
+            for (int i = 0; i < activePairs; ++i) {
+                if (!portalPairs[i].b.isPlaced) {
+                    PlacePortal(portalPairs[i].b, portalModels[i][1]);
+                    break;
+                }
+            }
         }
         if (input->TriggerKey(DIK_R)) {
-            portalA.isPlaced = false;
-            portalB.isPlaced = false;
-            portalA.platformIndex = -1;
-            portalB.platformIndex = -1;
-            if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
-            if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+            for (Portal* portal : AllPortals()) ClearPortal(*portal);
         }
     }
 
@@ -982,6 +1000,11 @@ void GameScene::Update() {
                 bossAttackState = BossAttackState::kRebuildWindup;
                 bossAttackTimer = kArenaRebuildWindupDuration;
                 bossWarningEmissive = kArenaRebuildWarningEmissive; // データの色で予兆
+            } else if (bossPhase != BossPhase::kP1 && floorWipeTimer <= 0.0f && IsAnyDataPlatformActive()) {
+                // 再構築の次に優先：乗れるデータ足場があるときだけ、床全体の消去の溜めに入る
+                bossAttackState = BossAttackState::kFloorWipeWindup;
+                bossAttackTimer = kFloorWipeWindupDuration;
+                bossWarningEmissive = kFloorWipeWarningColor;
             } else if (bossHiddenTimer >= kBossHiddenTeleportDelay && !highGround
                        && TryPickBossTeleportDest(true)) {
                 // 隠れ続けられたらテレポートで「プレイヤーから見える場所」へ回り込む（再構築以外より優先。P1から使う）
@@ -994,6 +1017,8 @@ void GameScene::Update() {
                 // （高い場所のプレイヤーには突進が届かないので、距離に関係なく下の遠距離の選び方にする）
                 bossAttackState = BossAttackState::kMeleeWindup;
                 bossAttackTimer = kBossMeleeWindupDuration;
+                bossDashRemaining = (bossPhase == BossPhase::kP3) ? kBossDashCountP3
+                                  : (bossPhase == BossPhase::kP2) ? kBossDashCountP2 : kBossDashCountP1;
                 bossWarningEmissive = { 1.0f, 0.15f, 0.05f }; // 突進予備動作：警告色（赤）。くさびの発光で表現する
                 RollBossCombo();
             } else {
@@ -1061,6 +1086,7 @@ void GameScene::Update() {
             bossAttackTimer -= 1.0f / 60.0f;
             if (bossAttackTimer <= 0.0f) {
                 bossDashDir = dirToPlayer; // 突進方向はここで固定し、以後は追尾しない
+                --bossDashRemaining; // この突進で1回消費（終了時に残りがあれば再び予備動作へ）
                 bossAttackState = BossAttackState::kMeleeDash;
                 bossAttackTimer = kBossMeleeDashDuration;
                 bossDashCurrentSpeed = kBossDashStartSpeed; // 突進開始時は遅めから、加速しながら距離を詰める
@@ -1087,7 +1113,7 @@ void GameScene::Update() {
 
             float hitDistance = Calculation::Length(Vector3{ playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z });
             // 高さも見る：ボスの頭（足元＋高さ）より上にいるプレイヤー（データ足場の上など）には当たらない
-            bool hitPlayer = hitDistance <= (kBossCollisionRadius + collisionRadius)
+            bool hitPlayer = hitDistance <= (kBossCollisionRadius + collisionRadius + kBossDashHitExtraRadius)
                 && playerPos.y < bossPos.y + kBossHalfHeight * 2.0f;
 
             bossAttackTimer -= 1.0f / 60.0f;
@@ -1114,11 +1140,9 @@ void GameScene::Update() {
                 knockbackVelocity = { knockDir.x * kKnockbackSpeed, 0.0f, knockDir.z * kKnockbackSpeed };
                 knockbackVelocityTimer = kKnockbackDuration;
 
-                bossAttackState = BossAttackState::kChasing;
-                bossAttackTimer = BossAttackCooldown();
+                EndBossDash();
             } else if (hitWall || bossAttackTimer <= 0.0f) {
-                bossAttackState = BossAttackState::kChasing;
-                bossAttackTimer = BossAttackCooldown();
+                EndBossDash();
             }
             break;
         }
@@ -1309,9 +1333,31 @@ void GameScene::Update() {
             }
             break;
         }
+        case BossAttackState::kFloorWipeWindup: {
+            // 止まってプレイヤーの方を向き、床の赤点滅・WARNING・グリッチを時間とともに強める
+            boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
+            bossAttackTimer -= 1.0f / 60.0f;
+            float elapsed = kFloorWipeWindupDuration - bossAttackTimer;
+            if (bossAttackTimer <= 0.0f) {
+                StopFloorWipe(); // 溜めの演出（点滅・文字・警告色）を片付けてから発動する
+                FireFloorWipe();
+                bossAttackState = BossAttackState::kChasing;
+                bossAttackTimer = BossAttackCooldown();
+                floorWipeTimer = kFloorWipeInterval;
+            } else {
+                UpdateFloorWipeEffect(elapsed);
+            }
+            break;
+        }
         }
 
         UpdateArenaRebuild(); // 再構築タイマー・破損マス・足場・床ダメージ（ボスAIが動いている間だけ進む）
+
+        // 床全体の消去のタイマー（P2以降のボスAIが動いている間だけ減る）と、発動後の閃光
+        if (bossPhase != BossPhase::kP1 && floorWipeTimer > 0.0f) {
+            floorWipeTimer = (std::max)(floorWipeTimer - 1.0f / 60.0f, 0.0f);
+        }
+        UpdateFloorWipeFlash();
 
         if (bossPhase == BossPhase::kP3) {
             bossPhase3PulseTimer += 1.0f / 60.0f; // P3の発光の脈打ち用
@@ -1353,7 +1399,7 @@ void GameScene::Update() {
     for (auto& ring : shockwaveRings) {
         if (!ring.active) continue;
         ring.radius += kShockwaveSpeed / 60.0f;
-        if (ring.radius > kShockwaveMaxRadius) {
+        if (ring.radius > ring.maxRadius) {
             ring.active = false;
             ring.hasHit = false;
             ring.radius = 0.0f;
@@ -1451,8 +1497,14 @@ void GameScene::Update() {
     if (gameOver) {
         StopBossLaser(); // 決着後はレーザーを消す
         ResetBossCombo();
+        bossDashRemaining = 0; // 連続突進は止める
         ResetBossShield();
         if (bossAttackState == BossAttackState::kShield) bossAttackState = BossAttackState::kChasing; // シールドを消す
+        StopFloorWipe(); // 床の発光・WARNING・グリッチ・閃光を戻す（溜め中判定のため状態を戻す前に呼ぶ）
+        if (bossAttackState == BossAttackState::kFloorWipeWindup) {
+            bossAttackState = BossAttackState::kChasing; // 床全体の消去の溜め中なら打ち切る（ダメージなし）
+            bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+        }
         StopBossTeleport();
         StopShockwaves();
         CancelShockwaveWarning();
@@ -1509,13 +1561,21 @@ void GameScene::UpdateRenderObjects() {
     for (auto& decal : bulletDecals) { decal->Update(); }
     // 過去に敵ターゲットでUpdate()呼び忘れによりWVP行列が更新されず巨大に固定表示された
     // バグがあったため、ポータルの見た目も他のObject3dと同様に毎フレームUpdate()を呼ぶ
-    if (portalA.visual) portalA.visual->Update();
-    if (portalB.visual) portalB.visual->Update();
+    for (Portal* portal : AllPortals()) {
+        if (portal->visual) portal->visual->Update();
+    }
     // ポータルを置けなかった直後は、レティクルを一瞬灰色にする
     if (portalRejectTimer > 0.0f) {
         portalRejectTimer = (std::max)(portalRejectTimer - 1.0f / 60.0f, 0.0f);
     }
-    reticle->SetColor(portalRejectTimer > 0.0f ? kReticleRejectColor : kReticleColor);
+    // 優先順位：置けなかった灰色 ＞ ワープ強化中のシアン ＞ 通常
+    Vector4 reticleColor = kReticleColor;
+    if (portalRejectTimer > 0.0f) {
+        reticleColor = kReticleRejectColor;
+    } else if (warpBoostTimer > 0.0f) {
+        reticleColor = kReticleWarpBoostColor;
+    }
+    reticle->SetColor(reticleColor);
     reticle->Update();
 
     // HPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める（背景は常にフル幅のまま）
@@ -1647,8 +1707,9 @@ void GameScene::Draw() {
     for (auto& grenade : grenades) { if (grenade.active) grenade.object->Draw(); }
     for (auto& decal : bulletDecals) { decal->Draw(); }
     // ワープポータル（薄い板なのでシャドウパスには含めない）
-    if (portalA.isPlaced) portalA.visual->Draw();
-    if (portalB.isPlaced) portalB.visual->Draw();
+    for (Portal* portal : AllPortals()) {
+        if (portal->isPlaced && portal->visual) portal->visual->Draw();
+    }
 
     // パーティクルの描画（点・線・面、それぞれ別のPSOで描画する）
     framework->GetParticleCommon()->PreDraw(particleManagerLine->GetDrawType());
@@ -1717,6 +1778,11 @@ void GameScene::Draw() {
         phaseText.Draw();
     }
 
+    // --- 5.7 UI（床全体の消去の"WARNING"文字。溜め中の点滅表示のオン期間だけ） ---
+    if (warningTextVisible) {
+        warningText.Draw();
+    }
+
     // --- 6. UI（設定メニュー）の描画：Pキーでのポーズ中のみ表示 ---
     if (isLookPaused) {
         settingsMenu.Draw();
@@ -1751,6 +1817,10 @@ void GameScene::TriggerCameraShake(float duration, float strength) {
 }
 
 void GameScene::TakeDamage(float amount) {
+    // ワープ直後は短い無敵（ダメージ・被弾演出ともに無し）
+    if (warpInvulnTimer > 0.0f) {
+        return;
+    }
     playerHP -= amount;
     if (playerHP < 0.0f) {
         playerHP = 0.0f;
@@ -1760,10 +1830,8 @@ void GameScene::TakeDamage(float amount) {
 }
 
 void GameScene::DamageBoss(float amount) {
-    // フェーズ移行演出中は無敵
-    if (bossAttackState == BossAttackState::kPhaseShift
-        || bossAttackState == BossAttackState::kTeleportOut
-        || bossAttackState == BossAttackState::kTeleportIn) {
+    // フェーズ移行・テレポート・アリーナ再構築の溜めの間は無敵（IsBossInvulnerable 参照）
+    if (IsBossInvulnerable()) {
         return;
     }
     bossHP -= amount;
@@ -1786,7 +1854,10 @@ void GameScene::StartBossPhaseShift(BossPhase next) {
     if (bossAttackState == BossAttackState::kRebuildWindup) {
         screenEffect->SetTransitionGlitch(0.0f, 0.0f);
     }
+    // 床全体の消去の溜め中なら打ち切る（床の発光・WARNING・グリッチ・閃光を戻す。警告色は下で戻す）
+    StopFloorWipe();
     if (next == BossPhase::kP2) {
+        floorWipeTimer = kFloorWipeFirstDelay; // 再構築で足場が出てから少し後に1回目が来るようにする
         arenaRebuildTimer = 0.0f; // 移行演出が終わった直後に1回目の再構築が起きるようにする
         shockwaveGimmickTimer = kShockwaveGimmickFirstDelay; // 衝撃波ギミックは再構築と重ならないよう少し間を置く
         StartCornerCollapse(kCornerCollapseCountP2);
@@ -1798,6 +1869,7 @@ void GameScene::StartBossPhaseShift(BossPhase next) {
     bossAttackTimer = kBossPhaseShiftDuration;
     bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
     ResetBossCombo(); // 組み合わせ攻撃は打ち切る
+    bossDashRemaining = 0; // 連続突進は打ち切る
     StopBossLaser(); // 進行中のレーザーは止める（グレネードは飛んでいるものをそのまま）
     // シールド中だった場合は上の状態上書きで非表示になる。命中の記録だけ消す（クールダウンはそのまま）
     bossShieldHitCount = 0;
@@ -1828,11 +1900,77 @@ void GameScene::StartBossPhaseShift(BossPhase next) {
     phaseTextTimer = kPhaseTextDuration;
 }
 
+bool GameScene::IsAnyDataPlatformActive() const {
+    for (const auto& platform : dataPlatforms) {
+        if (platform.state == DataPlatform::State::kActive) return true;
+    }
+    return false;
+}
+
+void GameScene::UpdateFloorWipeEffect(float elapsed) {
+    const float t = Easing::Clamp01(elapsed / kFloorWipeWindupDuration);
+
+    // 床を赤く点滅：経過とともに周期を短く・強度を強くする（位相は経過時間から積算せず、現在周期で近似）
+    const float period = kFloorWipeBlinkPeriodStart + (kFloorWipeBlinkPeriodEnd - kFloorWipeBlinkPeriodStart) * t;
+    const float peak = kFloorWipeBlinkIntensityStart + (kFloorWipeBlinkIntensityEnd - kFloorWipeBlinkIntensityStart) * t;
+    const bool on = std::fmod(elapsed, period) < period * 0.5f;
+    floor->SetEmissive(kFloorWipeWarningColor, on ? peak : 0.0f);
+
+    // WARNING文字：一定間隔で点滅
+    warningTextVisible = (static_cast<int>(elapsed / kWarningTextBlinkInterval) % 2) == 0;
+
+    // 軽いグリッチを後半に向けて強める
+    screenEffect->SetTransitionGlitch(kFloorWipeWindupGlitchMax * t * t, elapsed);
+}
+
+void GameScene::FireFloorWipe() {
+    // 安全なのはデータ足場の上だけ（角のブロックの上は高さ不足で対象）
+    if (!IsPlayerOnHighGround()) {
+        TakeDamage(kFloorWipeDamage);
+    }
+    floorWipeFlashTimer = kFloorWipeFlashDuration;
+    floorWipeGlitchTimer = kFloorWipeGlitchOnFireDuration;
+    floor->SetEmissive(kFloorWipeFlashColor, kFloorWipeFlashIntensity);
+    screenEffect->SetTransitionGlitch(kFloorWipeGlitchOnFire, 0.0f);
+    TriggerCameraShake(kFloorWipeShakeDuration, kFloorWipeShakeStrength);
+}
+
+void GameScene::UpdateFloorWipeFlash() {
+    const float deltaTime = 1.0f / 60.0f;
+    if (floorWipeFlashTimer > 0.0f) {
+        floorWipeFlashTimer = (std::max)(floorWipeFlashTimer - deltaTime, 0.0f);
+        const float ratio = floorWipeFlashTimer / kFloorWipeFlashDuration; // 1→0
+        floor->SetEmissive(kFloorWipeFlashColor, kFloorWipeFlashIntensity * ratio);
+        if (floorWipeFlashTimer <= 0.0f) {
+            floor->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+        }
+    }
+    if (floorWipeGlitchTimer > 0.0f) {
+        floorWipeGlitchTimer = (std::max)(floorWipeGlitchTimer - deltaTime, 0.0f);
+        const float ratio = floorWipeGlitchTimer / kFloorWipeGlitchOnFireDuration; // 1→0
+        const float elapsed = kFloorWipeGlitchOnFireDuration - floorWipeGlitchTimer;
+        screenEffect->SetTransitionGlitch(kFloorWipeGlitchOnFire * ratio, elapsed);
+    }
+}
+
+void GameScene::StopFloorWipe() {
+    const bool wasWindup = (bossAttackState == BossAttackState::kFloorWipeWindup);
+    const bool wasActive = wasWindup || warningTextVisible || floorWipeFlashTimer > 0.0f || floorWipeGlitchTimer > 0.0f;
+    if (wasActive) {
+        floor->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+        screenEffect->SetTransitionGlitch(0.0f, 0.0f);
+    }
+    warningTextVisible = false;
+    floorWipeFlashTimer = 0.0f;
+    floorWipeGlitchTimer = 0.0f;
+}
+
 void GameScene::UpdatePhaseText() {
     // 最後のkPhaseTextFadeDurationでアルファを下げて消す（タイマーの減算はボスAI側＝ポーズ中は進まない）
     float alpha = (std::min)(phaseTextTimer / kPhaseTextFadeDuration, 1.0f);
     phaseText.SetColor({ kPhaseTextColor.x, kPhaseTextColor.y, kPhaseTextColor.z, alpha });
     phaseText.Update();
+    warningText.Update(); // 位置・色は溜め処理側で設定済み。非表示中もUpdateしておく
 }
 
 void GameScene::UpdateBossLaserTransform(float yaw, float radius) {
@@ -1892,6 +2030,7 @@ void GameScene::StartBossShield() {
     bossAttackTimer = kBossShieldDuration;
     bossShieldHitCount = 0;
     bossShieldHitWindowTimer = 0.0f;
+    bossDashRemaining = 0; // 連続突進は打ち切る
 }
 
 void GameScene::ResetBossShield() {
@@ -2076,18 +2215,41 @@ void GameScene::SpawnShockwaves() {
     for (size_t wallIndex : shockwaveWarningWalls) {
         walls[wallIndex]->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
         const Vector3& pos = ArenaLayout::kWallDatas[wallIndex].pos;
-        for (auto& ring : shockwaveRings) {
-            if (ring.active) continue;
-            ring.active = true;
-            ring.hasHit = false;
-            ring.center = { pos.x, 0.0f, pos.z };
-            ring.radius = kShockwaveStartRadius;
-            break;
-        }
+        SpawnShockwaveRing({ pos.x, 0.0f, pos.z }, kShockwaveMaxRadius);
     }
     shockwaveWarningWalls.clear();
     shockwaveWarningTimer = 0.0f;
     TriggerCameraShake(kShockwaveShakeDuration, kShockwaveShakeStrength);
+}
+
+bool GameScene::SpawnShockwaveRing(const Vector3& center, float maxRadius) {
+    for (auto& ring : shockwaveRings) {
+        if (ring.active) continue;
+        ring.active = true;
+        ring.hasHit = false;
+        ring.center = center;
+        ring.radius = kShockwaveStartRadius;
+        ring.maxRadius = maxRadius;
+        return true;
+    }
+    return false;
+}
+
+void GameScene::EndBossDash() {
+    // 止まった所（ボスの足元）から小さな衝撃波を出す
+    SpawnShockwaveRing({ bossPos.x, 0.0f, bossPos.z }, kDashShockwaveMaxRadius);
+    TriggerCameraShake(kShockwaveShakeDuration, kShockwaveShakeStrength);
+
+    // 残りがあり、プレイヤーが高所でも隠れてもいなければ、予備動作に戻って連続突進
+    if (bossDashRemaining > 0 && !IsPlayerOnHighGround() && bossHiddenTimer <= 0.0f) {
+        bossAttackState = BossAttackState::kMeleeWindup;
+        bossAttackTimer = kBossDashRewindupDuration;
+        bossWarningEmissive = { 1.0f, 0.15f, 0.05f }; // 警告色（赤）を再セット
+    } else {
+        bossDashRemaining = 0;
+        bossAttackState = BossAttackState::kChasing;
+        bossAttackTimer = BossAttackCooldown();
+    }
 }
 
 void GameScene::CancelShockwaveWarning() {
@@ -2171,12 +2333,8 @@ void GameScene::FinishCornerGone(CornerData& corner) {
         for (auto& decal : bulletDecals) {
             if (inside(decal->GetTransform().translate)) decal->SetTranslate({ 0.0f, kCornerHiddenY, 0.0f });
         }
-        for (Portal* portal : { &portalA, &portalB }) {
-            if (portal->isPlaced && inside(portal->position)) {
-                portal->isPlaced = false;
-                portal->platformIndex = -1;
-                if (portal->visual) portal->visual->SetScale({ 0.0f, 0.0f, 0.0f });
-            }
+        for (Portal* portal : AllPortals()) {
+            if (portal->isPlaced && inside(portal->position)) ClearPortal(*portal);
         }
         // 画面外へ移す（AABBはy=-1000付近で、床・壁・足場・ボス・プレイヤーのどれとも重ならない）
         walls[index]->SetTranslate({ data.pos.x, kCornerHiddenY, data.pos.z });
@@ -2248,12 +2406,8 @@ void GameScene::HideDataPlatform(int index) {
     platform.pylon->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
 
     // この足場に付いているポータルを消す
-    for (Portal* portal : { &portalA, &portalB }) {
-        if (portal->platformIndex == index) {
-            portal->isPlaced = false;
-            portal->platformIndex = -1;
-            if (portal->visual) portal->visual->SetScale({ 0.0f, 0.0f, 0.0f });
-        }
+    for (Portal* portal : AllPortals()) {
+        if (portal->platformIndex == index) ClearPortal(*portal);
     }
 }
 
@@ -2474,6 +2628,14 @@ void GameScene::RestartGame() {
     weaponPumpTimer = 0.0f;
     fireCooldownTimer = 0.0f;
 
+    // 床全体の消去・ワープ強化の残りを消す（溜め中の状態を戻す前に、床の発光・WARNING・グリッチも確実に戻す）
+    StopFloorWipe();
+    floor->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
+    screenEffect->SetTransitionGlitch(0.0f, 0.0f);
+    floorWipeTimer = 0.0f;
+    warpBoostTimer = 0.0f;
+    warpInvulnTimer = 0.0f;
+
     // ボスをスポーン地点・追跡状態へ戻す
     bossPos = ArenaLayout::kBossInitialPos;
     bossAttackState = BossAttackState::kChasing;
@@ -2493,6 +2655,7 @@ void GameScene::RestartGame() {
     bossLaserCenterYaw = 0.0f;
     StopBossLaser();
     ResetBossCombo();
+    bossDashRemaining = 0;
     ResetBossShield(); // bossAttackStateはkChasingに戻し済みなのでシールドも非表示
     StopBossTeleport();
     StopShockwaves();
@@ -2542,12 +2705,7 @@ void GameScene::RestartGame() {
     hitFlashes.clear();
 
     weaponMode = WeaponMode::kRifle;
-    portalA.isPlaced = false;
-    portalB.isPlaced = false;
-    portalA.platformIndex = -1;
-    portalB.platformIndex = -1;
-    if (portalA.visual) portalA.visual->SetScale({ 0.0f, 0.0f, 0.0f });
-    if (portalB.visual) portalB.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+    for (Portal* portal : AllPortals()) ClearPortal(*portal);
     portalRejectTimer = 0.0f;
 
     // リトライ時は短縮版の開始演出を流す（暗転中に呼ばれるため、明転とともにREADYが見える）
@@ -2821,6 +2979,9 @@ void GameScene::FireShot() {
     // 命中判定に関わらず、発砲した時点でリコイル演出とカメラシェイクを開始する
     weaponRecoilTimer = kRecoilDuration;
     weaponPumpTimer = kPumpDuration; // 先台のポンプ動作もここで開始
+    // 発射音とポンプ音（ポンプ音は先台の動きのタイミングに合わせた無音の間を含めて作ってあるので、同時に鳴らすだけでよい）
+    PlaySe(kSeShotgunFire, kSeFireVolume);
+    PlaySe(kSeShotgunPump, kSePumpVolume);
     TriggerCameraShake(kFireShakeDuration, kFireShakeStrength);
 
     Transform camTrans = camera->GetTransform();
@@ -2998,9 +3159,11 @@ void GameScene::FireShot() {
         std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
 
         // シールド中に正面から当たった弾は弾かれる（ダメージ無効・火花は青）
+        // 弾かれる：シールド中に正面から当たったとき、またはボスが無敵の間（フェーズ移行・テレポート・再構築の溜め）。
+        // 無敵の間も「弾かれた」表示（青い火花・キン）にして、ダメージが入っていないことを見た目と音で分かるようにする
         const bool isShieldBlocked = (closestObject == boss.get())
-            && bossAttackState == BossAttackState::kShield
-            && IsFromBossFront(playerPos);
+            && ((bossAttackState == BossAttackState::kShield && IsFromBossFront(playerPos))
+                || IsBossInvulnerable());
         const Vector3& sc = kBossShieldSparkColor;
 
         // 指定した中心方向まわりに、coneAngle の範囲でランダムにばらまいた単位ベクトルを返す。
@@ -3165,6 +3328,7 @@ void GameScene::FireShot() {
 
             // カメラシェイク：的でも命中の「重み」を出す
             TriggerCameraShake(kHitShakeDuration, kHitShakeStrength);
+            PlaySe(kSeHitBoss, kSeHitVolume);
 
             Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         } else {
@@ -3191,6 +3355,9 @@ void GameScene::FireShot() {
                     // 正面からの弾はシールドに弾かれる：ダメージ無効（コア判定も無効）
                     isCoreHit = false;
                 } else {
+                    if (warpBoostTimer > 0.0f) {
+                        damage *= kWarpBoostDamageMultiplier; // ワープ直後の強化
+                    }
                     DamageBoss(damage);
                     // シールド中でなければ、正面からの命中を記録する。直近kBossShieldTriggerWindow秒以内にkBossShieldTriggerHits回で張る
                     if (bossAttackState != BossAttackState::kShield && IsFromBossFront(playerPos)) {
@@ -3244,6 +3411,17 @@ void GameScene::FireShot() {
             float hitShakeStrength = isCoreHit ? kBossCoreHitShakeStrength : kHitShakeStrength;
             if (isShieldBlocked) hitShakeStrength = kBossShieldBlockShakeStrength; // 弾かれたときは弱め
             TriggerCameraShake(kHitShakeDuration, hitShakeStrength);
+
+            // 着弾音：弾かれた／コア／ボス／それ以外（壁・床・足場）
+            if (isShieldBlocked) {
+                PlaySe(kSeShieldBlock, kSeHitVolume);
+            } else if (isCoreHit) {
+                PlaySe(kSeHitCore, kSeHitVolume);
+            } else if (isBossHit) {
+                PlaySe(kSeHitBoss, kSeHitVolume);
+            } else {
+                PlaySe(kSeHitWall, kSeHitWallVolume);
+            }
 
             Logger::Log("Hit! Distance: " + std::to_string(closestHit.distance) + "\n");
         }
@@ -3356,6 +3534,18 @@ void GameScene::UpdateWeaponViewModel() {
     weaponPortalGun->Update();
 }
 
+void GameScene::LoadSounds() {
+    // 同じ名前は2回目以降は無視されるので、シーンに入るたびに呼んでよい
+    AudioManager* audio = AudioManager::GetInstance();
+    for (const char* name : { kSeShotgunFire, kSeShotgunPump, kSeHitWall, kSeHitBoss, kSeHitCore, kSeShieldBlock }) {
+        audio->Load(name, std::string(kSoundDir) + name + ".wav");
+    }
+}
+
+void GameScene::PlaySe(const char* name, float volume) {
+    AudioManager::GetInstance()->Play(name, false, volume);
+}
+
 void GameScene::InitializePortalHint() {
     SpriteCommon* spriteCommon = Framework::GetInstance()->GetSpriteCommon();
     auto makeRect = [spriteCommon](const Vector2& pos, const Vector2& size, const Vector4& color) {
@@ -3402,12 +3592,25 @@ void GameScene::InitializePortalHint() {
 
 void GameScene::UpdatePortalHint() {
     portalHintPanel->Update();
-    // もう置いた方（Rでリセットするまで置き直せない）は、ボタンも本体も灰色にする
-    const std::array<bool, 2> placed = { portalA.isPlaced, portalB.isPlaced };
-    const std::array<Vector4, 2> buttonColors = { kPortalAColor, kPortalBColor };
+    // ボタンの色は「次にそのクリックで置かれる色」。置けるものが無ければボタンも本体も灰色にする
+    const std::array<std::array<Vector4, 2>, kMaxPortalPairs> pairColors = {
+        std::array<Vector4, 2>{ kPortalAColor, kPortalBColor },
+        std::array<Vector4, 2>{ kPortalCColor, kPortalDColor },
+    };
+    const int activePairs = ActivePortalPairCount();
     for (int i = 0; i < 2; ++i) {
-        portalHintMouseBodies[i]->SetColor(placed[i] ? kPortalHintUsedBodyColor : kPortalHintMouseColor);
-        portalHintMouseButtons[i]->SetColor(placed[i] ? kPortalHintUsedButtonColor : buttonColors[i]);
+        bool canPlace = false;
+        Vector4 nextColor = kPortalHintUsedButtonColor;
+        for (int p = 0; p < activePairs; ++p) {
+            const Portal& portal = (i == 0) ? portalPairs[p].a : portalPairs[p].b;
+            if (!portal.isPlaced) {
+                canPlace = true;
+                nextColor = pairColors[p][i];
+                break;
+            }
+        }
+        portalHintMouseBodies[i]->SetColor(canPlace ? kPortalHintMouseColor : kPortalHintUsedBodyColor);
+        portalHintMouseButtons[i]->SetColor(nextColor);
         portalHintMouseBodies[i]->Update();
         portalHintMouseButtons[i]->Update();
     }
@@ -3609,7 +3812,32 @@ bool GameScene::RaycastClosest(const Ray& ray, const std::vector<Object3d*>& tar
     return true;
 }
 
-void GameScene::PlacePortal(Portal& portal) {
+// 戻り値の型はクラスの外に書くので GameScene:: を付ける（引数は GameScene:: の後なので不要）
+GameScene::Portal* GameScene::FindPartner(const Portal& portal) {
+    for (auto& pair : portalPairs) {
+        if (&portal == &pair.a) return &pair.b;
+        if (&portal == &pair.b) return &pair.a;
+    }
+    return nullptr;
+}
+
+std::array<GameScene::Portal*, GameScene::kMaxPortalPairs * 2> GameScene::AllPortals() {
+    std::array<Portal*, kMaxPortalPairs * 2> result{};
+    int index = 0;
+    for (auto& pair : portalPairs) {
+        result[index++] = &pair.a;
+        result[index++] = &pair.b;
+    }
+    return result;
+}
+
+void GameScene::ClearPortal(Portal& portal) {
+    portal.isPlaced = false;
+    portal.platformIndex = -1;
+    if (portal.visual) portal.visual->SetScale({ 0.0f, 0.0f, 0.0f });
+}
+
+void GameScene::PlacePortal(Portal& portal, const std::shared_ptr<Model>& model) {
     Transform camTrans = camera->GetTransform();
 
     // カメラの回転から前方ベクトルを計算（FireShot()と同じ計算式）
@@ -3655,10 +3883,10 @@ void GameScene::PlacePortal(Portal& portal) {
         hit.hitPoint.z + normal.z * 0.02f,
     };
 
-    // もう一方のポータルが置いてあるときは、離れすぎた場所には置かない（レティクルの色で知らせる）
-    const Portal& other = (&portal == &portalA) ? portalB : portalA;
-    if (other.isPlaced) {
-        Vector3 diff = { candidate.x - other.position.x, candidate.y - other.position.y, candidate.z - other.position.z };
+    // 同じ組の相方が置いてあるときは、離れすぎた場所には置かない（レティクルの色で知らせる）
+    const Portal* other = FindPartner(portal);
+    if (other && other->isPlaced) {
+        Vector3 diff = { candidate.x - other->position.x, candidate.y - other->position.y, candidate.z - other->position.z };
         if (Calculation::Length(diff) > kPortalMaxPairDistance) {
             portalRejectTimer = kPortalRejectFlashDuration;
             return;
@@ -3675,7 +3903,7 @@ void GameScene::PlacePortal(Portal& portal) {
         Framework* framework = Framework::GetInstance();
         portal.visual = std::make_unique<Object3d>();
         portal.visual->Initialize(framework->GetObject3dCommon());
-        portal.visual->SetModel((&portal == &portalA) ? portalModelA : portalModelB);
+        portal.visual->SetModel(model);
     }
 
     portal.visual->SetRotateQuaternion(portal.orientation);
@@ -3704,7 +3932,7 @@ void GameScene::PlacePortal(Portal& portal) {
     portal.visual->SetScale({ kPortalHalfSize * scaleLocalX, kPortalHalfSize * scaleLocalY, kPortalHalfSize });
     portal.visual->SetTranslate(portal.position);
 
-    // portalAは青、portalBはオレンジの色はモデル側に付いているので、基本色は白にする
+    // 各ポータルの色（青/オレンジ/緑/ピンク）はモデル側に付いているので、基本色は白にする
     portal.visual->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
 }
 
@@ -3725,12 +3953,24 @@ Vector3 GameScene::TransformThroughPortal(const Portal& from, const Portal& to, 
 }
 
 void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
+    // ワープ強化のタイマー（ゲームが動いている間だけ減る。早期returnより前に置く）
+    if (warpBoostTimer > 0.0f) {
+        warpBoostTimer = (std::max)(warpBoostTimer - 1.0f / 60.0f, 0.0f);
+    }
+    if (warpInvulnTimer > 0.0f) {
+        warpInvulnTimer = (std::max)(warpInvulnTimer - 1.0f / 60.0f, 0.0f);
+    }
     if (portalCooldownTimer > 0.0f) {
         portalCooldownTimer -= 1.0f / 60.0f;
         return;
     }
 
-    if (!(portalA.isPlaced && portalB.isPlaced)) {
+    // 組がそろっているポータルが1つも無ければ何もしない
+    bool anyPairComplete = false;
+    for (const auto& pair : portalPairs) {
+        if (pair.a.isPlaced && pair.b.isPlaced) anyPairComplete = true;
+    }
+    if (!anyPairComplete) {
         portalExitLock = nullptr;
         return;
     }
@@ -3753,15 +3993,16 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
     if (portalExitLock && DistanceToBody(*portalExitLock) >= kPortalRadius + kPortalExitLockMargin) {
         portalExitLock = nullptr;
     }
-    bool canEnterA = (portalExitLock != &portalA);
-    bool canEnterB = (portalExitLock != &portalB);
-
-    if (canEnterA && DistanceToBody(portalA) < kPortalRadius) {
-        entry = &portalA;
-        exit = &portalB;
-    } else if (canEnterB && DistanceToBody(portalB) < kPortalRadius) {
-        entry = &portalB;
-        exit = &portalA;
+    // 入口になれるのは、相方も置いてあるポータルだけ
+    for (Portal* portal : AllPortals()) {
+        if (!portal->isPlaced || portal == portalExitLock) continue;
+        const Portal* partner = FindPartner(*portal);
+        if (!partner || !partner->isPlaced) continue;
+        if (DistanceToBody(*portal) < kPortalRadius) {
+            entry = portal;
+            exit = partner;
+            break;
+        }
     }
 
     if (!entry) {
@@ -3786,6 +4027,8 @@ void GameScene::UpdatePortalTeleport(float preCollisionVelocityY) {
     portalExitVelocityTimer = kPortalExitVelocityDuration;
     portalCooldownTimer = kPortalTeleportCooldown;
     portalExitLock = exit; // 出てきたポータルから離れるまで、そこには入れない
+    warpBoostTimer = kWarpBoostDuration;     // ワープ直後の与ダメージ強化
+    warpInvulnTimer = kWarpInvulnDuration;   // ワープ直後の短い無敵
 
     // ワープ通過の瞬間、Apex/Titanfallのフェイズ移動のような一瞬のグレースケール演出を入れる
     screenEffect->TriggerGrayscaleFlash();

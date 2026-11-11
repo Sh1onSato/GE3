@@ -26,6 +26,8 @@ T = 0.012  # 発光ラインの出っ張り（実寸）
 
 PORTAL_A = (0.1, 0.45, 1.0)
 PORTAL_B = (1.0, 0.45, 0.05)
+PORTAL_C = (0.2, 1.0, 0.35)    # P3 の2組目（Aの相方）：緑
+PORTAL_D = (1.0, 0.3, 0.75)    # P3 の2組目（Bの相方）：ピンク
 DANGER = (1.0, 0.35, 0.05)      # グレネード
 TARGET = (1.0, 0.55, 0.1)       # 的（今のオレンジ色の的に合わせる）
 HEAL = (0.3, 1.0, 0.45)         # 回復
@@ -208,6 +210,8 @@ def main():
         "grenade": build_grenade(),
         "portal_a": build_portal("portal_a", PORTAL_A),
         "portal_b": build_portal("portal_b", PORTAL_B),
+        "portal_c": build_portal("portal_c", PORTAL_C),
+        "portal_d": build_portal("portal_d", PORTAL_D),
         "target": build_target(),
         "heal_cube": build_heal_cube(),
         "laser": build_laser(),

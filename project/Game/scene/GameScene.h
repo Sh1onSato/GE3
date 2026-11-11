@@ -49,6 +49,13 @@ private:
 		int platformIndex = -1; // 設置面がデータ足場ならそのインデックス（足場が消えたらポータルも消す）。-1なら床・壁
 	};
 
+	// ポータルの組（a↔bがつながる）。1組目=青/オレンジ、2組目(P3のみ)=緑/ピンク
+	struct PortalPair {
+		Portal a; // 左クリックで置く側
+		Portal b; // 右クリックで置く側
+	};
+	static constexpr int kMaxPortalPairs = 2;
+
 	// 射撃処理
 	void FireShot();
 	// 弾痕デカールをリングバッファで生成（最古のものを上書き）。hitAABBは着弾面の端からのはみ出し防止に使う
@@ -56,7 +63,16 @@ private:
 	// targetsの中から最も近いレイヒットを探す（FireShot/PlacePortalで共用）
 	bool RaycastClosest(const Ray& ray, const std::vector<Object3d*>& targets, RaycastHit* outHit, AABB* outAABB, Object3d** outObject = nullptr);
 	// ポータルを設置する（カメラ正面へレイキャストし、床・壁にヒットした位置に置く）
-	void PlacePortal(Portal& portal);
+	// modelは置くポータルに使うモデル（組・a/bごとに違う）
+	void PlacePortal(Portal& portal, const std::shared_ptr<Model>& model);
+	// いま置ける組の数（P3のみ2組、それ以外は1組）
+	int ActivePortalPairCount() const { return bossPhase == BossPhase::kP3 ? 2 : 1; }
+	// 同じ組の相方を返す（portalがどの組にも属さなければnullptr）
+	Portal* FindPartner(const Portal& portal);
+	// 全ポータル（kMaxPortalPairs*2個）を列挙する
+	std::array<Portal*, kMaxPortalPairs * 2> AllPortals();
+	// ポータルを置いていない状態に戻す（見た目は縮小して隠す）
+	static void ClearPortal(Portal& portal);
 	// ポータル同士のテレポート判定・実行（移動処理より後、playerPos確定後に呼ぶ）。
 	// preCollisionVelocityYはY軸の衝突判定でvelocity.yが0にリセットされる前の値を渡すこと
 	void UpdatePortalTeleport(float preCollisionVelocityY);
@@ -93,6 +109,15 @@ private:
 	// 演出用カメラ中かどうか（銃・レティクルを隠す判定に使う）
 	bool IsIntroCameraActive() const { return introPhase == IntroPhase::kReady && introIsFull; }
 	// ボスが実体化演出の途中か（影パスを止める判定に使う）
+	// ボスが無敵か。止まって溜めている「特別な行動」の間は、撃っても効かない（撃つと弾かれた表示になる）。
+	// アリーナ再構築の溜めは、フェーズ移行の直後に最優先で来るため、移行演出から続けて無敵にしている
+	// （以前は再構築の溜めだけ無敵でなく、待っているのにゲージが減って見えた。2026/11/11）
+	bool IsBossInvulnerable() const {
+		return bossAttackState == BossAttackState::kPhaseShift
+			|| bossAttackState == BossAttackState::kTeleportOut
+			|| bossAttackState == BossAttackState::kTeleportIn
+			|| bossAttackState == BossAttackState::kRebuildWindup;
+	}
 	bool IsBossMaterializing() const {
 		return (introPhase == IntroPhase::kReady && introElapsed < kIntroMaterializeStart + kIntroMaterializeDuration)
 			|| bossAttackState == BossAttackState::kTeleportOut
@@ -177,7 +202,7 @@ private:
 	// kChasing中は既存の追跡・障害物回避ロジックで移動を続けながらbossAttackTimerを減算し、
 	// 0以下になったタイミングでその時の距離に応じてkMeleeWindup/kRangedWindupへ遷移する
 	// （＝「クールダウン中は棒立ち」ではなく、既存の追跡AIをそのまま活かして常に動き続ける設計）
-	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kRebuildWindup, kShield };
+	enum class BossAttackState { kChasing, kMeleeWindup, kMeleeDash, kRangedWindup, kRangedBurst, kPhaseShift, kLaserWindup, kLaserSweep, kTeleportOut, kTeleportIn, kRebuildWindup, kShield, kFloorWipeWindup };
 	BossAttackState bossAttackState = BossAttackState::kChasing;
 
 	// ボスのフェーズ（HP比率で段階的に移行する。P3固有の挙動は段階2で追加予定）
@@ -214,6 +239,50 @@ private:
 	void StartArenaRebuild();   // 床の破損とデータ足場の出現を同時に始める
 	void UpdateArenaRebuild();  // タイマー・破損マス・足場・床ダメージの更新（ボスAIが動いている間だけ呼ぶ）
 	void StopArenaRebuild();    // 破損マスと足場を全て非表示・判定なしに戻す
+
+	// ===== 床全体の消去（P2以降の大技。データ足場の上にいないと大ダメージ＝ポータルでの退避が必須になる） =====
+	static constexpr float kFloorWipeInterval = 35.0f;          // 次に使えるようになるまでの間隔[秒]
+	static constexpr float kFloorWipeFirstDelay = 15.0f;        // P2に入ってから1回目までの待ち[秒]
+	static constexpr float kFloorWipeWindupDuration = 3.5f;     // 溜め（予兆）の長さ
+	static constexpr float kFloorWipeDamage = 40.0f;
+	static constexpr float kFloorWipeFlashDuration = 0.25f;     // 発動時に床が白く光る時間
+	static constexpr float kFloorWipeFlashIntensity = 3.0f;
+	static constexpr float kFloorWipeBlinkPeriodStart = 0.4f;   // 溜めの点滅周期：最初
+	static constexpr float kFloorWipeBlinkPeriodEnd = 0.08f;    // 溜めの点滅周期：最後
+	static constexpr float kFloorWipeBlinkIntensityStart = 0.3f;
+	static constexpr float kFloorWipeBlinkIntensityEnd = 1.5f;
+	static constexpr float kFloorWipeWindupGlitchMax = 0.3f;    // 溜めの終わりに向けて強めるグリッチの最大強度
+	static constexpr float kFloorWipeGlitchOnFire = 1.0f;       // 発動時のグリッチ強度
+	static constexpr float kFloorWipeGlitchOnFireDuration = 0.4f;
+	static constexpr float kFloorWipeShakeDuration = 0.4f;
+	static constexpr float kFloorWipeShakeStrength = 0.03f;
+	static constexpr Vector3 kFloorWipeWarningColor = { 1.0f, 0.1f, 0.1f };
+	static constexpr Vector3 kFloorWipeFlashColor = { 1.0f, 1.0f, 1.0f };
+	float floorWipeTimer = 0.0f;           // 0以下かつ足場があれば次の攻撃選択で使う（P2以降のボスAIが動いている間だけ減る）
+	float floorWipeFlashTimer = 0.0f;      // 発動後の白い閃光の残り時間
+	float floorWipeGlitchTimer = 0.0f;     // 発動後のグリッチの残り時間
+	bool IsAnyDataPlatformActive() const;  // 乗れる状態のデータ足場が1つでもあるか
+	void FireFloorWipe();                  // 溜め終了：ダメージ判定と閃光・グリッチ・シェイク
+	void UpdateFloorWipeEffect(float elapsed);   // 溜め中の床点滅・WARNING文字・グリッチ
+	void UpdateFloorWipeFlash();           // 発動後の白い閃光とグリッチの減衰
+	void StopFloorWipe();                  // 溜め・閃光を打ち切り、床の発光・文字・グリッチを戻す
+
+	// "WARNING"の文字（床全体の消去の溜め中だけ点滅表示）
+	BitmapText warningText;
+	bool warningTextVisible = false;
+	static constexpr int kWarningTextMaxChars = 7;
+	static constexpr float kWarningTextScale = 5.0f;
+	static constexpr float kWarningTextPositionY = 200.0f;
+	static constexpr float kWarningTextBlinkInterval = 0.12f;
+	static constexpr Vector4 kWarningTextColor = { 1.0f, 0.1f, 0.1f, 1.0f };
+
+	// ===== ワープ直後の強化（ポータルで移動した直後だけ、与ダメージ増加＋短い無敵） =====
+	float warpBoostTimer = 0.0f;
+	float warpInvulnTimer = 0.0f;
+	static constexpr float kWarpBoostDuration = 3.0f;
+	static constexpr float kWarpInvulnDuration = 0.5f;
+	static constexpr float kWarpBoostDamageMultiplier = 1.5f;
+	static constexpr Vector4 kReticleWarpBoostColor = { 0.2f, 0.9f, 1.0f, 1.0f };
 
 	// --- 床の破損（見た目だけのマス。当たり判定の床は1枚のまま） ---
 	static constexpr float kFloorTileSize = 4.0f;               // 1マスの一辺[m]
@@ -378,9 +447,19 @@ private:
 	float bossDashCurrentSpeed = 0.0f; // kMeleeDash中、加速しながら変化していく現在の突進速度
 	static constexpr float kBossMeleeRange = 10.0f;           // これ以下なら近接突進、これより遠いならグレネード
 	static constexpr float kBossMeleeWindupDuration = 0.4f;   // 突進前の予備動作（停止して溜める）時間
+	// 突進の数値の強化（長さ0.75・最高速度0.7・判定+0.5）は「強すぎた」ため元に戻した（2026/11/11）。
+	// 強化は連続突進と、止まった所の衝撃波だけ残している
 	static constexpr float kBossMeleeDashDuration = 0.6f;     // 突進の最大継続時間（不発ならここでタイムアウト）
 	static constexpr float kBossDashStartSpeed = 0.15f;       // 突進開始時の速度
 	static constexpr float kBossDashMaxSpeed = 0.55f;         // 突進が加速しきった後の最高速度
+	static constexpr float kBossDashHitExtraRadius = 0.0f;    // 突進の命中判定に足す半径（強化を戻して0）
+	static constexpr int kBossDashCountP1 = 1;                // 1回の突進攻撃で連続して走る回数（P1）
+	static constexpr int kBossDashCountP2 = 2;                // 同（P2）
+	static constexpr int kBossDashCountP3 = 3;                // 同（P3）
+	static constexpr float kBossDashRewindupDuration = 0.5f;  // 2回目以降の突進の予備動作時間（0.5秒以上の予兆ルール）
+	static constexpr float kDashShockwaveMaxRadius = 7.0f;    // 突進が止まった所から出る小さな衝撃波が消える半径
+	int bossDashRemaining = 0;                                // 今の突進攻撃で、これから走る残り回数
+	void EndBossDash();                                       // 1回の突進の終了処理（衝撃波＋次の突進か追跡かの分岐）
 	static constexpr float kBossDashAcceleration = 0.025f;    // 突進中、1フレームごとに速度へ加算する加速度
 	static constexpr float kBossMeleeDamage = 20.0f;
 	static constexpr float kBossRangedWindupDuration = 0.5f;  // グレネード投擲前の予備動作時間
@@ -451,16 +530,18 @@ private:
 	static constexpr float kShockwaveDamage = 20.0f;
 	static constexpr float kShockwaveShakeDuration = 0.3f;
 	static constexpr float kShockwaveShakeStrength = 0.02f;
-	static constexpr int kMaxShockwaveRings = 2;           // 同時に出せる輪の数（P3は2箱同時）
+	static constexpr int kMaxShockwaveRings = 4;           // 同時に出せる輪の数（P3は2箱同時＋突進の小さな輪）2→4（2026/11/11 突進の強化）
 	struct ShockwaveRing {
 		std::unique_ptr<Object3d> object;
 		bool active = false;
 		Vector3 center = { 0.0f, 0.0f, 0.0f };
 		float radius = 0.0f;
+		float maxRadius = kShockwaveMaxRadius; // この半径を超えたら消える（ギミックは大きく、突進は小さい）
 		bool hasHit = false; // 1つの輪につき1回だけダメージ
 	};
 	std::array<ShockwaveRing, kMaxShockwaveRings> shockwaveRings;
 	void StopShockwaves(); // 広がっている衝撃波を全部消す
+	bool SpawnShockwaveRing(const Vector3& center, float maxRadius); // 空いている輪を1つ使って発生させる（空きがなければfalse）
 
 	// 衝撃波ギミック（P2以降、一定間隔でランダムなカバー箱が予兆のあと衝撃波を出す）
 	static constexpr float kShockwaveGimmickInterval = 12.0f;   // 発生間隔[秒]
@@ -567,8 +648,8 @@ private:
 	// 弾痕デカール用
 	std::unique_ptr<Model> planeModel = nullptr;
 	// ポータル用モデル（ModelManagerのキャッシュ共有。PlacePortalで初回生成時にvisualへ設定する）
-	std::shared_ptr<Model> portalModelA;
-	std::shared_ptr<Model> portalModelB;
+	// [組][0=a,1=b]
+	std::array<std::array<std::shared_ptr<Model>, 2>, kMaxPortalPairs> portalModels;
 	static const int kMaxBulletDecals = 32;
 	std::vector<std::unique_ptr<Object3d>> bulletDecals;
 	int nextDecalIndex = 0;
@@ -651,6 +732,21 @@ private:
 	static constexpr Vector4 kWeaponPanelFrontLineColor = { 0.0f, 0.75f, 1.0f, 0.9f };  // アリーナの発光と同じシアン
 	static constexpr Vector4 kWeaponPanelBackLineColor = { 0.5f, 0.5f, 0.55f, 0.6f };
 
+	// --- 効果音（Tools/sound/make_se.py で合成。名前＝ファイル名から .wav を除いたもの） ---
+	static constexpr const char* kSoundDir = "Resources/sounds/";
+	static constexpr const char* kSeShotgunFire = "shotgun_fire";
+	static constexpr const char* kSeShotgunPump = "shotgun_pump";   // 先台の動きのタイミングに合わせた無音の間込み。発射と同時に鳴らす
+	static constexpr const char* kSeHitWall = "hit_wall";
+	static constexpr const char* kSeHitBoss = "hit_boss";
+	static constexpr const char* kSeHitCore = "hit_core";
+	static constexpr const char* kSeShieldBlock = "shield_block";
+	static constexpr float kSeFireVolume = 1.0f;
+	static constexpr float kSePumpVolume = 0.5f;
+	static constexpr float kSeHitVolume = 0.6f;
+	static constexpr float kSeHitWallVolume = 0.35f;
+	void LoadSounds();
+	void PlaySe(const char* name, float volume);
+
 	// --- ポータルガンの操作ヒント（武器パネルの左隣。ポータルガンを持っている間だけ表示） ---
 	// [マウス(左ボタン青)] [マウス(右ボタン橙)] [Rのキー] RESET
 	std::unique_ptr<Sprite> portalHintPanel;
@@ -683,6 +779,8 @@ private:
 	static constexpr Vector4 kPortalHintKeyInnerColor = { 0.12f, 0.14f, 0.18f, 1.0f };
 	static constexpr Vector4 kPortalAColor = { 0.1f, 0.45f, 1.0f, 1.0f };   // ポータルAのモデルの色に合わせる
 	static constexpr Vector4 kPortalBColor = { 1.0f, 0.45f, 0.05f, 1.0f };  // ポータルBのモデルの色に合わせる
+	static constexpr Vector4 kPortalCColor = { 0.2f, 1.0f, 0.35f, 1.0f };   // 2組目A（緑）
+	static constexpr Vector4 kPortalDColor = { 1.0f, 0.3f, 0.75f, 1.0f };   // 2組目B（ピンク）
 	static constexpr float kWeaponSlotTextFrontScale = 3.0f;
 	static constexpr float kWeaponSlotTextBackScale = 2.0f;
 	static constexpr Vector2 kWeaponSlotTextFrontPos = { kWeaponIconFrontPos.x - kWeaponIconFrontSize.x - 24.0f, kWeaponIconFrontPos.y - 60.0f };
@@ -785,8 +883,7 @@ private:
 
 	// ワープポータル
 	WeaponMode weaponMode = WeaponMode::kRifle;
-	Portal portalA; // 青
-	Portal portalB; // オレンジ
+	std::array<PortalPair, kMaxPortalPairs> portalPairs; // 1組目:青/オレンジ、2組目:緑/ピンク
 	static constexpr float kPortalRadius = 1.0f;
 	// ワープで出てきたポータル。一度その範囲（kPortalRadius＋余裕）から出るまで、入口として反応させない
 	const Portal* portalExitLock = nullptr;
