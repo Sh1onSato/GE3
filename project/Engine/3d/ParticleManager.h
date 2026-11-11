@@ -111,6 +111,9 @@ public:
     // パーティクルの追加（互換用の簡易版）
     void Emit(const Vector3& position, const Vector3& velocity, const Vector4& color, float lifeTime);
 
+    // 全パーティクルを消す（リトライ時など）。描画数も0にするので、次の Update を待たずに次の Draw から消える
+    void Clear() { particles.clear(); instanceCount = 0; }
+
     // ゲッター
     ParticleDrawType GetDrawType() const { return drawType; }
 

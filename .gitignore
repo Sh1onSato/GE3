@@ -332,3 +332,5 @@ project/GaminiLog/
 project/GeminiLog/
 project/.claude/
 project/CLAUDE.md
+# Blender が保存のたびに作る1つ前のバックアップ
+*.blend1

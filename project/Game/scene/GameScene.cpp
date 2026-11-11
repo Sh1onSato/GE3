@@ -70,6 +70,28 @@ void GameScene::Initialize() {
     playerHpText.SetPosition(kHpTextPosition);
     playerHpText.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
 
+    // --- 武器表示（画面右下）。配置は毎フレーム UpdateWeaponHud で今の武器に合わせて決める ---
+    {
+        const std::array<const char*, kWeaponIconCount> iconFiles = {
+            "Resources/ui/weapon_shotgun.png", "Resources/ui/weapon_shotgun_gray.png",
+            "Resources/ui/weapon_rifle.png", "Resources/ui/weapon_rifle_gray.png",
+        };
+        for (int i = 0; i < kWeaponIconCount; ++i) {
+            TextureManager::GetInstance()->LoadTexture(iconFiles[i]);
+            weaponIcons[i] = std::make_unique<Sprite>();
+            weaponIcons[i]->Initialize(framework->GetSpriteCommon(), iconFiles[i]);
+            weaponIcons[i]->SetAnchorPoint({ 1.0f, 1.0f });
+        }
+        weaponSlotTextFront.Initialize(framework->GetSpriteCommon(), 1);
+        weaponSlotTextFront.SetScale(kWeaponSlotTextFrontScale);
+        weaponSlotTextFront.SetPosition(kWeaponSlotTextFrontPos);
+        weaponSlotTextFront.SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        weaponSlotTextBack.Initialize(framework->GetSpriteCommon(), 1);
+        weaponSlotTextBack.SetScale(kWeaponSlotTextBackScale);
+        weaponSlotTextBack.SetPosition(kWeaponSlotTextBackPos);
+        weaponSlotTextBack.SetColor(kWeaponSlotTextBackColor);
+    }
+
     // --- ボスHPバー（画面上部中央、常時表示） ---
     bossHpBarBackground = std::make_unique<Sprite>();
     bossHpBarBackground->Initialize(framework->GetSpriteCommon(), "white");
@@ -139,18 +161,19 @@ void GameScene::Initialize() {
 
     floor = std::make_unique<Object3d>();
     floor->Initialize(framework->GetObject3dCommon());
-    floor->SetModel(cubeModel.get());
+    floor->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, ArenaLayout::kFloorModelFile));
     floor->SetScale(ArenaLayout::kFloorScale);
     floor->SetTranslate(ArenaLayout::kFloorTranslate);
-    floor->SetColor(ArenaLayout::kFloorColor);
+    floor->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f }); // モデル自体に色が付いているので白（基本色を暗くしない）
 
     // 壁の配置データはTitleScene（3D背景）と共有するためArenaLayout.hにある
     for (const auto& data : ArenaLayout::kWallDatas) {
         auto wall = std::make_unique<Object3d>();
         wall->Initialize(framework->GetObject3dCommon());
-        wall->SetModel(cubeModel.get());
+        wall->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, ArenaLayout::WallModelFile(data.kind)));
         wall->SetTranslate(data.pos);
-        wall->SetScale(data.scale);
+        wall->SetScale(data.scale); // GetAABBがscaleをhalf-extentとして使うため、モデルは-1〜1正規化でscaleは変えない
+        wall->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
         walls.push_back(std::move(wall));
     }
 
@@ -165,10 +188,10 @@ void GameScene::Initialize() {
         EnemyTarget enemy;
         enemy.object = std::make_unique<Object3d>();
         enemy.object->Initialize(framework->GetObject3dCommon());
-        enemy.object->SetModel(cubeModel.get());
+        enemy.object->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "target.glb"));
         enemy.object->SetTranslate(pos);
         enemy.object->SetScale({ 0.5f, 0.75f, 0.5f });
-        enemy.object->SetColor({ 1.0f, 0.5f, 0.0f, 1.0f }); // オレンジ色で壁と区別する
+        enemy.object->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f }); // モデル自体に色が付いている
         enemy.isActive = true;
         enemy.respawnTimer = 0.0f;
         enemies.push_back(std::move(enemy));
@@ -185,7 +208,16 @@ void GameScene::Initialize() {
     // （前フェーズではy=1.5決め打ちで底面が1ユニット埋まっていたため、ここで修正）
     boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
     boss->SetScale(ArenaLayout::kBossScale);
-    boss->SetColor(ArenaLayout::kBossColor); // 紫系でプレイヤー・的と区別する
+    boss->SetColor(ArenaLayout::kBossColor); // 芯は描画しないので色は見えない
+
+    // 描画用の5パーツ。bossと同じ位置・回転・scaleで置くと組み上がる（transformはUpdateBossParts()でbossから写す）
+    for (int i = 0; i < kBossPartCount; ++i) {
+        bossParts[i] = std::make_unique<Object3d>();
+        bossParts[i]->Initialize(framework->GetObject3dCommon());
+        bossParts[i]->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kBossModelDir, ArenaLayout::kBossPartFiles[i]));
+        bossParts[i]->SetScale(ArenaLayout::kBossScale);
+        bossParts[i]->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    }
 
     // ボスの遠距離攻撃（グレネード）用のプール
     grenades.reserve(kMaxGrenades);
@@ -193,12 +225,15 @@ void GameScene::Initialize() {
         Grenade grenade;
         grenade.object = std::make_unique<Object3d>();
         grenade.object->Initialize(framework->GetObject3dCommon());
-        grenade.object->SetModel(cubeModel.get());
+        grenade.object->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "grenade.glb"));
         grenade.object->SetScale({ 0.2f, 0.2f, 0.2f });
-        grenade.object->SetColor({ 0.2f, 0.35f, 0.15f, 1.0f }); // 暗緑色
+        grenade.object->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f }); // モデル自体に色が付いている
         grenade.active = false;
         grenades.push_back(std::move(grenade));
     }
+
+    portalModelA = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_a.glb");
+    portalModelB = ModelManager::GetInstance()->LoadModel("Resources/models/props", "portal_b.glb");
 
     planeModel = std::make_unique<Model>();
     // plane.obj相当のXY平面(法線+Z、2x2サイズ)をコード内で生成し、外部リソースファイルへの依存をなくす
@@ -223,18 +258,24 @@ void GameScene::Initialize() {
         bulletDecals.push_back(std::move(decal));
     }
 
-    // --- 視点武器（プレースホルダー：新規アセットは使わずcubeModelを流用） ---
+    // --- 視点武器（ショットガン本体＋先台。どちらも実寸モデルなのでscaleは1） ---
     weaponBody = std::make_unique<Object3d>();
     weaponBody->Initialize(framework->GetObject3dCommon());
-    weaponBody->SetModel(cubeModel.get());
-    weaponBody->SetScale({ 0.08f, 0.06f, 0.20f }); // half-extent。全長40cm程度の本体
-    weaponBody->SetColor({ 0.12f, 0.12f, 0.13f, 1.0f });
+    weaponBody->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/shotgun", "shotgun.glb"));
+    weaponBody->SetScale({ 1.0f, 1.0f, 1.0f });
+    weaponBody->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
 
-    weaponBarrel = std::make_unique<Object3d>();
-    weaponBarrel->Initialize(framework->GetObject3dCommon());
-    weaponBarrel->SetModel(cubeModel.get());
-    weaponBarrel->SetScale({ 0.03f, 0.03f, 0.16f }); // 本体より細い銃身
-    weaponBarrel->SetColor({ 0.05f, 0.05f, 0.05f, 1.0f });
+    weaponPump = std::make_unique<Object3d>();
+    weaponPump->Initialize(framework->GetObject3dCommon());
+    weaponPump->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/shotgun", "shotgun_pump.glb"));
+    weaponPump->SetScale({ 1.0f, 1.0f, 1.0f });
+    weaponPump->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+
+    weaponPortalGun = std::make_unique<Object3d>();
+    weaponPortalGun->Initialize(framework->GetObject3dCommon());
+    weaponPortalGun->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/rifle", "rifle.glb"));
+    weaponPortalGun->SetScale({ 1.0f, 1.0f, 1.0f });
+    weaponPortalGun->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
 
     // --- 設定メニュー（ImGui非依存。Pキーでのポーズ中にキー操作で調整できる） ---
     {
@@ -755,11 +796,11 @@ void GameScene::Update() {
             } else if (distance <= kBossMeleeRange) {
                 bossAttackState = BossAttackState::kMeleeWindup;
                 bossAttackTimer = kBossMeleeWindupDuration;
-                boss->SetColor({ 1.0f, 0.2f, 0.1f, 1.0f }); // 突進予備動作：警告色（赤）
+                bossWarningEmissive = { 1.0f, 0.15f, 0.05f }; // 突進予備動作：警告色（赤）。くさびの発光で表現する
             } else {
                 bossAttackState = BossAttackState::kRangedWindup;
                 bossAttackTimer = kBossRangedWindupDuration;
-                boss->SetColor({ 1.0f, 0.6f, 0.1f, 1.0f }); // 投擲予備動作：警告色（橙）
+                bossWarningEmissive = { 1.0f, 0.5f, 0.05f }; // 投擲予備動作：警告色（橙）
             }
             break;
         }
@@ -772,7 +813,7 @@ void GameScene::Update() {
                 bossAttackState = BossAttackState::kMeleeDash;
                 bossAttackTimer = kBossMeleeDashDuration;
                 bossDashCurrentSpeed = kBossDashStartSpeed; // 突進開始時は遅めから、加速しながら距離を詰める
-                boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 通常色に戻す
+                bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
             }
             break;
         }
@@ -818,7 +859,7 @@ void GameScene::Update() {
             boss->SetRotate({ 0.0f, std::atan2(dirToPlayer.x, dirToPlayer.z), 0.0f });
             bossAttackTimer -= 1.0f / 60.0f;
             if (bossAttackTimer <= 0.0f) {
-                boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f }); // 通常色に戻す
+                bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
                 bossGrenadeBurstRemaining = kBossGrenadeBurstCount;
                 bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
                 bossAttackState = BossAttackState::kRangedBurst;
@@ -844,6 +885,18 @@ void GameScene::Update() {
         }
 
         boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
+
+        // くさびの開閉：予備動作〜攻撃中は開き、追跡中は閉じる（固定ステップ1/60でリニアに近づける）
+        float openTarget = (bossAttackState == BossAttackState::kChasing) ? 0.0f : 1.0f;
+        float openStep = kBossOpenSpeed / 60.0f;
+        if (bossOpenAmount < openTarget) {
+            bossOpenAmount = (std::min)(bossOpenAmount + openStep, openTarget);
+        } else {
+            bossOpenAmount = (std::max)(bossOpenAmount - openStep, openTarget);
+        }
+        if (bossHitFlashTimer > 0.0f) {
+            bossHitFlashTimer = (std::max)(bossHitFlashTimer - 1.0f / 60.0f, 0.0f);
+        }
     }
 
     // --- ボスのグレネードの更新（重力を受けながら飛び、床・壁に着弾すると爆発する） ---
@@ -953,6 +1006,7 @@ void GameScene::UpdateRenderObjects() {
     for (auto& wall : walls) { wall->Update(); }
     for (auto& enemy : enemies) { enemy.object->Update(); }
     boss->Update();
+    UpdateBossParts(); // bossのtranslate/rotate/scaleが確定した後に5パーツへ写す
     for (auto& decal : bulletDecals) { decal->Update(); }
     // 過去に敵ターゲットでUpdate()呼び忘れによりWVP行列が更新されず巨大に固定表示された
     // バグがあったため、ポータルの見た目も他のObject3dと同様に毎フレームUpdate()を呼ぶ
@@ -967,6 +1021,8 @@ void GameScene::UpdateRenderObjects() {
     hpBarFill->Update();
     playerHpText.SetText(std::to_string(static_cast<int>(playerHP)));
     playerHpText.Update();
+
+    UpdateWeaponHud();
 
     // ボスHPバーの残量表示：現在HP比率に応じて塗りつぶし幅だけを縮める
     float bossHpRatio = (bossHP / kBossMaxHP) * bossHpBarIntroScale;
@@ -1037,7 +1093,9 @@ void GameScene::Draw() {
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->DrawShadow(lightViewProjection); }
     // 影パスは深度のみでピクセルシェーダーの切り取りが効かないため、実体化中は影を落とさない
-    if (boss && !IsBossMaterializing()) boss->DrawShadow(lightViewProjection);
+    if (boss && !IsBossMaterializing()) {
+        for (auto& part : bossParts) { part->DrawShadow(lightViewProjection); }
+    }
     for (auto& grenade : grenades) { if (grenade.active) grenade.object->DrawShadow(lightViewProjection); }
     object3dCommon->PostDrawShadow();
 
@@ -1056,7 +1114,9 @@ void GameScene::Draw() {
     floor->Draw();
     for (auto& wall : walls) { wall->Draw(); }
     for (auto& enemy : enemies) { if (enemy.isActive) enemy.object->Draw(); }
-    if (boss) boss->Draw();
+    if (boss) {
+        for (auto& part : bossParts) { part->Draw(); }
+    }
     for (auto& grenade : grenades) { if (grenade.active) grenade.object->Draw(); }
     for (auto& decal : bulletDecals) { decal->Draw(); }
     // ワープポータル（薄い板なのでシャドウパスには含めない）
@@ -1082,6 +1142,13 @@ void GameScene::Draw() {
     // スプライトは描画キューに積むだけ。SceneManager が 3D を画面へ写した後に、積んだ順（同じレイヤー内）で描く
     if (!IsIntroCameraActive()) {
         reticle->Draw();
+
+        // 武器表示：後ろ（グレースケール）→手前（カラー）の順に積んで、手前が上に重なるようにする
+        bool isPortal = (weaponMode == WeaponMode::kPortalGun);
+        weaponIcons[isPortal ? kIconShotgunGray : kIconPortalGunGray]->Draw();
+        weaponSlotTextBack.Draw();
+        weaponIcons[isPortal ? kIconPortalGun : kIconShotgun]->Draw();
+        weaponSlotTextFront.Draw();
     }
 
     // --- 4. UI（プレイヤーHPバー）の描画 ---
@@ -1175,6 +1242,7 @@ void GameScene::RestartGame() {
     portalExitVelocityTimer = 0.0f;
     cameraShakeTimer = 0.0f;
     weaponRecoilTimer = 0.0f;
+    weaponPumpTimer = 0.0f;
     fireCooldownTimer = 0.0f;
 
     // ボスをスポーン地点・追跡状態へ戻す
@@ -1187,7 +1255,30 @@ void GameScene::RestartGame() {
     bossGrenadeBurstRemaining = 0;
     bossGrenadeBurstTimer = 0.0f;
     bossDashCurrentSpeed = 0.0f;
-    boss->SetColor({ 0.5f, 0.0f, 0.4f, 1.0f });
+    bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+    bossOpenAmount = 0.0f;
+    bossHitFlashTimer = 0.0f;
+    // ボスの見た目の位置・向きも戻す。READY中はAIが止まっていてbossのSetTranslateが呼ばれないため、
+    // ここで戻さないと、FIGHTまで前の試合で倒れた位置・向きのまま表示されてしまう
+    boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
+    boss->SetRotate({ 0.0f, 0.0f, 0.0f }); // Initialize時と同じ向き
+    boss->SetScale(ArenaLayout::kBossScale);
+    SetBossDissolve(0.0f, 0.0f, 0.0f);
+
+    // 画面効果（被ダメージのビネット・ワープのグレースケール等）の残りを消す
+    screenEffect->ResetTransientEffects();
+
+    // 前の試合の弾痕を消す（未使用分と同じく画面外へ隠す）
+    for (auto& decal : bulletDecals) {
+        decal->SetTranslate({ 0.0f, -1000.0f, 0.0f });
+    }
+    nextDecalIndex = 0;
+
+    // 前の試合のパーティクル（マズルフラッシュ・火花・粉塵）を消す。
+    // 決着後は Update が止まるため、消さないと READY の間も止まったまま残る
+    particleManagerLine->Clear();
+    particleManagerPoint->Clear();
+    particleManagerTriangle->Clear();
 
     // グレネードは全て非アクティブ化して隠す
     for (auto& grenade : grenades) {
@@ -1270,10 +1361,10 @@ void GameScene::UpdateIntroVisual() {
         boss->SetScale(ArenaLayout::kBossScale);
         boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
         // 完了後は演出を切る（edgeWidth=0で無効）
-        boss->SetDissolve(bossPos.y + revealHeight, materializeT < 1.0f ? kIntroMaterializeEdgeWidth : 0.0f, introElapsed, blockStrength);
+        SetBossDissolve(bossPos.y + revealHeight, materializeT < 1.0f ? kIntroMaterializeEdgeWidth : 0.0f, introElapsed, blockStrength);
     } else {
         // 短縮版はREADY(1.6s)と実体化完了(0.6+1.0s)がほぼ同時で、完了前にFIGHTへ移ることがあるため、READY外では必ず演出を切る
-        boss->SetDissolve(0.0f, 0.0f, 0.0f);
+        SetBossDissolve(0.0f, 0.0f, 0.0f);
     }
 
     // 黒帯：READY開始時に上下から入り、READY終盤で引き切る（FIGHT＝操作解禁の時点では帯なし）
@@ -1452,6 +1543,7 @@ void GameScene::ExplodeGrenade(Grenade& grenade) {
 void GameScene::FireShot() {
     // 命中判定に関わらず、発砲した時点でリコイル演出とカメラシェイクを開始する
     weaponRecoilTimer = kRecoilDuration;
+    weaponPumpTimer = kPumpDuration; // 先台のポンプ動作もここで開始
     TriggerCameraShake(kFireShakeDuration, kFireShakeStrength);
 
     Transform camTrans = camera->GetTransform();
@@ -1806,24 +1898,29 @@ void GameScene::FireShot() {
                 SpawnBulletDecal(closestHit.hitPoint, normal, closestAABB);
             }
 
-            // 2. 壁の色を一時的に変える
-            auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
-                return f.object == closestObject;
-            });
-
-            if (it != hitFlashes.end()) {
-                // 既にフラッシュ中ならタイマーをリセット
-                it->timer = 0.2f;
+            if (isBossHit) {
+                // bossは描画しない芯なので色を変えても見えない。代わりにくさびの赤発光タイマーを使う
+                bossHitFlashTimer = kBossHitFlashDuration;
             } else {
-                // 新しくフラッシュを開始
-                HitFlash flash;
-                flash.object = closestObject;
-                flash.timer = 0.2f;
-                flash.originalColor = closestObject->GetColor();
-                hitFlashes.push_back(flash);
-            }
+                // 2. 壁の色を一時的に変える
+                auto it = std::find_if(hitFlashes.begin(), hitFlashes.end(), [&](const HitFlash& f) {
+                    return f.object == closestObject;
+                });
 
-            closestObject->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 赤くする
+                if (it != hitFlashes.end()) {
+                    // 既にフラッシュ中ならタイマーをリセット
+                    it->timer = 0.2f;
+                } else {
+                    // 新しくフラッシュを開始
+                    HitFlash flash;
+                    flash.object = closestObject;
+                    flash.timer = 0.2f;
+                    flash.originalColor = closestObject->GetColor();
+                    hitFlashes.push_back(flash);
+                }
+
+                closestObject->SetColor({ 1.0f, 0.0f, 0.0f, 1.0f }); // 赤くする
+            }
 
             // 3. カメラシェイク：発砲時より少し大きく揺らして命中の「重み」を出す
             TriggerCameraShake(kHitShakeDuration, kHitShakeStrength);
@@ -1898,20 +1995,110 @@ void GameScene::UpdateWeaponViewModel() {
 
     Vector3 bodyLocal = weaponBodyLocalOffset;
     bodyLocal.z += recoilKickZ;
-    Vector3 barrelLocal = weaponBarrelLocalOffset;
-    barrelLocal.z += recoilKickZ;
+
+    // 先台のポンプ動作（リコイルと同じ固定ステップ）。発砲0.1秒後から引き、0.25秒で引き切って0.4秒で戻る
+    if (weaponPumpTimer > 0.0f) {
+        weaponPumpTimer -= 1.0f / 60.0f;
+        if (weaponPumpTimer < 0.0f) weaponPumpTimer = 0.0f;
+    }
+    float pumpOffset = 0.0f;
+    if (weaponPumpTimer > 0.0f) {
+        float e = kPumpDuration - weaponPumpTimer;
+        if (e < kPumpPullStart) {
+            pumpOffset = 0.0f;
+        } else if (e < kPumpPullEnd) {
+            float t = (e - kPumpPullStart) / (kPumpPullEnd - kPumpPullStart);
+            pumpOffset = kPumpStroke * Easing::OutCubic(t);
+        } else {
+            float t = (e - kPumpPullEnd) / (kPumpDuration - kPumpPullEnd);
+            pumpOffset = kPumpStroke * (1.0f - Easing::InOutCubic(t));
+        }
+    }
+    // 先台は本体と同じ原点で、銃の後ろ方向（ローカル-Z）へpumpOffsetだけ引く
+    Vector3 pumpLocal = bodyLocal;
+    pumpLocal.z -= pumpOffset;
 
     Vector3 bodyWorld = Calculation::Transform(bodyLocal, cameraWorldMatrix);
-    Vector3 barrelWorld = Calculation::Transform(barrelLocal, cameraWorldMatrix);
+    Vector3 pumpWorld = Calculation::Transform(pumpLocal, cameraWorldMatrix);
 
     weaponBody->SetTranslate(bodyWorld);
     weaponBody->SetRotate(cameraTransform.rotate);
 
-    weaponBarrel->SetTranslate(barrelWorld);
-    weaponBarrel->SetRotate(cameraTransform.rotate);
+    weaponPump->SetTranslate(pumpWorld);
+    weaponPump->SetRotate(cameraTransform.rotate);
+
+    // ポータルガンは本体と同じ位置（先台の動きは無し）
+    weaponPortalGun->SetTranslate(bodyWorld);
+    weaponPortalGun->SetRotate(cameraTransform.rotate);
 
     weaponBody->Update();
-    weaponBarrel->Update();
+    weaponPump->Update();
+    weaponPortalGun->Update();
+}
+
+void GameScene::UpdateWeaponHud() {
+    // 今の武器を手前（カラー・大きく）、もう一方を後ろ（グレースケール・小さく・半透明）に置く
+    bool isPortal = (weaponMode == WeaponMode::kPortalGun);
+    Sprite* front = weaponIcons[isPortal ? kIconPortalGun : kIconShotgun].get();
+    Sprite* back = weaponIcons[isPortal ? kIconShotgunGray : kIconPortalGunGray].get();
+
+    front->SetPosition(kWeaponIconFrontPos);
+    front->SetSize(kWeaponIconFrontSize);
+    front->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    back->SetPosition(kWeaponIconBackPos);
+    back->SetSize(kWeaponIconBackSize);
+    back->SetColor(kWeaponIconBackColor);
+    front->Update();
+    back->Update();
+
+    // キー番号（1＝ショットガン、2＝ポータルガン）
+    weaponSlotTextFront.SetText(isPortal ? "2" : "1");
+    weaponSlotTextBack.SetText(isPortal ? "1" : "2");
+    weaponSlotTextFront.Update();
+    weaponSlotTextBack.Update();
+}
+
+void GameScene::SetBossDissolve(float height, float edgeWidth, float time, float blockStrength) {
+    boss->SetDissolve(height, edgeWidth, time, blockStrength);
+    for (auto& part : bossParts) {
+        part->SetDissolve(height, edgeWidth, time, blockStrength);
+    }
+}
+
+void GameScene::UpdateBossParts() {
+    // bossは当たり判定の芯。位置・回転・scaleを5パーツへ写し、くさびだけ開閉オフセットを足す
+    const Transform& core = boss->GetTransform();
+    const float openT = Easing::OutCubic(Easing::Clamp01(bossOpenAmount));
+    const float cosYaw = std::cos(core.rotate.y);
+    const float sinYaw = std::sin(core.rotate.y);
+
+    // 被弾フラッシュ（赤）を警告色より優先する。時間で減衰
+    Vector3 emissive = bossWarningEmissive;
+    float intensity = kBossWarningEmissiveIntensity;
+    if (bossHitFlashTimer > 0.0f) {
+        emissive = { 1.0f, 0.1f, 0.1f };
+        intensity = kBossHitFlashIntensity * (bossHitFlashTimer / kBossHitFlashDuration);
+    }
+
+    for (int i = 0; i < kBossPartCount; ++i) {
+        Vector3 offset = { 0.0f, 0.0f, 0.0f };
+        const float dist = kBossWedgeOpenDistance * openT;
+        switch (i) {
+        case kBossWedgeTop:    offset.y = dist; break;
+        case kBossWedgeBottom: offset.y = -kBossWedgeOpenDistanceBottom * openT; break;
+        case kBossWedgeLeft:   offset.x = -dist * cosYaw; offset.z = dist * sinYaw; break;  // ローカル(-1,0,0)をyaw回転
+        case kBossWedgeRight:  offset.x = dist * cosYaw;  offset.z = -dist * sinYaw; break; // ローカル(+1,0,0)をyaw回転
+        default: break; // コアは動かさない
+        }
+
+        bossParts[i]->SetScale(core.scale);
+        bossParts[i]->SetRotate(core.rotate);
+        bossParts[i]->SetTranslate({ core.translate.x + offset.x, core.translate.y + offset.y, core.translate.z + offset.z });
+        if (i != kBossCore) {
+            bossParts[i]->SetEmissive(emissive, intensity);
+        }
+        bossParts[i]->Update(); // 呼び忘れると単位行列のまま巨大に描画される
+    }
 }
 
 void GameScene::DrawWeaponViewModel() {
@@ -1926,8 +2113,13 @@ void GameScene::DrawWeaponViewModel() {
         framework->GetDxCommon()->GetMainDsvHandle(),
         D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-    weaponBody->Draw();
-    weaponBarrel->Draw();
+    // 今のモードの武器だけを描く（1キー＝ショットガン、2キー＝ポータルガン）
+    if (weaponMode == WeaponMode::kPortalGun) {
+        weaponPortalGun->Draw();
+    } else {
+        weaponBody->Draw();
+        weaponPump->Draw();
+    }
 }
 
 AABB GameScene::GetAABB(const Object3d& object) {
@@ -2019,7 +2211,7 @@ void GameScene::PlacePortal(Portal& portal) {
         Framework* framework = Framework::GetInstance();
         portal.visual = std::make_unique<Object3d>();
         portal.visual->Initialize(framework->GetObject3dCommon());
-        portal.visual->SetModel(planeModel.get());
+        portal.visual->SetModel((&portal == &portalA) ? portalModelA : portalModelB);
     }
 
     portal.visual->SetRotateQuaternion(portal.orientation);
@@ -2048,11 +2240,8 @@ void GameScene::PlacePortal(Portal& portal) {
     portal.visual->SetScale({ kPortalHalfSize * scaleLocalX, kPortalHalfSize * scaleLocalY, kPortalHalfSize });
     portal.visual->SetTranslate(portal.position);
 
-    // portalAは青、portalBはオレンジで区別する
-    Vector4 color = (&portal == &portalA)
-        ? Vector4{ 0.2f, 0.5f, 1.0f, 1.0f }
-        : Vector4{ 1.0f, 0.55f, 0.1f, 1.0f };
-    portal.visual->SetColor(color);
+    // portalAは青、portalBはオレンジの色はモデル側に付いているので、基本色は白にする
+    portal.visual->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
 }
 
 Vector3 GameScene::TransformThroughPortal(const Portal& from, const Portal& to, const Vector3& v) {

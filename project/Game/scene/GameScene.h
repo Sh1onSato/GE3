@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "BaseScene.h"
 #include "ArenaLayout.h"
 #include "Sprite.h"
@@ -67,6 +67,10 @@ private:
 	void UpdateDebugGui();
 	// 視点武器の追従・リコイル演出の更新
 	void UpdateWeaponViewModel();
+	// ボス描画用5パーツ（くさび4＋コア）をbossの芯transformに合わせ、開閉・発光を反映してUpdateする
+	void UpdateBossParts();
+	// 5パーツ全部に同じ実体化ディゾルブをかける（bossの芯にもかける）
+	void SetBossDissolve(float height, float edgeWidth, float time, float blockStrength = 1.0f);
 	// 視点武器の描画（常に最前面）
 	void DrawWeaponViewModel();
 	// カメラシェイクを開始する（発砲時は小さく、ヒット時は大きく、のように呼び出し側で強さを使い分ける）
@@ -124,7 +128,20 @@ private:
 	static constexpr float kEnemyRespawnDelay = 3.0f; // 撃たれてから復活までの秒数(秒)
 
 	// ボス（1v1ボス戦フェーズ2：HP/UIの土台。移動・攻撃AIは次フェーズ）
+	// bossは当たり判定・位置・回転・実体化状態の「芯」として残し、自身は描画しない。
+	// 見た目はbossPartsの5パーツ（AI/AABB/レイキャスト側を一切変えずにモデルだけ差し替えるため）
 	std::unique_ptr<Object3d> boss = nullptr;
+	enum BossPart { kBossWedgeTop, kBossWedgeBottom, kBossWedgeLeft, kBossWedgeRight, kBossCore, kBossPartCount };
+	std::array<std::unique_ptr<Object3d>, kBossPartCount> bossParts;
+	float bossOpenAmount = 0.0f; // 0=閉、1=開（予備動作〜攻撃中に開く）
+	static constexpr float kBossOpenSpeed = 4.0f;                 // 1秒あたりのbossOpenAmount変化量
+	static constexpr float kBossWedgeOpenDistance = 1.3f;         // くさびを開く距離（上・左・右）
+	static constexpr float kBossWedgeOpenDistanceBottom = 0.8f;   // 下だけ床にめり込まないよう短くする
+	Vector3 bossWarningEmissive = { 0.0f, 0.0f, 0.0f };           // 予備動作の警告色（旧boss->SetColorの代わりにくさびの発光で表現）
+	static constexpr float kBossWarningEmissiveIntensity = 0.6f;
+	float bossHitFlashTimer = 0.0f;                               // 被弾フラッシュの残り時間（くさびを赤く発光）
+	static constexpr float kBossHitFlashDuration = 0.2f;
+	static constexpr float kBossHitFlashIntensity = 0.8f;
 	float bossHP = kBossMaxHP;
 	static constexpr float kBossMaxHP = 300.0f; // 仮値（プレイヤーの3倍程度）
 
@@ -203,16 +220,26 @@ private:
 
 	// 弾痕デカール用
 	std::unique_ptr<Model> planeModel = nullptr;
+	// ポータル用モデル（ModelManagerのキャッシュ共有。PlacePortalで初回生成時にvisualへ設定する）
+	std::shared_ptr<Model> portalModelA;
+	std::shared_ptr<Model> portalModelB;
 	static const int kMaxBulletDecals = 32;
 	std::vector<std::unique_ptr<Object3d>> bulletDecals;
 	int nextDecalIndex = 0;
 
-	// 視点武器（プレースホルダー：cubeModel流用）
+	// 視点武器（射撃モード＝ショットガン本体＋先台、ポータルガンモード＝ライフルのモデル）
 	std::unique_ptr<Object3d> weaponBody = nullptr;
-	std::unique_ptr<Object3d> weaponBarrel = nullptr;
+	std::unique_ptr<Object3d> weaponPump = nullptr; // 先台（発砲後に後ろへ引いて戻る）
+	// ポータルガン。持ち替えが見た目で分かるよう別モデルにする（ショットガンと同じ原点・寸法で作ってある）
+	std::unique_ptr<Object3d> weaponPortalGun = nullptr;
 	Vector3 weaponBodyLocalOffset = { 0.22f, -0.20f, 0.45f };
-	Vector3 weaponBarrelLocalOffset = { 0.22f, -0.18f, 0.62f };
+	Vector3 weaponBarrelLocalOffset = { 0.22f, -0.18f, 0.62f }; // 銃口位置の基準（FireShotのmuzzleLocalとImGuiで使用。描画には使わない）
 	float weaponRecoilTimer = 0.0f;
+	float weaponPumpTimer = 0.0f;
+	static constexpr float kPumpDuration = 0.4f;   // ポンプ動作全体の長さ(秒)
+	static constexpr float kPumpStroke = 0.05f;    // 先台を引く量(m)
+	static constexpr float kPumpPullStart = 0.1f;  // 発砲からこの秒数後に引き始める
+	static constexpr float kPumpPullEnd = 0.25f;   // この秒数で引き切り、戻りに入る
 	static constexpr float kRecoilDuration = 0.12f;   // リコイル演出の継続時間(秒)
 	static constexpr float kRecoilKickAmount = 0.08f; // 発砲直後にカメラ側へ引く量(m)
 
@@ -245,6 +272,25 @@ private:
 	static constexpr Vector2 kHpBarPosition = { 20.0f, 670.0f }; // 画面左下
 	BitmapText playerHpText; // HPバーの隣に実際の数値を表示（ImGui非依存のビットマップフォント基盤の動作確認を兼ねる）
 	static constexpr Vector2 kHpTextPosition = { kHpBarPosition.x + kHpBarMaxWidth + 12.0f, kHpBarPosition.y };
+
+	// --- 武器表示（画面右下）：今の武器をカラーで手前に、もう一方をグレースケールで後ろ（左上にずらす）に出す ---
+	// 画像は Tools/blender/weapon_icons.py で生成（銃口が右向き、背景透明、512x192）
+	enum WeaponIcon { kIconShotgun, kIconShotgunGray, kIconPortalGun, kIconPortalGunGray, kWeaponIconCount };
+	std::array<std::unique_ptr<Sprite>, kWeaponIconCount> weaponIcons;
+	BitmapText weaponSlotTextFront; // 今の武器のキー番号
+	BitmapText weaponSlotTextBack;  // もう一方の武器のキー番号
+	void UpdateWeaponHud();
+	// 位置は右下を基準（アンカー(1,1)）にする
+	static constexpr Vector2 kWeaponIconFrontPos = { 1260.0f, 710.0f };
+	static constexpr Vector2 kWeaponIconFrontSize = { 256.0f, 96.0f };
+	static constexpr Vector2 kWeaponIconBackPos = { 1250.0f, 628.0f };
+	static constexpr Vector2 kWeaponIconBackSize = { 176.0f, 66.0f };
+	static constexpr Vector4 kWeaponIconBackColor = { 1.0f, 1.0f, 1.0f, 0.6f };
+	static constexpr float kWeaponSlotTextFrontScale = 3.0f;
+	static constexpr float kWeaponSlotTextBackScale = 2.0f;
+	static constexpr Vector2 kWeaponSlotTextFrontPos = { kWeaponIconFrontPos.x - kWeaponIconFrontSize.x - 24.0f, kWeaponIconFrontPos.y - 60.0f };
+	static constexpr Vector2 kWeaponSlotTextBackPos = { kWeaponIconBackPos.x - kWeaponIconBackSize.x - 18.0f, kWeaponIconBackPos.y - 44.0f };
+	static constexpr Vector4 kWeaponSlotTextBackColor = { 0.6f, 0.6f, 0.6f, 0.8f };
 
 	// ImGui非依存の設定メニュー（Pキーでのポーズ中のみ操作可能。Releaseビルドでもポストエフェクトを調整できる）
 	PauseTuningMenu settingsMenu;

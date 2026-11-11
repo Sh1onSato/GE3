@@ -65,25 +65,34 @@ void TitleScene::InitializeArenaObjects() {
 
     floor = std::make_unique<Object3d>();
     floor->Initialize(framework->GetObject3dCommon());
-    floor->SetModel(cubeModel.get());
+    floor->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, ArenaLayout::kFloorModelFile));
     floor->SetScale(ArenaLayout::kFloorScale);
     floor->SetTranslate(ArenaLayout::kFloorTranslate);
-    floor->SetColor(ArenaLayout::kFloorColor);
+    floor->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f }); // モデル自体に色が付いているので白（基本色を暗くしない）
 
     for (const auto& data : ArenaLayout::kWallDatas) {
         auto wall = std::make_unique<Object3d>();
         wall->Initialize(framework->GetObject3dCommon());
-        wall->SetModel(cubeModel.get());
+        wall->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kArenaModelDir, ArenaLayout::WallModelFile(data.kind)));
         wall->SetTranslate(data.pos);
         wall->SetScale(data.scale);
+        wall->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
         walls.push_back(std::move(wall));
     }
 
     boss = std::make_unique<Object3d>();
     boss->Initialize(framework->GetObject3dCommon());
-    boss->SetModel(cubeModel.get());
+    boss->SetModel(cubeModel.get()); // 描画しない芯なのでモデルは何でもよい
     boss->SetScale(ArenaLayout::kBossScale);
     boss->SetColor(ArenaLayout::kBossColor);
+
+    // bossは位置・回転・scaleの芯としてだけ使い描画しない。見た目は閉じた状態の5パーツ
+    for (size_t i = 0; i < bossParts.size(); ++i) {
+        bossParts[i] = std::make_unique<Object3d>();
+        bossParts[i]->Initialize(framework->GetObject3dCommon());
+        bossParts[i]->SetModel(ModelManager::GetInstance()->LoadModel(ArenaLayout::kBossModelDir, ArenaLayout::kBossPartFiles[i]));
+        bossParts[i]->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    }
 }
 
 void TitleScene::InitializeSettingsMenu() {
@@ -203,7 +212,14 @@ void TitleScene::UpdateBackground3d() {
     skybox->Update();
     floor->Update();
     for (auto& wall : walls) { wall->Update(); }
-    boss->Update();
+    // 芯のtransformを5パーツへ写してから各Update（Updateを呼ばないと単位行列のまま巨大に描画される）
+    const Transform& bossTransform = boss->GetTransform();
+    for (auto& part : bossParts) {
+        part->SetScale(bossTransform.scale);
+        part->SetRotate(bossTransform.rotate);
+        part->SetTranslate(bossTransform.translate);
+        part->Update();
+    }
 }
 
 void TitleScene::UpdateDimOverlay() {
@@ -310,7 +326,7 @@ void TitleScene::DrawShadowPass() {
     Matrix4x4 lightViewProjection = object3dCommon->GetLightViewProjection();
     floor->DrawShadow(lightViewProjection);
     for (auto& wall : walls) { wall->DrawShadow(lightViewProjection); }
-    boss->DrawShadow(lightViewProjection);
+    for (auto& part : bossParts) { part->DrawShadow(lightViewProjection); }
     object3dCommon->PostDrawShadow();
 }
 
@@ -327,7 +343,7 @@ void TitleScene::DrawBackground3d() {
     framework->GetObject3dCommon()->PreDraw();
     floor->Draw();
     for (auto& wall : walls) { wall->Draw(); }
-    boss->Draw();
+    for (auto& part : bossParts) { part->Draw(); }
 }
 
 void TitleScene::DrawMain() {

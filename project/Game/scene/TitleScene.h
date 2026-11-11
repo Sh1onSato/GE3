@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "BaseScene.h"
 #include "Sprite.h"
 #include "PauseTuningMenu.h"
@@ -10,6 +10,7 @@
 #include "Camera.h"
 #include "ScreenEffectController.h"
 #include "ArenaLayout.h"
+#include "ModelManager.h"
 #include <array>
 #include <memory>
 #include <string>
@@ -68,7 +69,9 @@ private:
 	std::unique_ptr<Skybox> skybox = nullptr;
 	std::unique_ptr<Object3d> floor = nullptr;
 	std::vector<std::unique_ptr<Object3d>> walls;
+	// bossは位置・回転・scaleの「芯」（描画しない）。見た目は閉じた状態の5パーツ（GameSceneのbossPartsと同順）
 	std::unique_ptr<Object3d> boss = nullptr;
+	std::array<std::unique_ptr<Object3d>, ArenaLayout::kBossPartFiles.size()> bossParts;
 	ScreenEffectController* screenEffect = nullptr; // MyGameが所有する画面の効果の窓口（非所有）
 
 	std::unique_ptr<Sprite> background = nullptr;  // 3D背景の上に重ねる半透明の暗幕
