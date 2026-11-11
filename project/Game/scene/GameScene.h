@@ -179,8 +179,9 @@ private:
 	// ボスのフェーズ（HP比率で段階的に移行する。P3固有の挙動は段階2で追加予定）
 	enum class BossPhase { kP1, kP2, kP3 };
 	BossPhase bossPhase = BossPhase::kP1;
-	static constexpr float kBossPhase2HpRatio = 0.6f;   // HP比率がこれを下回ったらP2へ
-	static constexpr float kBossPhase3HpRatio = 0.25f;  // HP比率がこれを下回ったらP3へ
+	// 「フェーズ1がぱっとしない」とのことで早めに変化させる（2026/11/11、旧 0.6 / 0.25）
+	static constexpr float kBossPhase2HpRatio = 0.7f;   // HP比率がこれを下回ったらP2へ
+	static constexpr float kBossPhase3HpRatio = 0.45f;  // HP比率がこれを下回ったらP3へ
 	static constexpr float kBossPhaseShiftDuration = 1.2f;       // 移行演出（無敵）の長さ
 	static constexpr float kBossPhaseShiftShakeDuration = 0.35f;
 	static constexpr float kBossPhaseShiftShakeStrength = 0.03f;
@@ -324,7 +325,35 @@ private:
 	static constexpr float kBossMeleeDamage = 20.0f;
 	static constexpr float kBossRangedWindupDuration = 0.5f;  // グレネード投擲前の予備動作時間
 	static constexpr float kBossAttackCooldown = 1.5f;        // 攻撃後、次の攻撃判定が始まるまでの追跡専念時間
-	float BossAttackCooldown() const; // フェーズに応じた攻撃後クールダウン（P3は短縮）
+	float BossAttackCooldown() const; // フェーズに応じた攻撃後クールダウン（P3は短縮・焦れ中はさらに短縮）
+
+	// --- プレイヤーが壁・カバーの裏に隠れたときのボスの動き ---
+	static constexpr float kBossEyeHeight = 3.0f;                  // ボスの胸の高さ（足元からの視線の始点）
+	static constexpr float kPlayerChestEyeRatio = 0.7f;            // プレイヤーの胸の高さ（eyeHeightに対する割合）
+	static constexpr float kLineOfSightEpsilon = 0.1f;             // 視線判定で、終点手前この距離以内の衝突は無視する
+	static constexpr float kBossFlankRepickInterval = 0.5f;        // 回り込み先を選び直す間隔[秒]
+	static constexpr float kBossFlankRadius = 9.0f;                // 回り込み先を探す円の半径（プレイヤー中心）
+	static constexpr int kBossFlankSampleCount = 16;               // 円周上に取る候補点の数
+	static constexpr float kBossFlankArriveDistance = 1.5f;        // 回り込み先にこの距離まで近づいたら止まる
+	static constexpr float kBossHiddenTeleportDelay = 2.0f;        // P2以降、隠れ続けてこの秒数でテレポート回り込みを優先する
+	static constexpr float kBossHiddenLaserChance = 0.3f;          // 見えないときP2以降でレーザーを選ぶ確率（残りはグレネード）
+	static constexpr float kBossFrustrationDelay = 4.0f;           // 隠れ続けてこの秒数で「焦れ」状態になる
+	static constexpr float kBossFrustrationCooldownScale = 0.5f;   // 焦れ中の攻撃後クールダウン倍率
+	static constexpr int kBossFrustrationGrenadeBurstCount = 5;    // 焦れ中のグレネード連射数
+	static constexpr Vector3 kBossFrustrationEmissive = { 1.0f, 0.55f, 0.1f }; // 焦れ中のくさびの発光色（橙）
+	static constexpr float kBossFrustrationEmissiveBase = 0.2f;
+	static constexpr float kBossFrustrationEmissivePulse = 0.1f;
+	static constexpr float kBossFrustrationPulseSpeed = 8.0f;
+	float bossHiddenTimer = 0.0f;       // プレイヤーが見えない継続時間[秒]（見えたら0）
+	float bossFlankRepickTimer = 0.0f;  // 回り込み先の再選択までの残り時間
+	bool bossHasFlankTarget = false;    // bossFlankTargetが有効か
+	Vector3 bossFlankTarget = { 0.0f, 0.0f, 0.0f };
+	Vector3 PlayerChestPos() const;                                 // 視線判定に使うプレイヤーの胸の位置
+	bool HasLineOfSight(const Vector3& from, const Vector3& to);    // 壁・データ足場だけを遮蔽物として2点間に視線が通るか
+	bool CanBossSeePlayer();                                        // ボスの胸からプレイヤーの胸が見えるか（高所は常に見える扱い）
+	bool TryPickBossFlankTarget();                                  // プレイヤーが見える回り込み先をbossFlankTargetに保存。無ければfalse
+	bool IsBossFrustrated() const { return bossHiddenTimer >= kBossFrustrationDelay; }
+	void ResetBossHiddenState();                                    // 隠れ関連の状態を初期化（リトライ・勝敗確定用）
 
 	// --- P3固有の挙動 ---
 	static constexpr Vector3 kBossPhase3Emissive = { 1.0f, 0.08f, 0.08f }; // P3のくさびの基本発光色（赤）
@@ -350,7 +379,7 @@ private:
 	Vector3 bossTeleportDest = { 0.0f, 0.0f, 0.0f };
 	std::unique_ptr<Object3d> bossTeleportMarker;
 	bool bossTeleportMarkerVisible = false;
-	bool TryPickBossTeleportDest(); // 行き先を探してbossTeleportDestに保存する。見つからなければfalse
+	bool TryPickBossTeleportDest(bool requireLineOfSight = false); // 行き先を探してbossTeleportDestに保存する。見つからなければfalse（trueならプレイヤーから見える場所のみ）
 	void StopBossTeleport();        // テレポート関連の見た目（ディゾルブ・マーカー・グリッチ）を止める
 
 	// 衝撃波リング
@@ -382,6 +411,10 @@ private:
 	float knockbackVelocityTimer = 0.0f;
 	static constexpr float kKnockbackDuration = 0.3f;
 	static constexpr float kKnockbackSpeed = 0.35f;
+	// フェーズ移行の瞬間、ボスの近くにいたら吹き飛ばす（ダメージなし）
+	static constexpr float kPhaseShiftKnockbackRadius = 8.0f;   // ボスからの水平距離がこれ未満なら対象
+	static constexpr float kPhaseShiftKnockbackSpeed = 0.7f;    // 突進のノックバック（0.35）の2倍
+	static constexpr float kPhaseShiftKnockbackUpSpeed = 0.3f;  // 上向きの跳ね上げ（ジャンプ0.38より少し弱め）
 
 	// ボスの遠距離攻撃（グレネードランチャー的な範囲攻撃、着弾で爆発）
 	struct Grenade {

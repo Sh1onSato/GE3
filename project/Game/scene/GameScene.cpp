@@ -764,13 +764,40 @@ void GameScene::Update() {
         float distance = Calculation::Length(toPlayer);
         Vector3 dirToPlayer = (distance > 0.0001f) ? Calculation::Normalize(toPlayer) : Vector3{ 0.0f, 0.0f, 1.0f };
 
+        // プレイヤーが壁・カバーの裏に隠れているか（見えない間だけ増え、見えたら0に戻る）
+        bossHiddenTimer = CanBossSeePlayer() ? 0.0f : bossHiddenTimer + 1.0f / 60.0f;
+        const bool playerHidden = bossHiddenTimer > 0.0f;
+
         switch (bossAttackState) {
         case BossAttackState::kChasing: {
             // プレイヤーが高い場所（データ足場の上）にいる間は、真下に寄らず距離を取る（近すぎたら下がる）
             const bool highGround = IsPlayerOnHighGround();
             const float stopDistance = highGround ? kBossHighGroundKeepDistance : kBossStopDistance;
             const bool retreat = highGround && distance < kBossHighGroundRetreatDistance;
-            if (distance > stopDistance || retreat) {
+
+            // 隠れられている間は、プレイヤーへ直進せず「プレイヤーが見える場所」へ回り込む
+            bool useFlank = false;
+            Vector3 dirToFlank = dirToPlayer;
+            float flankDistance = 0.0f;
+            if (playerHidden && !highGround) {
+                bossFlankRepickTimer -= 1.0f / 60.0f;
+                if (bossFlankRepickTimer <= 0.0f || !bossHasFlankTarget) {
+                    bossFlankRepickTimer = kBossFlankRepickInterval;
+                    bossHasFlankTarget = TryPickBossFlankTarget();
+                }
+                if (bossHasFlankTarget) {
+                    Vector3 toFlank = { bossFlankTarget.x - bossPos.x, 0.0f, bossFlankTarget.z - bossPos.z };
+                    flankDistance = Calculation::Length(toFlank);
+                    if (flankDistance > 0.0001f) dirToFlank = Calculation::Normalize(toFlank);
+                    useFlank = true;
+                }
+            } else {
+                bossHasFlankTarget = false;
+                bossFlankRepickTimer = 0.0f;
+            }
+
+            // 回り込み中は停止距離を使わず、回り込み先に着くまで動く
+            if (useFlank ? (flankDistance > kBossFlankArriveDistance) : (distance > stopDistance || retreat)) {
                 float distanceT = std::clamp((distance - stopDistance) / (kBossFarDistance - stopDistance), 0.0f, 1.0f);
                 float baseSpeed = retreat ? kBossHighGroundRetreatSpeed : kBossSpeedNear + (kBossSpeedFar - kBossSpeedNear) * distanceT;
 
@@ -779,7 +806,7 @@ void GameScene::Update() {
 
                 float bossMoveSpeed = baseSpeed * enrageMultiplier;
                 if (bossPhase == BossPhase::kP3) bossMoveSpeed *= kBossPhase3SpeedMultiplier;
-                Vector3 dir = retreat ? Vector3{ -dirToPlayer.x, 0.0f, -dirToPlayer.z } : dirToPlayer;
+                Vector3 dir = useFlank ? dirToFlank : (retreat ? Vector3{ -dirToPlayer.x, 0.0f, -dirToPlayer.z } : dirToPlayer);
                 Vector3 moveDelta = { dir.x * bossMoveSpeed, 0.0f, dir.z * bossMoveSpeed };
 
                 const float kGroundOffset = 0.05f; // 床との判定を避けるためのオフセット（プレイヤー側と同じ手法）
@@ -877,7 +904,13 @@ void GameScene::Update() {
                 bossAttackState = BossAttackState::kRebuildWindup;
                 bossAttackTimer = kArenaRebuildWindupDuration;
                 bossWarningEmissive = kArenaRebuildWarningEmissive; // データの色で予兆
-            } else if (distance <= kBossMeleeRange && !highGround) {
+            } else if (bossPhase != BossPhase::kP1 && bossHiddenTimer >= kBossHiddenTeleportDelay && !highGround
+                       && TryPickBossTeleportDest(true)) {
+                // P2以降、隠れ続けられたらテレポートで「プレイヤーから見える場所」へ回り込む（再構築以外より優先）
+                bossAttackState = BossAttackState::kTeleportOut;
+                bossAttackTimer = kBossTeleportOutDuration;
+                bossTeleportMarkerVisible = true;
+            } else if (distance <= kBossMeleeRange && !highGround && !playerHidden) {
                 // P3の近距離は、一定確率で衝撃波リング。それ以外は突進
                 // （高い場所のプレイヤーには突進も衝撃波も届かないので、距離に関係なく下の遠距離の選び方にする）
                 bool useShockwave = false;
@@ -905,8 +938,13 @@ void GameScene::Update() {
                     std::mt19937 randomEngine(seedGen());
                     std::uniform_real_distribution<float> distChance(0.0f, 1.0f);
                     float roll = distChance(randomEngine);
-                    useLaser = roll < kBossFarLaserChance;
-                    useTeleport = !useLaser && roll < kBossFarLaserChance + kBossFarTeleportChance;
+                    if (playerHidden) {
+                        // 見えないときはテレポートせず、カバーを貫通するレーザーか、裏に落とすグレネード
+                        useLaser = roll < kBossHiddenLaserChance;
+                    } else {
+                        useLaser = roll < kBossFarLaserChance;
+                        useTeleport = !useLaser && roll < kBossFarLaserChance + kBossFarTeleportChance;
+                    }
                 }
                 // 床すれすれのレーザーは高い場所に届かないので、その分はグレネードにする
                 if (highGround) {
@@ -992,7 +1030,8 @@ void GameScene::Update() {
             bossAttackTimer -= 1.0f / 60.0f;
             if (bossAttackTimer <= 0.0f) {
                 bossWarningEmissive = { 0.0f, 0.0f, 0.0f }; // 通常に戻す
-                bossGrenadeBurstRemaining = kBossGrenadeBurstCount;
+                // 隠れ続けられて焦れている間は連射数が増える
+                bossGrenadeBurstRemaining = IsBossFrustrated() ? kBossFrustrationGrenadeBurstCount : kBossGrenadeBurstCount;
                 bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
                 bossAttackState = BossAttackState::kRangedBurst;
             }
@@ -1273,6 +1312,7 @@ void GameScene::Update() {
         StopBossTeleport();
         StopBossShockwave();
         StopArenaRebuild(); // 破損マスと足場も消す（ポータルは足場と一緒に消える）
+        ResetBossHiddenState();
         phaseTextTimer = 0.0f;
         // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
         float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
@@ -1606,6 +1646,20 @@ void GameScene::StartBossPhaseShift(BossPhase next) {
 
     TriggerCameraShake(kBossPhaseShiftShakeDuration, kBossPhaseShiftShakeStrength);
 
+    // 近くにいるプレイヤーを吹き飛ばす（ダメージなし）。突進のノックバックと同じ仕組みに、上向きの跳ね上げを足す。
+    // 足場の上（高所）にいるときは対象外（足場から落としてしまうため）
+    Vector3 toPlayer = { playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z };
+    float distance = Calculation::Length(toPlayer);
+    if (distance < kPhaseShiftKnockbackRadius && !IsPlayerOnHighGround()) {
+        Vector3 knockDir = (distance > 0.0001f)
+            ? Vector3{ toPlayer.x / distance, 0.0f, toPlayer.z / distance }
+            : Vector3{ 0.0f, 0.0f, -1.0f };
+        knockbackVelocity = { knockDir.x * kPhaseShiftKnockbackSpeed, 0.0f, knockDir.z * kPhaseShiftKnockbackSpeed };
+        knockbackVelocityTimer = kKnockbackDuration; // 減衰の計算が kKnockbackDuration 基準のため同じ値にする
+        velocity.y = (std::max)(velocity.y, kPhaseShiftKnockbackUpSpeed);
+        isOnGround = false;
+    }
+
     phaseText.SetText(next == BossPhase::kP2 ? "PHASE 2" : "PHASE 3");
     phaseText.SetPosition({ ((float)WinApp::KclientWidth - phaseText.GetWidth()) / 2.0f, kPhaseTextPositionY });
     phaseTextTimer = kPhaseTextDuration;
@@ -1631,10 +1685,68 @@ void GameScene::StopBossLaser() {
 }
 
 float GameScene::BossAttackCooldown() const {
-    return (bossPhase == BossPhase::kP3) ? kBossAttackCooldown * kBossPhase3CooldownScale : kBossAttackCooldown;
+    float cooldown = (bossPhase == BossPhase::kP3) ? kBossAttackCooldown * kBossPhase3CooldownScale : kBossAttackCooldown;
+    if (IsBossFrustrated()) cooldown *= kBossFrustrationCooldownScale; // 隠れ続けられて焦れている間は攻撃が速くなる
+    return cooldown;
 }
 
-bool GameScene::TryPickBossTeleportDest() {
+Vector3 GameScene::PlayerChestPos() const {
+    return { playerPos.x, playerPos.y + eyeHeight * kPlayerChestEyeRatio, playerPos.z };
+}
+
+bool GameScene::HasLineOfSight(const Vector3& from, const Vector3& to) {
+    Vector3 diff = { to.x - from.x, to.y - from.y, to.z - from.z };
+    float length = Calculation::Length(diff);
+    if (length <= kLineOfSightEpsilon) return true;
+    Ray ray = { from, Calculation::Normalize(diff) };
+
+    // 遮蔽物は壁とデータ足場だけ（床・ボス・的は対象にしない）
+    std::vector<Object3d*> blockers;
+    for (auto& w : walls) blockers.push_back(w.get());
+    AppendDataPlatformColliders(blockers);
+
+    RaycastHit hit{};
+    if (!RaycastClosest(ray, blockers, &hit, nullptr, nullptr)) return true;
+    return hit.distance >= length - kLineOfSightEpsilon; // 終点より手前で当たれば遮られている
+}
+
+bool GameScene::CanBossSeePlayer() {
+    // 高所のプレイヤーは自分の足場で視線が遮られてしまうため、常に見えている扱い（既存の「距離を取る」動きを優先）
+    if (IsPlayerOnHighGround()) return true;
+    return HasLineOfSight({ bossPos.x, bossPos.y + kBossEyeHeight, bossPos.z }, PlayerChestPos());
+}
+
+bool GameScene::TryPickBossFlankTarget() {
+    const float kGroundOffset = 0.05f;
+    const float kTwoPi = 2.0f * 3.14159265f;
+    const Vector3 playerChest = PlayerChestPos();
+    float bestDistSq = FLT_MAX;
+    bool found = false;
+    for (int i = 0; i < kBossFlankSampleCount; ++i) {
+        float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(kBossFlankSampleCount);
+        float x = playerPos.x + std::sin(angle) * kBossFlankRadius;
+        float z = playerPos.z + std::cos(angle) * kBossFlankRadius;
+        if (std::abs(x) > kBossTeleportArenaLimit || std::abs(z) > kBossTeleportArenaLimit) continue;
+        // 今のボスに近い順で採るので、現在の最良より遠い点は高コストな判定の前に捨てる
+        float distSq = (x - bossPos.x) * (x - bossPos.x) + (z - bossPos.z) * (z - bossPos.z);
+        if (distSq >= bestDistSq) continue;
+        if (CheckCollision({ x, kGroundOffset, z }, nullptr, kBossCollisionRadius)) continue;
+        if (!HasLineOfSight({ x, bossPos.y + kBossEyeHeight, z }, playerChest)) continue;
+        bestDistSq = distSq;
+        bossFlankTarget = { x, 0.0f, z };
+        found = true;
+    }
+    return found;
+}
+
+void GameScene::ResetBossHiddenState() {
+    bossHiddenTimer = 0.0f;
+    bossFlankRepickTimer = 0.0f;
+    bossHasFlankTarget = false;
+    bossFlankTarget = { 0.0f, 0.0f, 0.0f };
+}
+
+bool GameScene::TryPickBossTeleportDest(bool requireLineOfSight) {
     std::random_device seedGen;
     std::mt19937 randomEngine(seedGen());
     std::uniform_real_distribution<float> distAngle(0.0f, 2.0f * 3.14159265f);
@@ -1645,7 +1757,8 @@ bool GameScene::TryPickBossTeleportDest() {
         float radius = distRadius(randomEngine);
         float x = std::clamp(playerPos.x + std::sin(angle) * radius, -kBossTeleportArenaLimit, kBossTeleportArenaLimit);
         float z = std::clamp(playerPos.z + std::cos(angle) * radius, -kBossTeleportArenaLimit, kBossTeleportArenaLimit);
-        if (!CheckCollision({ x, kGroundOffset, z }, nullptr, kBossCollisionRadius)) {
+        if (!CheckCollision({ x, kGroundOffset, z }, nullptr, kBossCollisionRadius)
+            && (!requireLineOfSight || HasLineOfSight({ x, bossPos.y + kBossEyeHeight, z }, PlayerChestPos()))) {
             bossTeleportDest = { x, 0.0f, z }; // bossPosと同じく足元基準（床y=0）
             return true;
         }
@@ -1940,6 +2053,7 @@ void GameScene::RestartGame() {
     StopArenaRebuild();
     bossTeleportDest = { 0.0f, 0.0f, 0.0f };
     bossPhase3PulseTimer = 0.0f;
+    ResetBossHiddenState();
     // ボスの見た目の位置・向きも戻す。READY中はAIが止まっていてbossのSetTranslateが呼ばれないため、
     // ここで戻さないと、FIGHTまで前の試合で倒れた位置・向きのまま表示されてしまう
     boss->SetTranslate({ bossPos.x, bossPos.y + kBossHalfHeight, bossPos.z });
@@ -2901,6 +3015,10 @@ void GameScene::UpdateBossParts() {
     if (bossPhase == BossPhase::kP3 && emissive.x == 0.0f && emissive.y == 0.0f && emissive.z == 0.0f) {
         emissive = kBossPhase3Emissive;
         intensity = kBossPhase3EmissiveBase + kBossPhase3EmissivePulse * std::sin(bossPhase3PulseTimer * kBossPhase3PulseSpeed);
+    } else if (IsBossFrustrated() && emissive.x == 0.0f && emissive.y == 0.0f && emissive.z == 0.0f) {
+        // 焦れ中は橙で弱く脈打つ（警告色・P3の赤・被弾フラッシュより優先度は下）
+        emissive = kBossFrustrationEmissive;
+        intensity = kBossFrustrationEmissiveBase + kBossFrustrationEmissivePulse * std::sin(bossHiddenTimer * kBossFrustrationPulseSpeed);
     }
     if (bossHitFlashTimer > 0.0f) {
         emissive = { 1.0f, 0.1f, 0.1f };
