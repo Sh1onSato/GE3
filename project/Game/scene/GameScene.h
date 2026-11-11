@@ -148,8 +148,9 @@ private:
 	static constexpr float kBossMaxHP = 300.0f; // 仮値（プレイヤーの3倍程度）
 
 	// プレイヤーの射撃ダメージ（距離で線形減衰。近距離ほど高ダメージ＝ショットガン的な仕様）
-	static constexpr float kBossDamageMax = 25.0f;          // 至近距離での最大ダメージ
-	static constexpr float kBossDamageMin = 8.0f;           // 遠距離での最小ダメージ
+	// 1発が大きすぎて簡単だったため半分に下げた（2026/11/11、旧 25 / 8）。コア命中はこの2倍
+	static constexpr float kBossDamageMax = 12.0f;          // 至近距離での最大ダメージ
+	static constexpr float kBossDamageMin = 4.0f;           // 遠距離での最小ダメージ
 	static constexpr float kBossDamageFalloffStart = 5.0f;  // これ以下の距離は常に最大ダメージ
 	static constexpr float kBossDamageFalloffEnd = 20.0f;   // これ以上の距離は常に最小ダメージ
 
@@ -382,6 +383,24 @@ private:
 	static constexpr Vector2 kWeaponIconBackPos = { 1250.0f, 628.0f };
 	static constexpr Vector2 kWeaponIconBackSize = { 176.0f, 66.0f };
 	static constexpr Vector4 kWeaponIconBackColor = { 1.0f, 1.0f, 1.0f, 0.6f };
+	// アイコン画像の大きさ（px）。クールタイムのゲージで左から切り抜くのに使う
+	static constexpr Vector2 kWeaponIconTexSize = { 512.0f, 192.0f };
+
+	// 武器の後ろのパネル（半透明の暗い板＋下端の細いライン）。アイコンが背景に溶けて色の変化が見えにくいため
+	// 0=後ろの武器用、1=手前の武器用。位置は右下を基準（アンカー(1,1)）
+	std::array<std::unique_ptr<Sprite>, 2> weaponPanels;
+	std::array<std::unique_ptr<Sprite>, 2> weaponPanelLines;
+	static constexpr Vector2 kWeaponPanelFrontPos = { 1272.0f, 716.0f };   // 右下の角
+	static constexpr Vector2 kWeaponPanelFrontSize = { 302.0f, 112.0f };   // 番号まで含む
+	static constexpr Vector2 kWeaponPanelBackPos = { 1258.0f, 632.0f };
+	static constexpr Vector2 kWeaponPanelBackSize = { 210.0f, 78.0f };
+	// アリーナ自体が暗い紺色なので、パネルは背景より明るいグレーがかった青にし、透け具合も控えめにする
+	// （暗い色の半透明だと背景に溶けて見えなかった）。手前の方を明るくして後ろと区別する
+	static constexpr Vector4 kWeaponPanelFrontColor = { 0.20f, 0.24f, 0.30f, 0.85f };
+	static constexpr Vector4 kWeaponPanelBackColor = { 0.13f, 0.15f, 0.19f, 0.75f };
+	static constexpr float kWeaponPanelLineHeight = 3.0f;
+	static constexpr Vector4 kWeaponPanelFrontLineColor = { 0.0f, 0.75f, 1.0f, 0.9f };  // アリーナの発光と同じシアン
+	static constexpr Vector4 kWeaponPanelBackLineColor = { 0.5f, 0.5f, 0.55f, 0.6f };
 	static constexpr float kWeaponSlotTextFrontScale = 3.0f;
 	static constexpr float kWeaponSlotTextBackScale = 2.0f;
 	static constexpr Vector2 kWeaponSlotTextFrontPos = { kWeaponIconFrontPos.x - kWeaponIconFrontSize.x - 24.0f, kWeaponIconFrontPos.y - 60.0f };

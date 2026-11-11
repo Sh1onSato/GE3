@@ -82,6 +82,29 @@ void GameScene::Initialize() {
             weaponIcons[i]->Initialize(framework->GetSpriteCommon(), iconFiles[i]);
             weaponIcons[i]->SetAnchorPoint({ 1.0f, 1.0f });
         }
+        // 武器の後ろのパネル（位置・大きさは固定なのでここで決める）
+        const std::array<Vector2, 2> panelPos = { kWeaponPanelBackPos, kWeaponPanelFrontPos };
+        const std::array<Vector2, 2> panelSize = { kWeaponPanelBackSize, kWeaponPanelFrontSize };
+        const std::array<Vector4, 2> panelColor = { kWeaponPanelBackColor, kWeaponPanelFrontColor };
+        const std::array<Vector4, 2> lineColor = { kWeaponPanelBackLineColor, kWeaponPanelFrontLineColor };
+        for (size_t i = 0; i < weaponPanels.size(); ++i) {
+            weaponPanels[i] = std::make_unique<Sprite>();
+            weaponPanels[i]->Initialize(framework->GetSpriteCommon(), "white");
+            weaponPanels[i]->SetAnchorPoint({ 1.0f, 1.0f });
+            weaponPanels[i]->SetPosition(panelPos[i]);
+            weaponPanels[i]->SetSize(panelSize[i]);
+            weaponPanels[i]->SetColor(panelColor[i]);
+            weaponPanels[i]->Update();
+
+            weaponPanelLines[i] = std::make_unique<Sprite>();
+            weaponPanelLines[i]->Initialize(framework->GetSpriteCommon(), "white");
+            weaponPanelLines[i]->SetAnchorPoint({ 1.0f, 1.0f });
+            weaponPanelLines[i]->SetPosition(panelPos[i]);
+            weaponPanelLines[i]->SetSize({ panelSize[i].x, kWeaponPanelLineHeight });
+            weaponPanelLines[i]->SetColor(lineColor[i]);
+            weaponPanelLines[i]->Update();
+        }
+
         weaponSlotTextFront.Initialize(framework->GetSpriteCommon(), 1);
         weaponSlotTextFront.SetScale(kWeaponSlotTextFrontScale);
         weaponSlotTextFront.SetPosition(kWeaponSlotTextFrontPos);
@@ -1369,9 +1392,19 @@ void GameScene::Draw() {
 
         // 武器表示：後ろ（グレースケール）→手前（カラー）の順に積んで、手前が上に重なるようにする
         bool isPortal = (weaponMode == WeaponMode::kPortalGun);
+        weaponPanels[0]->Draw();
+        weaponPanelLines[0]->Draw();
         weaponIcons[isPortal ? kIconShotgunGray : kIconPortalGunGray]->Draw();
         weaponSlotTextBack.Draw();
-        weaponIcons[isPortal ? kIconPortalGun : kIconShotgun]->Draw();
+        weaponPanels[1]->Draw();
+        weaponPanelLines[1]->Draw();
+        if (isPortal) {
+            weaponIcons[kIconPortalGun]->Draw();
+        } else {
+            // グレースケールの上に、クールタイムの明けた分だけカラーを重ねる（UpdateWeaponHud参照）
+            weaponIcons[kIconShotgunGray]->Draw();
+            weaponIcons[kIconShotgun]->Draw();
+        }
         weaponSlotTextFront.Draw();
     }
 
@@ -2382,19 +2415,53 @@ void GameScene::UpdateWeaponViewModel() {
 }
 
 void GameScene::UpdateWeaponHud() {
+    // 後ろのパネル（位置・色は固定。Initializeで設定済み）
+    for (size_t i = 0; i < weaponPanels.size(); ++i) {
+        weaponPanels[i]->Update();
+        weaponPanelLines[i]->Update();
+    }
+
     // 今の武器を手前（カラー・大きく）、もう一方を後ろ（グレースケール・小さく・半透明）に置く
     bool isPortal = (weaponMode == WeaponMode::kPortalGun);
-    Sprite* front = weaponIcons[isPortal ? kIconPortalGun : kIconShotgun].get();
     Sprite* back = weaponIcons[isPortal ? kIconShotgunGray : kIconPortalGunGray].get();
-
-    front->SetPosition(kWeaponIconFrontPos);
-    front->SetSize(kWeaponIconFrontSize);
-    front->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    back->SetAnchorPoint({ 1.0f, 1.0f });
     back->SetPosition(kWeaponIconBackPos);
     back->SetSize(kWeaponIconBackSize);
+    back->SetTexLeftTop({ 0.0f, 0.0f });
+    back->SetTexSize(kWeaponIconTexSize);
     back->SetColor(kWeaponIconBackColor);
-    front->Update();
     back->Update();
+
+    if (isPortal) {
+        // ポータルガンにはクールタイムが無いので、カラーをそのまま出す
+        Sprite* front = weaponIcons[kIconPortalGun].get();
+        front->SetPosition(kWeaponIconFrontPos);
+        front->SetSize(kWeaponIconFrontSize);
+        front->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        front->Update();
+    } else {
+        // ショットガン：下にグレースケールを敷き、クールタイムの明けた割合だけカラーを左から重ねる（ゲージ）
+        float ready = 1.0f - std::clamp(fireCooldownTimer / kFireCooldownDuration, 0.0f, 1.0f);
+
+        Sprite* base = weaponIcons[kIconShotgunGray].get();
+        base->SetAnchorPoint({ 1.0f, 1.0f });
+        base->SetPosition(kWeaponIconFrontPos);
+        base->SetSize(kWeaponIconFrontSize);
+        base->SetTexLeftTop({ 0.0f, 0.0f });
+        base->SetTexSize(kWeaponIconTexSize);
+        base->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        base->Update();
+
+        // 左端を基準（アンカー(0,1)）にして、表示幅と画像の切り抜き幅を同じ割合で縮める
+        Sprite* fill = weaponIcons[kIconShotgun].get();
+        fill->SetAnchorPoint({ 0.0f, 1.0f });
+        fill->SetPosition({ kWeaponIconFrontPos.x - kWeaponIconFrontSize.x, kWeaponIconFrontPos.y });
+        fill->SetSize({ kWeaponIconFrontSize.x * ready, kWeaponIconFrontSize.y });
+        fill->SetTexLeftTop({ 0.0f, 0.0f });
+        fill->SetTexSize({ kWeaponIconTexSize.x * ready, kWeaponIconTexSize.y });
+        fill->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        fill->Update();
+    }
 
     // キー番号（1＝ショットガン、2＝ポータルガン）
     weaponSlotTextFront.SetText(isPortal ? "2" : "1");
