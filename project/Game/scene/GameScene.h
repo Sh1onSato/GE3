@@ -442,7 +442,9 @@ private:
 	void StartBossShield();                              // シールドを張る（予備動作は打ち切る）
 	void ResetBossShield();                              // 命中記録・クールダウンを初期化（表示は状態kShieldで決まる）
 	void UpdateBossShieldTransform();                    // bossShieldの位置・向き・スケールを設定する
-	bool IsShotBlockedByShield(const Ray& ray, float maxDistance) const; // 弾のレイがmaxDistanceより手前でシールドの板を通るか（kShield中のみ）
+	// 弾のレイがmaxDistanceより手前でシールドの板（正面・上面）を通るか（kShield中のみ）。通ればoutDistanceに最初の板までの距離
+	bool IsShotBlockedByShield(const Ray& ray, float maxDistance, float* outDistance = nullptr) const;
+	bool IsInsideBossShield(const Vector3& worldPos) const; // worldPosが正面の板とボスの間（板の内側）にあるか（kShield中のみ）
 
 	// --- 組み合わせ攻撃（P2以降、低確率でメインの行動にグレネードを重ねる） ---
 	static constexpr float kBossComboChanceP2 = 0.2f;                 // P2で組み合わせ版になる確率

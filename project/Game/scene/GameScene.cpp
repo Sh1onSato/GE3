@@ -2176,27 +2176,44 @@ void GameScene::UpdateBossShieldTransform() {
     bossShieldTop->SetScale({ kBossShieldTopHalfSize * scaleRate, kBossShieldTopHalfSize * scaleRate, 1.0f });
 }
 
-bool GameScene::IsShotBlockedByShield(const Ray& ray, float maxDistance) const {
+bool GameScene::IsShotBlockedByShield(const Ray& ray, float maxDistance, float* outDistance) const {
     if (bossAttackState != BossAttackState::kShield) return false;
     // 板の位置・向き・大きさは UpdateBossShieldTransform で設定済みの描画用Transformをそのまま使う（見た目と判定を一致させる）
     const Transform& shield = bossShield->GetTransform();
     const float yaw = shield.rotate.y;
     const Vector3 right = { std::cos(yaw), 0.0f, -std::sin(yaw) }; // 正面(sin yaw, 0, cos yaw)に垂直な水平方向
     const Vector3 up = { 0.0f, 1.0f, 0.0f };
-    float distance = 0.0f;
-    if (Calculation::TestRayRect(ray, shield.translate, right, up, shield.scale.x, shield.scale.y, &distance)
-        && distance <= maxDistance) {
-        return true; // ボスの体より手前で正面の板を通った
-    }
-
-    // 上面の板：水平な板なので、2辺はボスの右方向と正面方向
-    const Transform& top = bossShieldTop->GetTransform();
     const Vector3 forward = { std::sin(yaw), 0.0f, std::cos(yaw) };
-    if (Calculation::TestRayRect(ray, top.translate, right, forward, top.scale.x, top.scale.y, &distance)
-        && distance <= maxDistance) {
-        return true; // ボスの体より手前で上面の板を通った（足場から撃ち下ろした弾）
+    const Transform& top = bossShieldTop->GetTransform();
+
+    // 正面の板と上面の板（2辺はボスの右方向と正面方向）のうち、maxDistanceより手前で最初に通る方を探す
+    float closest = maxDistance;
+    bool blocked = false;
+    float distance = 0.0f;
+    if (Calculation::TestRayRect(ray, shield.translate, right, up, shield.scale.x, shield.scale.y, &distance) && distance <= closest) {
+        closest = distance;
+        blocked = true;
     }
-    return false;
+    if (Calculation::TestRayRect(ray, top.translate, right, forward, top.scale.x, top.scale.y, &distance) && distance <= closest) {
+        closest = distance;
+        blocked = true;
+    }
+    if (blocked && outDistance) *outDistance = closest;
+    return blocked;
+}
+
+bool GameScene::IsInsideBossShield(const Vector3& worldPos) const {
+    if (bossAttackState != BossAttackState::kShield) return false;
+    // ボスの中心から見て、正面方向に0〜板までの距離、横・縦は板の半幅以内なら「板とボスの間」
+    const Transform& core = boss->GetTransform();
+    const Transform& shield = bossShield->GetTransform();
+    const float yaw = core.rotate.y;
+    const Vector3 local = { worldPos.x - core.translate.x, worldPos.y - core.translate.y, worldPos.z - core.translate.z };
+    const float alongForward = local.x * std::sin(yaw) + local.z * std::cos(yaw);
+    const float alongRight = local.x * std::cos(yaw) - local.z * std::sin(yaw);
+    return alongForward >= 0.0f && alongForward <= kBossShieldForwardOffset
+        && std::abs(alongRight) <= shield.scale.x
+        && std::abs(worldPos.y - shield.translate.y) <= shield.scale.y;
 }
 
 void GameScene::StopBossLaser() {
@@ -3359,6 +3376,32 @@ void GameScene::FireShot() {
     Object3d* closestObject = nullptr;
     RaycastClosest(ray, targets, &closestHit, &closestAABB, &closestObject);
 
+    // シールドの板はレイキャストの対象（AABB）に入っていないので、ここで別に調べる。
+    // 板はボスの体より前・外側に張り出しているため、これをしないと
+    //  ・板の端を通ってボスの箱を外れた弾が、奥の壁に当たって弾痕と火花を出す
+    //  ・弾かれた火花が板ではなく、2.4m奥のボスの体の表面に出る
+    // となり、遠くから見ると貫通したように見えていた。板に当たったら、着弾点を板の上に置き換える
+    // ボスの箱はAABB（回転しない）なので、ボスが斜めを向くと箱の角（中心から約2.83m）が板（中心から2.4m）より前に出る。
+    // 「箱に当たった距離」までだと、近距離で角に当たった弾が板の手前で止まり、弾かれずに貫通していた。
+    // ボスに当たった弾は、ボスの中心に一番近づく距離までに板を通れば弾く
+    float shieldMaxDistance = closestObject ? closestHit.distance : FLT_MAX;
+    if (closestObject == boss.get()) {
+        const Vector3& c = boss->GetTransform().translate;
+        const Vector3 toCenter = { c.x - ray.origin.x, c.y - ray.origin.y, c.z - ray.origin.z };
+        shieldMaxDistance = (std::max)(shieldMaxDistance, Calculation::Dot(toCenter, direction));
+    }
+    float shieldDistance = 0.0f;
+    bool hitShieldPlate = IsShotBlockedByShield(ray, shieldMaxDistance, &shieldDistance);
+    if (hitShieldPlate) {
+        closestObject = boss.get(); // ボスへの命中（弾かれた）として扱う
+        closestHit.distance = shieldDistance;
+        closestHit.hitPoint = { ray.origin.x + direction.x * shieldDistance, ray.origin.y + direction.y * shieldDistance, ray.origin.z + direction.z * shieldDistance };
+        closestHit.normal = { -direction.x, -direction.y, -direction.z }; // 火花は撃った側へ跳ね返す
+    } else if (closestObject == boss.get() && IsInsideBossShield(ray.origin)) {
+        // 板とボスの間に入り込んで撃った（板はプレイヤーを押し返さないので、斜めから寄ると入れる）。板の内側からでも弾く
+        hitShieldPlate = true;
+    }
+
     if (closestObject) {
         // ヒットした場合の演出
         // 1. パーティクル（火花）を出す：線（飛び散る火花）・点（細かい火の粉）・面（着弾フラッシュ）を同時に生成する
@@ -3387,8 +3430,7 @@ void GameScene::FireShot() {
         // 弾かれる：シールド中に弾がボスの体より手前でシールドの板を通ったとき、またはボスが無敵の間（フェーズ移行・テレポート・再構築の溜め）。
         // シールドは立ち位置（IsFromBossFront）ではなく板との交差で判定する（板の横をすり抜けて側面に当たった弾は通す）。
         // 無敵の間も「弾かれた」表示（青い火花・キン）にして、ダメージが入っていないことを見た目と音で分かるようにする
-        const bool isShieldBlocked = (closestObject == boss.get())
-            && (IsShotBlockedByShield(ray, closestHit.distance) || IsBossInvulnerable());
+        const bool isShieldBlocked = (closestObject == boss.get()) && (hitShieldPlate || IsBossInvulnerable());
         const Vector3& sc = kBossShieldSparkColor;
 
         // 指定した中心方向まわりに、coneAngle の範囲でランダムにばらまいた単位ベクトルを返す。
