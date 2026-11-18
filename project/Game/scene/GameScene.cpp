@@ -869,6 +869,7 @@ void GameScene::Update() {
         // プレイヤーが壁・カバーの裏に隠れているか（見えない間だけ増え、見えたら0に戻る）
         bossHiddenTimer = CanBossSeePlayer() ? 0.0f : bossHiddenTimer + 1.0f / 60.0f;
         const bool playerHidden = bossHiddenTimer > 0.0f;
+        UpdatePlayerCampTimer();
 
         // シールド用タイマー（ボスAIが動いている間だけ進む）
         if (bossShieldCooldownTimer > 0.0f) {
@@ -1044,8 +1045,9 @@ void GameScene::Update() {
             // 攻撃判定：クールダウン(bossAttackTimer)が明けたら、距離しきい値で近接突進／遠距離グレネードを自動選択する
             if (bossAttackTimer > 0.0f) {
                 bossAttackTimer -= 1.0f / 60.0f;
-            } else if (bossPhase != BossPhase::kP1 && arenaRebuildTimer <= 0.0f) {
-                // P2以降、再構築のタイマーが明けていたら他の攻撃より優先する
+            } else if (bossPhase != BossPhase::kP1 && (arenaRebuildTimer <= 0.0f || IsPlayerCampingLong())) {
+                // P2以降、再構築のタイマーが明けていたら他の攻撃より優先する。
+                // 同じ足場に長く居座られたときも、タイマーを待たずに作り替えて足場ごと落とす
                 bossAttackState = BossAttackState::kRebuildWindup;
                 bossAttackTimer = kArenaRebuildWindupDuration;
                 bossWarningEmissive = kArenaRebuildWarningEmissive; // データの色で予兆
@@ -1093,6 +1095,10 @@ void GameScene::Update() {
                 // 床すれすれのレーザーは高い場所に届かないので、その分はグレネードにする
                 if (highGround) {
                     useLaser = false;
+                }
+                // 同じ足場に居座られたら、テレポートもやめて足場を狙うグレネードだけにする（足場ごと壊しに行く）
+                if (IsPlayerCamping()) {
+                    useTeleport = false;
                 }
                 // テレポートの行き先が見つからなければ、やめてグレネードにする
                 if (useTeleport && !TryPickBossTeleportDest()) {
@@ -1208,7 +1214,8 @@ void GameScene::Update() {
                     bossAttackTimer = BossAttackCooldown();
                 } else {
                     // 連続：隠れ続けられて焦れている間は連射数が増える
-                    bossGrenadeBurstRemaining = IsBossFrustrated() ? kBossFrustrationGrenadeBurstCount : kBossGrenadeBurstCount;
+                    // 足場に居座られている間も同じだけ増やす
+                    bossGrenadeBurstRemaining = (IsBossFrustrated() || IsPlayerCamping()) ? kBossFrustrationGrenadeBurstCount : kBossGrenadeBurstCount;
                     bossGrenadeBurstTimer = 0.0f; // 1発目は即発射
                     bossAttackState = BossAttackState::kRangedBurst;
                 }
@@ -2226,6 +2233,7 @@ void GameScene::StopBossLaser() {
 float GameScene::BossAttackCooldown() const {
     float cooldown = (bossPhase == BossPhase::kP3) ? kBossAttackCooldown * kBossPhase3CooldownScale : kBossAttackCooldown;
     if (IsBossFrustrated()) cooldown *= kBossFrustrationCooldownScale; // 隠れ続けられて焦れている間は攻撃が速くなる
+    if (IsPlayerCamping()) cooldown *= kPlayerCampCooldownScale;      // 足場に居座られている間も速くする（焦れと重なれば両方掛かる）
     return cooldown;
 }
 
@@ -2278,8 +2286,37 @@ bool GameScene::TryPickBossFlankTarget() {
     return found;
 }
 
+int GameScene::FindPlayerPlatformIndex() const {
+    if (!IsPlayerOnHighGround()) return -1;
+    // 足元がその足場の上面より上で、XZが足場の範囲（＋体の半径）に入っている足場
+    for (int i = 0; i < kDataPlatformCount; ++i) {
+        const DataPlatform& p = dataPlatforms[i];
+        if (p.state != DataPlatform::State::kActive && p.state != DataPlatform::State::kBreaking) continue;
+        const Transform& t = p.object->GetTransform();
+        if (std::abs(playerPos.x - t.translate.x) <= t.scale.x + collisionRadius
+            && std::abs(playerPos.z - t.translate.z) <= t.scale.z + collisionRadius
+            && playerPos.y >= t.translate.y) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void GameScene::UpdatePlayerCampTimer() {
+    // 同じ足場に乗り続けている間だけ増やす（降りた・別の足場へワープしたら数え直す）
+    const int index = FindPlayerPlatformIndex();
+    if (index >= 0 && index == playerCampPlatformIndex) {
+        playerCampTimer += 1.0f / 60.0f;
+    } else {
+        playerCampTimer = 0.0f;
+    }
+    playerCampPlatformIndex = index;
+}
+
 void GameScene::ResetBossHiddenState() {
     bossHiddenTimer = 0.0f;
+    playerCampTimer = 0.0f;
+    playerCampPlatformIndex = -1;
     bossFlankRepickTimer = 0.0f;
     bossHasFlankTarget = false;
     bossFlankTarget = { 0.0f, 0.0f, 0.0f };
@@ -2706,12 +2743,23 @@ void GameScene::StartArenaRebuild() {
     corruptDamageTimer = 0.0f;
 
     // --- データ足場：残っているものも含めて全部出し直し、候補から kDataPlatformCount か所を選ぶ ---
+    // 居座られていた足場の場所は選ばない（同じ場所に出し直すと、作り替えても居座りが続くため）
+    const int campedIndex = IsPlayerCamping() ? playerCampPlatformIndex : -1;
+    const Vector3 campedPos = (campedIndex >= 0) ? dataPlatforms[campedIndex].object->GetTransform().translate : Vector3{};
     for (int i = 0; i < kDataPlatformCount; ++i) {
         HideDataPlatform(i);
     }
     std::array<int, kDataPlatformCandidateCount> order{};
     for (int i = 0; i < kDataPlatformCandidateCount; ++i) order[i] = i;
     std::shuffle(order.begin(), order.end(), randomEngine);
+    if (campedIndex >= 0) {
+        // 居座られていた場所の候補を末尾へ回す（候補は足場の数より多いので、末尾は選ばれない）
+        auto isCamped = [&](int candidate) {
+            const Vector3& p = kDataPlatformPositions[candidate];
+            return p.x == campedPos.x && p.y == campedPos.y && p.z == campedPos.z;
+        };
+        std::stable_partition(order.begin(), order.end(), [&](int candidate) { return !isCamped(candidate); });
+    }
     for (int i = 0; i < kDataPlatformCount; ++i) {
         DataPlatform& platform = dataPlatforms[i];
         const Vector3& pos = kDataPlatformPositions[order[i]];

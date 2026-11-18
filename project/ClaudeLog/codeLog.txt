@@ -840,3 +840,22 @@ P2 以降、ボスが約20秒ごとに「アリーナ再構築」を行います
 
 ### 39-5. その他
 - ポータル間の距離の上限 `kPortalMaxPairDistance` を 25→30→35m にした。
+
+## 40. 足場への居座りに対するボスの行動（2026/11/18）
+
+### 40-1. 何をするものか
+プレイヤーが同じデータ足場に長く乗り続けると、ボスが足場を攻める行動を優先する。足場の上は床の消去や突進が届かない安全地帯なので、居座り続けられないようにするため。
+
+| 同じ足場にいる時間 | ボスの行動 |
+|---|---|
+| 5秒〜（`kPlayerCampDelay`） | テレポートを選ばず、必ずグレネード（足場に当たると足場ごと壊れる）。連射を3発→5発、攻撃後のクールダウンを0.5倍（`kPlayerCampCooldownScale`） |
+| 10秒〜（`kPlayerCampRebuildDelay`、P2以降） | 足場の作り替えを、20秒ごとのタイマーを待たずに優先する。今ある足場は全部消えるので、プレイヤーは下に落ちる |
+
+### 40-2. 関数の役割
+- `FindPlayerPlatformIndex()`：プレイヤーが乗っている足場のインデックス（乗っていなければ-1）。高い場所にいて、XZが足場の範囲（半幅＋体の半径）に入っていて、足元が足場の中心より上にある kActive / kBreaking の足場。
+- `UpdatePlayerCampTimer()`：ボスAIが動いている間、毎フレーム呼ぶ（`bossHiddenTimer` の更新のすぐ後）。前のフレームと同じ足場なら `playerCampTimer` を増やし、違えば0に戻す。降りたり、ポータルで別の足場へ移ったりすると数え直しになる。
+- `IsPlayerCamping()`（5秒以上）／`IsPlayerCampingLong()`（10秒以上）。
+- 攻撃の選び方：再構築の条件を `arenaRebuildTimer <= 0 || IsPlayerCampingLong()` にした。遠距離の選び方では、居座り中は `useTeleport = false`。グレネードの連射数は `IsBossFrustrated() || IsPlayerCamping()` のとき5発。
+- `BossAttackCooldown()`：居座り中は0.5倍（焦れと重なれば両方かかる）。
+- `StartArenaRebuild()`：居座られていた足場の位置と同じ候補を、`std::stable_partition` で候補の最後に回す。候補は5か所、出すのは3か所なので、同じ場所には出し直されない。
+- `ResetBossHiddenState()`（リトライ・勝敗の確定）で、居座りの時間も初期化する。

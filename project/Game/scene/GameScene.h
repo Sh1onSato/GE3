@@ -514,6 +514,17 @@ private:
 	bool CanBossSeePlayer();                                        // ボスの胸からプレイヤーの胸が見えるか（高所は常に見える扱い）
 	bool TryPickBossFlankTarget();                                  // プレイヤーが見える回り込み先をbossFlankTargetに保存。無ければfalse
 	bool IsBossFrustrated() const { return bossHiddenTimer >= kBossFrustrationDelay; }
+
+	// 同じデータ足場に長く居座られたら、足場を狙う行動（グレネード）を優先する（2026/11/18）
+	float playerCampTimer = 0.0f;       // 同じ足場に乗り続けている時間[秒]
+	int playerCampPlatformIndex = -1;   // 前フレームに乗っていた足場（-1＝乗っていない）
+	static constexpr float kPlayerCampDelay = 5.0f;          // これ以上居座ると「居座り」扱い
+	static constexpr float kPlayerCampCooldownScale = 0.5f;  // 居座り中の攻撃後クールダウン倍率
+	static constexpr float kPlayerCampRebuildDelay = 10.0f;  // これ以上居座ると、タイマーを待たずに足場を作り替える（P2以降）
+	bool IsPlayerCamping() const { return playerCampTimer >= kPlayerCampDelay; }
+	bool IsPlayerCampingLong() const { return playerCampTimer >= kPlayerCampRebuildDelay; }
+	int FindPlayerPlatformIndex() const; // プレイヤーが乗っている足場のインデックス（乗っていなければ-1）
+	void UpdatePlayerCampTimer();        // ボスAIが動いている間だけ毎フレーム呼ぶ
 	void ResetBossHiddenState();                                    // 隠れ関連の状態を初期化（リトライ・勝敗確定用）
 
 	// --- P3固有の挙動 ---
