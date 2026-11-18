@@ -38,6 +38,8 @@ public:
     void TriggerGrayscaleFlash() { grayscaleFlashTimer = kWarpGrayscaleFlashDuration; }
     // 被弾時の一瞬の赤いヴィネット
     void TriggerDamageVignette() { damageVignetteTimer = kDamageVignetteDuration; }
+    // 大技の溜め中などの警告の赤いヴィネットの強さ（0 = 無し）。演出の側が毎フレーム渡す。被弾ヴィネットがあればそちらを優先
+    void SetWarningVignette(float intensity) { warningVignetteIntensity = intensity; }
     // シーン遷移・開始演出のグリッチの強さ（0 = 無し、1 = 最大）と、乱数の種にする経過時間[秒]。演出の側が毎フレーム渡す
     void SetTransitionGlitch(float intensity, float time) {
         transitionGlitchIntensity = intensity;
@@ -48,6 +50,7 @@ public:
     void ResetTransientEffects() {
         grayscaleFlashTimer = 0.0f;
         damageVignetteTimer = 0.0f;
+        warningVignetteIntensity = 0.0f;
         transitionGlitchIntensity = 0.0f;
         transitionGlitchTime = 0.0f;
     }
@@ -75,6 +78,8 @@ public:
     static constexpr float kDamageVignetteMaxBlend = 0.4f;      // 被弾ヴィネットの最大の濃さ（画面が完全な赤一色にならないように）
     static constexpr float kDamageVignetteRadius = 0.35f;       // 被弾ヴィネットの半径（中心側はこの外側から赤くなる）
     static constexpr Vector3 kDamageVignetteColor = { 0.6f, 0.0f, 0.0f };
+    static constexpr float kWarningVignetteRadius = 0.45f;      // 警告ヴィネットは被弾より少し外側だけを赤くする
+    static constexpr Vector3 kWarningVignetteColor = { 0.8f, 0.0f, 0.0f };
 
     // ブルームの既定値（旧 GE3 に近い見た目。ブルームは常に ON）
     static constexpr float kBloomThreshold = 0.95f;
@@ -100,6 +105,7 @@ private:
     // 一瞬だけの演出の残り時間[秒]。0 で終わり
     float grayscaleFlashTimer = 0.0f;
     float damageVignetteTimer = 0.0f;
+    float warningVignetteIntensity = 0.0f; // 演出の側が毎フレーム設定する
 
     // 遷移グリッチ
     float transitionGlitchIntensity = 0.0f;

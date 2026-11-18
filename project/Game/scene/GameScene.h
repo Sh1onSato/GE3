@@ -270,6 +270,18 @@ private:
 	void UpdateFloorWipeFlash();           // 発動後の白い閃光とグリッチの減衰
 	void StopFloorWipe();                  // 溜め・閃光を打ち切り、床の発光・文字・グリッチを戻す
 
+	// 溜め中、危険な高さの上端（kPlayerHighGroundHeight）を外壁の内側に沿って赤い線で示す（床の赤い点滅＝下端と合わせて範囲が分かる）
+	static constexpr int kFloorWipeHeightLineCount = 4;           // 外壁4面に1本ずつ
+	std::array<std::unique_ptr<Object3d>, kFloorWipeHeightLineCount> floorWipeHeightLines;
+	bool floorWipeHeightLinesVisible = false;
+	static constexpr float kFloorWipeHeightLineInset = 28.8f;     // 線を置く位置（外壁の内面±29.0より少し内側）
+	static constexpr float kFloorWipeHeightLineRadius = 0.15f;    // 0.06→0.15（2026/11/18「もうちょい強調」）
+	// 溜め中、地上にいるときの画面の縁の赤いヴィネット（床の点滅に合わせる。後半ほど濃く）
+	static constexpr float kFloorWipeVignetteStart = 0.2f;
+	static constexpr float kFloorWipeVignetteEnd = 0.55f;
+	static constexpr float kFloorWipeVignetteOffRatio = 0.4f;     // 床が消えている瞬間も完全には消さない（ちらつきすぎ防止）
+	void UpdateFloorWipeHeightLines();     // 位置・向き・太さを設定してUpdateする（毎フレーム）
+
 	// "WARNING"の文字（床全体の消去の溜め中だけ点滅表示）
 	BitmapText warningText;
 	bool warningTextVisible = false;
@@ -418,6 +430,10 @@ private:
 	static constexpr float kBossShieldForwardOffset = 2.4f;
 	static constexpr float kBossShieldOffsetY = 0.5f;
 	static constexpr float kBossShieldHalfSize = 2.6f;
+	// 上面のシールド（2026/11/18 追加。足場の上から撃ち下ろす弾も防ぐ）。boss_shield.glbを上向きにしてボスの頭上に置く
+	std::unique_ptr<Object3d> bossShieldTop;
+	static constexpr float kBossShieldTopOffsetY = 0.8f;   // ボスの上端（芯の中心＋kBossHalfHeight）からの高さ
+	static constexpr float kBossShieldTopHalfSize = 2.6f;
 	static constexpr float kBossShieldAppearDuration = 0.15f;  // 張った瞬間に広がる演出の長さ
 	static constexpr float kBossShieldBlockShakeStrength = 0.004f;
 	static constexpr Vector3 kBossShieldSparkColor = { 0.4f, 0.8f, 1.0f };  // 弾かれた火花の色（青）
@@ -542,10 +558,30 @@ private:
 		float radius = 0.0f;
 		float maxRadius = kShockwaveMaxRadius; // この半径を超えたら消える（ギミックは大きく、突進は小さい）
 		bool hasHit = false; // 1つの輪につき1回だけダメージ
+		bool showOffscreenMarker = false; // 発生源が画面外のとき画面端に"!"を出すか（カバー箱のギミックの輪だけtrue）
 	};
 	std::array<ShockwaveRing, kMaxShockwaveRings> shockwaveRings;
 	void StopShockwaves(); // 広がっている衝撃波を全部消す
-	bool SpawnShockwaveRing(const Vector3& center, float maxRadius); // 空いている輪を1つ使って発生させる（空きがなければfalse）
+	bool SpawnShockwaveRing(const Vector3& center, float maxRadius, bool showOffscreenMarker = false); // 空いている輪を1つ使って発生させる（空きがなければfalse）
+
+	// 画面外から来る衝撃波の方向表示："!"を発生源の方向の画面端に出す（予兆中は点滅、輪が広がっている間は点灯、輪がプレイヤーを通り過ぎたら消す）
+	std::array<BitmapText, kMaxShockwaveRings> shockwaveMarkers;
+	std::array<bool, kMaxShockwaveRings> shockwaveMarkerVisible = {};
+	// "!"の後ろに敷く赤い板（文字だけだと戦闘中に埋もれるため、主張を強くする）
+	std::array<std::unique_ptr<Sprite>, kMaxShockwaveRings> shockwaveMarkerBacks;
+	float shockwaveMarkerPulseTimer = 0.0f;
+	static constexpr float kShockwaveMarkerScale = 9.0f;         // 5→9（2026/11/18「もっと主張強くていい」）
+	static constexpr float kShockwaveMarkerPulseAmount = 0.25f;  // 輪が来ている間、大きさをこの割合だけ脈打たせる
+	static constexpr float kShockwaveMarkerPulseSpeed = 12.0f;   // 脈打ちの速さ[rad/秒]
+	static constexpr float kShockwaveMarkerBackPadding = 1.8f;   // 板の一辺＝文字の高さ×この倍率
+	static constexpr Vector4 kShockwaveMarkerBackColor = { 0.6f, 0.02f, 0.02f, 0.75f };
+	static constexpr float kShockwaveMarkerEdgeMargin = 80.0f;  // 画面端からの内側への余白[px]（大きくした分だけ内側へ）
+	static constexpr float kShockwaveMarkerSourceHeight = 1.0f; // 発生源の見る高さ（箱の中ほど）[m]
+	static constexpr float kShockwaveMarkerNearZ = 0.1f;        // カメラ空間でこれより手前（後ろ）は画面外扱い
+	static constexpr Vector4 kShockwaveMarkerColor = { 1.0f, 0.85f, 0.2f, 1.0f }; // 赤い板の上で目立つ黄色（橙赤→黄に変更）
+	void UpdateShockwaveMarkers();
+	// 発生源が画面外なら、その方向の画面端の位置をoutScreenPosに入れてtrue。画面内ならfalse
+	bool CalcOffscreenMarkerPosition(const Vector3& worldPos, Vector2* outScreenPos) const;
 
 	// 衝撃波ギミック（P2以降、一定間隔でランダムなカバー箱が予兆のあと衝撃波を出す）
 	static constexpr float kShockwaveGimmickInterval = 12.0f;   // 発生間隔[秒]
@@ -733,6 +769,12 @@ private:
 	static constexpr Vector4 kWeaponPanelFrontColor = { 0.20f, 0.24f, 0.30f, 0.85f };
 	static constexpr Vector4 kWeaponPanelBackColor = { 0.13f, 0.15f, 0.19f, 0.75f };
 	static constexpr float kWeaponPanelLineHeight = 3.0f;
+	// 床の消去の溜め中、後ろのポータルガン（キー2）を点滅させて持ち替えを促す（ショットガンを持って地上にいるときだけ）
+	float portalGunUrgeTimer = 0.0f;
+	static constexpr float kPortalGunUrgeBlinkInterval = 0.15f;
+	static constexpr Vector4 kPortalGunUrgePanelColor = { 0.75f, 0.1f, 0.1f, 0.9f };  // WARNINGと揃えた赤
+	static constexpr Vector4 kPortalGunUrgeIconColor = { 1.0f, 1.0f, 1.0f, 1.0f };    // 半透明をやめてはっきり見せる
+	static constexpr Vector4 kPortalGunUrgeTextColor = { 1.0f, 1.0f, 1.0f, 1.0f };
 	static constexpr Vector4 kWeaponPanelFrontLineColor = { 0.0f, 0.75f, 1.0f, 0.9f };  // アリーナの発光と同じシアン
 	static constexpr Vector4 kWeaponPanelBackLineColor = { 0.5f, 0.5f, 0.55f, 0.6f };
 
@@ -971,7 +1013,7 @@ private:
 	const Portal* portalExitLock = nullptr;
 	static constexpr float kPortalExitLockMargin = 0.2f;
 	// 2つのポータルの間の距離の上限。もう一方が置いてあるとき、これより離れた場所には置けない
-	static constexpr float kPortalMaxPairDistance = 25.0f;
+	static constexpr float kPortalMaxPairDistance = 35.0f; // 2026/11/18 ユーザー指定で25→30→35
 	// ポータルを置けるかどうかの判定結果（PlacePortalと、照準中の常時表示で共用）
 	enum class PortalPlaceResult { kOk, kNoSurface, kBlockedByBoss, kTooFar };
 	// portalを今の照準の先に置けるか調べる。置ける面に当たったらoutHit/outAABB/outObjectを埋める（kOk以外でも分かった範囲で埋める）

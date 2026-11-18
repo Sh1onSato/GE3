@@ -21,6 +21,8 @@ public:
     void SetScale(float scale);
     // 直近のSetTextで表示した文字列の横幅(px)。中央揃え・右揃えの計算用
     float GetWidth() const;
+    // 1行の高さ(px)。上下中央揃えの計算用
+    float GetHeight() const { return kGlyphCellHeight * scale; }
     void SetColor(const Vector4& color);
     // 描画レイヤー（大きいほど手前。Initialize前に呼んでも反映される）
     void SetLayer(int layer);

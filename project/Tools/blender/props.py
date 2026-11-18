@@ -13,6 +13,7 @@
 #                  コードで scale {太さ, 太さ, 長さ} にして、ボスの向きに回して使う
 #   shockwave    … 新規。原点 = 床の上の中心、半径 1・高さ 1 の輪。
 #                  コードで scale {半径, 高さ, 半径} にして広げる（輪の幅は半径に比例して太る）
+#   danger_line  … laser と同じ形で赤。床の消去の溜め中に、危険な高さの上端を壁沿いに示す
 
 import math
 import os
@@ -33,6 +34,7 @@ TARGET = (1.0, 0.55, 0.1)       # 的（今のオレンジ色の的に合わせ�
 HEAL = (0.3, 1.0, 0.45)         # 回復
 BOSS_ATTACK = (0.85, 0.2, 1.0)  # ボスの攻撃（ボスの発光色に合わせた紫）
 SHIELD = (0.3, 0.7, 1.0)        # ボスのシールド（攻撃の紫と見分ける青）
+DANGER_LINE = (1.0, 0.1, 0.1)   # 床の消去の危険な高さの線（WARNING・床の点滅と同じ赤）
 
 
 def mats3(prefix, glow, strength, body=(0.06, 0.06, 0.08), trim=(0.16, 0.16, 0.2)):
@@ -168,6 +170,14 @@ def build_laser():
     return b.finish("laser", m)
 
 
+def build_danger_line():
+    """床の消去の溜め中に、危険な高さの上端を示す赤い線。laser と同じ形（原点から +Z へ長さ 1、断面半径 1）で色だけ赤"""
+    m = glow_only("DangerLine", DANGER_LINE, 8.0)
+    b = c.MeshBuilder()
+    b.prism_y(c.ngon_profile(0, 0, 1.0, 6, rot=0.5236), 0.0, 1.0, 0)
+    return b.finish("danger_line", m)
+
+
 def build_shockwave():
     """衝撃波の輪。原点 = 床の上の中心、外半径 1・内半径 0.9・高さ 1。上端に向かって細くなる"""
     m = glow_only("Shockwave", BOSS_ATTACK, 5.0)
@@ -217,6 +227,7 @@ def main():
         "laser": build_laser(),
         "shockwave": build_shockwave(),
         "boss_shield": build_boss_shield(),
+        "danger_line": build_danger_line(),
     }
     c.save_blend(out_dir, "props")
     for name, obj in parts.items():

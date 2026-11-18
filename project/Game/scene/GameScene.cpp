@@ -175,6 +175,19 @@ void GameScene::Initialize() {
     portalRejectText.Initialize(framework->GetSpriteCommon(), kPortalRejectTextMaxChars); // "TOO FAR"/"BLOCKED"の7文字
     portalRejectText.SetScale(kPortalRejectTextScale);
     portalRejectText.SetColor(kPortalRejectTextColor);
+
+    for (auto& marker : shockwaveMarkers) {
+        marker.Initialize(framework->GetSpriteCommon(), 1); // "!"の1文字
+        marker.SetScale(kShockwaveMarkerScale);
+        marker.SetText("!");
+        marker.SetColor(kShockwaveMarkerColor);
+    }
+    for (auto& back : shockwaveMarkerBacks) {
+        back = std::make_unique<Sprite>();
+        back->Initialize(framework->GetSpriteCommon(), "white");
+        back->SetAnchorPoint({ 0.5f, 0.5f });
+        back->SetColor(kShockwaveMarkerBackColor);
+    }
     introBarTop = std::make_unique<Sprite>();
     introBarTop->Initialize(framework->GetSpriteCommon(), "white");
     introBarTop->SetPosition({ 0.0f, 0.0f });
@@ -300,6 +313,20 @@ void GameScene::Initialize() {
     bossShield->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "boss_shield.glb"));
     bossShield->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
     bossShield->SetScale({ 0.0f, 0.0f, 0.0f });
+    bossShieldTop = std::make_unique<Object3d>();
+    bossShieldTop->Initialize(framework->GetObject3dCommon());
+    bossShieldTop->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "boss_shield.glb"));
+    bossShieldTop->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+    bossShieldTop->SetScale({ 0.0f, 0.0f, 0.0f });
+
+    // 床の消去の危険な高さの線（溜め中だけ表示。位置はUpdateFloorWipeHeightLinesで毎フレーム設定する）
+    for (auto& line : floorWipeHeightLines) {
+        line = std::make_unique<Object3d>();
+        line->Initialize(framework->GetObject3dCommon());
+        line->SetModel(ModelManager::GetInstance()->LoadModel("Resources/models/props", "danger_line.glb"));
+        line->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+        line->SetScale({ 0.0f, 0.0f, 0.0f });
+    }
 
     // P3のテレポート行き先マーカーと衝撃波リング（どちらも shockwave.glb。使うときにスケールを設定する）
     bossTeleportMarker = std::make_unique<Object3d>();
@@ -663,6 +690,10 @@ void GameScene::Update() {
     }
     if (input->TriggerKey(DIK_2)) {
         weaponMode = WeaponMode::kPortalGun;
+    }
+    // マウスホイールでも切り替える（武器は2つなので、上下どちらに回しても入れ替え）
+    if (!isLookPaused && input->GetMouseWheel() != 0) {
+        weaponMode = (weaponMode == WeaponMode::kRifle) ? WeaponMode::kPortalGun : WeaponMode::kRifle;
     }
 
     // --- ポータルガンの操作（左クリック:青ポータル／右クリック:オレンジポータル／R:リセット） ---
@@ -1559,8 +1590,10 @@ void GameScene::UpdateRenderObjects() {
     boss->Update();
     UpdateBossParts(); // bossのtranslate/rotate/scaleが確定した後に5パーツへ写す
     bossLaser->Update(); // 位置・回転・スケールはボスAIが設定済み。呼び忘れると単位行列のまま巨大に描画される
+    UpdateFloorWipeHeightLines();
     UpdateBossShieldTransform(); // ボスのtransform確定後に位置・向き・スケールを設定（非表示時もUpdateは呼ぶ）
     bossShield->Update();
+    bossShieldTop->Update();
     // マーカー・衝撃波の位置とスケールは表示中だけ更新側で毎フレーム設定する（Updateを忘れると巨大に描画される）
     if (bossTeleportMarkerVisible) {
         bossTeleportMarker->SetTranslate({ bossTeleportDest.x, 0.0f, bossTeleportDest.z });
@@ -1593,6 +1626,7 @@ void GameScene::UpdateRenderObjects() {
         portalRejectText.SetColor(textColor);
     }
     portalRejectText.Update();
+    UpdateShockwaveMarkers();
     // 優先順位：置けなかった灰色（直後・照準中）＞ ワープ強化中のシアン ＞ 通常
     Vector4 reticleColor = kReticleColor;
     if (portalRejectTimer > 0.0f || portalAimInvalid) {
@@ -1729,7 +1763,13 @@ void GameScene::Draw() {
     if (boss) {
         for (auto& part : bossParts) { part->Draw(); }
         if (bossLaserVisible) bossLaser->Draw(); // 影は落とさない
-        if (bossAttackState == BossAttackState::kShield) bossShield->Draw(); // 影は落とさない
+        if (floorWipeHeightLinesVisible) {
+            for (auto& line : floorWipeHeightLines) line->Draw(); // 影は落とさない
+        }
+        if (bossAttackState == BossAttackState::kShield) {
+            bossShield->Draw(); // 影は落とさない
+            bossShieldTop->Draw();
+        }
         if (bossTeleportMarkerVisible) bossTeleportMarker->Draw();
     }
     for (auto& ring : shockwaveRings) { if (ring.active) ring.object->Draw(); } // 影は落とさない
@@ -1815,6 +1855,13 @@ void GameScene::Draw() {
     // --- 5.8 UI（ポータルを置けなかった理由の"TOO FAR"/"BLOCKED"文字） ---
     if (portalRejectTextTimer > 0.0f) {
         portalRejectText.Draw();
+    }
+
+    // --- 5.9 UI（画面外から来る衝撃波の方向の"!"） ---
+    for (size_t i = 0; i < shockwaveMarkers.size(); ++i) {
+        if (!shockwaveMarkerVisible[i]) continue;
+        shockwaveMarkerBacks[i]->Draw();
+        shockwaveMarkers[i].Draw();
     }
 
     // --- 6. UI（設定メニュー）の描画：Pキーでのポーズ中のみ表示 ---
@@ -1961,6 +2008,13 @@ void GameScene::UpdateFloorWipeEffect(float elapsed) {
 
     // WARNING文字：一定間隔で点滅
     warningTextVisible = (static_cast<int>(elapsed / kWarningTextBlinkInterval) % 2) == 0;
+    // 危険な高さの上端の線：WARNINGと同じ周期で点滅
+    floorWipeHeightLinesVisible = warningTextVisible;
+
+    // 地上（当たる高さ）にいる間だけ、画面の縁を床の点滅に合わせて赤くする。後半ほど濃く
+    const float vignettePeak = kFloorWipeVignetteStart + (kFloorWipeVignetteEnd - kFloorWipeVignetteStart) * t;
+    const float vignette = IsPlayerOnHighGround() ? 0.0f : (on ? vignettePeak : vignettePeak * kFloorWipeVignetteOffRatio);
+    screenEffect->SetWarningVignette(vignette);
 
     // 軽いグリッチを後半に向けて強める
     screenEffect->SetTransitionGlitch(kFloorWipeWindupGlitchMax * t * t, elapsed);
@@ -2004,8 +2058,27 @@ void GameScene::StopFloorWipe() {
         screenEffect->SetTransitionGlitch(0.0f, 0.0f);
     }
     warningTextVisible = false;
+    floorWipeHeightLinesVisible = false;
+    screenEffect->SetWarningVignette(0.0f);
     floorWipeFlashTimer = 0.0f;
     floorWipeGlitchTimer = 0.0f;
+}
+
+void GameScene::UpdateFloorWipeHeightLines() {
+    // 外壁の内側を一周する4本。各線は角(始点)から次の角へ +Z 方向に伸ばす（モデルはローカル+Zに長さ1）
+    constexpr float kHalfPi = 1.5707963f;
+    const float d = kFloorWipeHeightLineInset;
+    const float y = kPlayerHighGroundHeight;
+    const float length = d * 2.0f;
+    const std::array<Vector3, kFloorWipeHeightLineCount> starts = { {
+        { -d, y, -d }, { -d, y, d }, { d, y, d }, { d, y, -d } } };
+    const std::array<float, kFloorWipeHeightLineCount> yaws = { 0.0f, kHalfPi, kHalfPi * 2.0f, -kHalfPi }; // +Z, +X, -Z, -X
+    for (int i = 0; i < kFloorWipeHeightLineCount; ++i) {
+        floorWipeHeightLines[i]->SetTranslate(starts[i]);
+        floorWipeHeightLines[i]->SetRotate({ 0.0f, yaws[i], 0.0f });
+        floorWipeHeightLines[i]->SetScale({ kFloorWipeHeightLineRadius, kFloorWipeHeightLineRadius, length });
+        floorWipeHeightLines[i]->Update();
+    }
 }
 
 void GameScene::UpdatePhaseText() {
@@ -2095,6 +2168,12 @@ void GameScene::UpdateBossShieldTransform() {
         core.translate.z + std::cos(yaw) * kBossShieldForwardOffset });
     bossShield->SetRotate({ 0.0f, yaw, 0.0f });
     bossShield->SetScale({ kBossShieldHalfSize * scaleRate, kBossShieldHalfSize * scaleRate, 1.0f });
+
+    // 上面：モデルの正面(+Z)をX軸まわりに-90度回して上(+Y)へ向け、ボスと同じヨーで回す
+    constexpr float kFaceUpPitch = -1.5707963f;
+    bossShieldTop->SetTranslate({ core.translate.x, core.translate.y + kBossHalfHeight + kBossShieldTopOffsetY, core.translate.z });
+    bossShieldTop->SetRotate({ kFaceUpPitch, yaw, 0.0f });
+    bossShieldTop->SetScale({ kBossShieldTopHalfSize * scaleRate, kBossShieldTopHalfSize * scaleRate, 1.0f });
 }
 
 bool GameScene::IsShotBlockedByShield(const Ray& ray, float maxDistance) const {
@@ -2105,8 +2184,19 @@ bool GameScene::IsShotBlockedByShield(const Ray& ray, float maxDistance) const {
     const Vector3 right = { std::cos(yaw), 0.0f, -std::sin(yaw) }; // 正面(sin yaw, 0, cos yaw)に垂直な水平方向
     const Vector3 up = { 0.0f, 1.0f, 0.0f };
     float distance = 0.0f;
-    if (!Calculation::TestRayRect(ray, shield.translate, right, up, shield.scale.x, shield.scale.y, &distance)) return false;
-    return distance <= maxDistance; // ボスの体より手前で板を通ったときだけ弾く
+    if (Calculation::TestRayRect(ray, shield.translate, right, up, shield.scale.x, shield.scale.y, &distance)
+        && distance <= maxDistance) {
+        return true; // ボスの体より手前で正面の板を通った
+    }
+
+    // 上面の板：水平な板なので、2辺はボスの右方向と正面方向
+    const Transform& top = bossShieldTop->GetTransform();
+    const Vector3 forward = { std::sin(yaw), 0.0f, std::cos(yaw) };
+    if (Calculation::TestRayRect(ray, top.translate, right, forward, top.scale.x, top.scale.y, &distance)
+        && distance <= maxDistance) {
+        return true; // ボスの体より手前で上面の板を通った（足場から撃ち下ろした弾）
+    }
+    return false;
 }
 
 void GameScene::StopBossLaser() {
@@ -2270,24 +2360,92 @@ void GameScene::SpawnShockwaves() {
     for (size_t wallIndex : shockwaveWarningWalls) {
         walls[wallIndex]->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f);
         const Vector3& pos = ArenaLayout::kWallDatas[wallIndex].pos;
-        SpawnShockwaveRing({ pos.x, 0.0f, pos.z }, kShockwaveMaxRadius);
+        SpawnShockwaveRing({ pos.x, 0.0f, pos.z }, kShockwaveMaxRadius, true);
     }
     shockwaveWarningWalls.clear();
     shockwaveWarningTimer = 0.0f;
     TriggerCameraShake(kShockwaveShakeDuration, kShockwaveShakeStrength);
 }
 
-bool GameScene::SpawnShockwaveRing(const Vector3& center, float maxRadius) {
+bool GameScene::SpawnShockwaveRing(const Vector3& center, float maxRadius, bool showOffscreenMarker) {
     for (auto& ring : shockwaveRings) {
         if (ring.active) continue;
         ring.active = true;
         ring.hasHit = false;
+        ring.showOffscreenMarker = showOffscreenMarker;
         ring.center = center;
         ring.radius = kShockwaveStartRadius;
         ring.maxRadius = maxRadius;
         return true;
     }
     return false;
+}
+
+bool GameScene::CalcOffscreenMarkerPosition(const Vector3& worldPos, Vector2* outScreenPos) const {
+    const float screenW = static_cast<float>(WinApp::KclientWidth);
+    const float screenH = static_cast<float>(WinApp::KclientHeight);
+
+    // 画面中央から見た発生源の方向（画面座標系：右が+x、下が+y）
+    Vector3 viewPos = Calculation::Transform(worldPos, camera->GetViewMatrix());
+    Vector2 dir;
+    if (viewPos.z > kShockwaveMarkerNearZ) {
+        Vector3 ndc = Calculation::Transform(worldPos, camera->GetViewProjectionMatrix());
+        if (std::abs(ndc.x) <= 1.0f && std::abs(ndc.y) <= 1.0f) return false; // 画面内なら出さない
+        dir = { ndc.x * screenW * 0.5f, -ndc.y * screenH * 0.5f };
+    } else {
+        // カメラの後ろ：投影すると左右が反転するので、カメラ空間の左右・上下をそのまま使う
+        dir = { viewPos.x, -viewPos.y };
+        if (std::abs(dir.x) < 0.001f && std::abs(dir.y) < 0.001f) dir = { 0.0f, 1.0f }; // 真後ろは画面下へ
+    }
+
+    // 余白を除いた画面の枠と、中央からdir方向へ伸ばした線の交点
+    const float halfW = screenW * 0.5f - kShockwaveMarkerEdgeMargin;
+    const float halfH = screenH * 0.5f - kShockwaveMarkerEdgeMargin;
+    float t = FLT_MAX;
+    if (std::abs(dir.x) > 0.0f) t = (std::min)(t, halfW / std::abs(dir.x));
+    if (std::abs(dir.y) > 0.0f) t = (std::min)(t, halfH / std::abs(dir.y));
+    *outScreenPos = { screenW * 0.5f + dir.x * t, screenH * 0.5f + dir.y * t };
+    return true;
+}
+
+void GameScene::UpdateShockwaveMarkers() {
+    // 出す発生源を集める（予兆中の箱は点滅、広がっている輪はプレイヤーを通り過ぎるまで点灯）
+    struct Source { Vector3 pos; bool blink; };
+    std::vector<Source> sources;
+    for (size_t wallIndex : shockwaveWarningWalls) {
+        const Vector3& p = ArenaLayout::kWallDatas[wallIndex].pos;
+        sources.push_back({ { p.x, kShockwaveMarkerSourceHeight, p.z }, true });
+    }
+    for (const auto& ring : shockwaveRings) {
+        if (!ring.active || !ring.showOffscreenMarker) continue;
+        Vector3 toPlayer = { playerPos.x - ring.center.x, 0.0f, playerPos.z - ring.center.z };
+        if (ring.radius > Calculation::Length(toPlayer) + kShockwaveHitHalfWidth) continue; // もう通り過ぎた
+        sources.push_back({ { ring.center.x, kShockwaveMarkerSourceHeight, ring.center.z }, false });
+    }
+
+    // 予兆の箱の点滅と同じ周期で点滅させる
+    const float warningElapsed = kShockwaveWarningDuration - shockwaveWarningTimer;
+    const bool blinkOn = (static_cast<int>(warningElapsed * 60.0f) / kShockwaveWarningBlinkFrames) % 2 == 0;
+
+    // 輪が来ている間は大きさを脈打たせる（予兆中は点滅で十分なので一定）
+    shockwaveMarkerPulseTimer = sources.empty() ? 0.0f : shockwaveMarkerPulseTimer + 1.0f / 60.0f;
+    const float pulse = 1.0f + kShockwaveMarkerPulseAmount * (0.5f + 0.5f * std::sin(shockwaveMarkerPulseTimer * kShockwaveMarkerPulseSpeed));
+
+    for (size_t i = 0; i < shockwaveMarkers.size(); ++i) {
+        shockwaveMarkerVisible[i] = false;
+        Vector2 screenPos;
+        if (i >= sources.size() || !CalcOffscreenMarkerPosition(sources[i].pos, &screenPos)) continue;
+        if (sources[i].blink && !blinkOn) continue;
+        BitmapText& marker = shockwaveMarkers[i];
+        marker.SetScale(kShockwaveMarkerScale * (sources[i].blink ? 1.0f : pulse));
+        marker.SetPosition({ screenPos.x - marker.GetWidth() * 0.5f, screenPos.y - marker.GetHeight() * 0.5f });
+        marker.Update();
+        const float backSize = marker.GetHeight() * kShockwaveMarkerBackPadding;
+        shockwaveMarkerBacks[i]->SetPosition(screenPos);
+        shockwaveMarkerBacks[i]->SetSize({ backSize, backSize });
+        shockwaveMarkerBacks[i]->Update();
+        shockwaveMarkerVisible[i] = true;
+    }
 }
 
 void GameScene::EndBossDash() {
@@ -3751,6 +3909,16 @@ void GameScene::UpdateWeaponHud() {
         fill->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
         fill->Update();
     }
+
+    // 床の消去の溜め中、ショットガンを持っていて地上にいるなら、後ろのポータルガン（キー2）を点滅させて持ち替えを促す
+    const bool urgePortalGun = !isPortal && bossAttackState == BossAttackState::kFloorWipeWindup && !IsPlayerOnHighGround();
+    portalGunUrgeTimer = urgePortalGun ? portalGunUrgeTimer + 1.0f / 60.0f : 0.0f;
+    const bool urgeBlinkOn = urgePortalGun && static_cast<int>(portalGunUrgeTimer / kPortalGunUrgeBlinkInterval) % 2 == 0;
+    weaponPanels[0]->SetColor(urgeBlinkOn ? kPortalGunUrgePanelColor : kWeaponPanelBackColor);
+    weaponPanels[0]->Update();
+    back->SetColor(urgePortalGun ? kPortalGunUrgeIconColor : kWeaponIconBackColor);
+    back->Update();
+    weaponSlotTextBack.SetColor(urgeBlinkOn ? kPortalGunUrgeTextColor : kWeaponSlotTextBackColor);
 
     // キー番号（1＝ショットガン、2＝ポータルガン）
     weaponSlotTextFront.SetText(isPortal ? "2" : "1");

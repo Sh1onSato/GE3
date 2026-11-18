@@ -56,6 +56,10 @@ void ScreenEffectController::Apply() {
         settings.vignetteColor = kDamageVignetteColor;
         settings.vignetteRadius = kDamageVignetteRadius;
         settings.vignetteIntensity = damageIntensity;
+    } else if (warningVignetteIntensity > 0.0f) {
+        settings.vignetteColor = kWarningVignetteColor;
+        settings.vignetteRadius = kWarningVignetteRadius;
+        settings.vignetteIntensity = warningVignetteIntensity;
     } else {
         settings.vignetteColor = { 0.0f, 0.0f, 0.0f };
         settings.vignetteRadius = vignetteRadius;
