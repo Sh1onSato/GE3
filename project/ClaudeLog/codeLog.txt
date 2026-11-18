@@ -746,3 +746,72 @@ P2 以降、ボスが約20秒ごとに「アリーナ再構築」を行います
 
 ### 36-6. ボスの無敵
 - `IsBossInvulnerable()`：フェーズ移行・テレポート・アリーナ再構築の溜めの間は true。`DamageBoss()` が何もしない上に、`FireShot()` ではシールドと同じ「弾かれた」表示（青い火花・キン）にします。止まって溜めている「特別な行動」の間に、ゲージが減って見えないようにするためです。
+
+## 37. ボス撃破演出（データ崩壊）と勝利後のタイトル戻り
+
+### 37-1. 何をするものか
+ボスのHPが0になった瞬間にすぐ「WIN」を出すのではなく、約3.2秒の「データ崩壊」演出を挟んでから勝敗を確定させます。カメラはプレイヤー視点のままです。
+
+| 時間（実時間） | 段階 | 内容 |
+|---|---|---|
+| 0〜0.4秒 | とどめ | スロー（0.2倍→1.0倍、InCubic で戻す）、白い閃光、強いグリッチ、大きなシェイク |
+| 0.4〜1.9秒 | 崩壊 | くさび4つが外へ弾け飛び回転、コアが赤白に点滅して火花を出し続ける、弱いグリッチが断続 |
+| 1.9〜2.15秒 | 縮み | コアが0.3倍まで縮む |
+| 2.15秒 | 破裂 | パーティクルを一気に出す（点・線・面）、強いシェイクとグリッチ |
+| 2.15〜2.95秒 | 消滅 | イントロの実体化ディゾルブを逆向きに使い、全パーツを上から消す |
+| 〜3.15秒 | 余韻 | 終わったら gameOver / playerWon / "WIN" にする |
+
+### 37-2. 関数の役割（GameScene）
+- `StartBossDefeat()`：`bossHP <= 0` になった瞬間に1回だけ呼ぶ。状態を初期化し、ボスの攻撃を全部止め、時間倍率をスローにする。
+- `UpdateBossDefeat()`：毎フレーム呼ぶ（`UpdateRenderObjects` より前）。経過時間を進めて、各段階の処理を振り分ける。
+- `UpdateBossDefeatParts()`：撃破中は `UpdateBossParts()` がこちらに任せる。くさびに速度・角速度・重力・減速（drag）を持たせて飛ばす。最低の高さ `kBossDefeatWedgeMinY` より下には落ちない。
+- `UpdateBossDefeatDissolve()` / `UpdateBossDefeatScreenEffect()`：ディゾルブと、閃光・グリッチ・シェイクを担当する。
+- `BurstBossCore()` / `EmitBossDefeatSparks()`：破裂のバーストと、崩壊中の火花。
+- `CalcBossDefeatTimeScale()` / `GetBossDefeatEmissive()`：スローの倍率の計算と、コアの点滅色の計算。
+- `IsBossDefeatFinished()`：演出が全部終わったかどうか。true になってから勝敗を確定させる。
+- `StopAllBossAttacks()`：レーザー・シールド・テレポート・衝撃波・床の消去・足場・角の崩壊・コンボ・突進などを止める。前は勝敗確定のブロックに直接書いてあった処理を関数に切り出し、撃破開始時と勝敗確定時の両方で使う。
+- `BossWedgeOffset()`：くさびの開き具合に応じたずらし量。`UpdateBossParts()` から切り出し、撃破が始まったときのくさびの位置の計算にも使う。
+
+### 37-3. 演出中のルール
+- ボスのAI、衝撃波のギミック、角の崩壊は止める。飛んでいるグレネードは爆発させずに消す。
+- `TakeDamage()` と `DamageBoss()` は何もしない。プレイヤーは無敵になり、bossHP はマイナスにならず、撃破演出がもう一度始まることもない。
+- プレイヤーのHPが同時に0になっても、撃破（WIN）を優先する。
+- `IsBossMaterializing()` は破裂後のディゾルブ中も true を返すので、影の描画から外れる。
+- `bossDefeatActive` はリトライするまで true のまま（全パーツが消えた最後の状態を描き続けるため）。
+
+### 37-4. スローモーションの仕組み
+- エンジンの `Time::SetTimeScale()`（Engine/base/GameTime.h）を使う。`ParticleManager` は `Time::GetDeltaTime()` で進むので、パーティクルも一緒に遅くなる。
+- ゲームの処理は 1/60 固定のままなので、プレイヤーの移動と視点は遅くならない。遅くなるのはボスの演出とパーティクルだけ。
+- 倍率は、演出の終わり、`RestartGame()`、`Finalize()`（シーンを抜けるとき）で必ず 1.0 に戻す。戻し忘れると、タイトル画面までスローのままになる。
+
+### 37-5. 勝ったら Enter でタイトルへ
+- 勝敗の幕がフェードし終わってから Enter を押すと、勝ちならタイトルへ戻る（`RequestTransition("TITLE", SceneTransition::kReturnTitleParams)`。ESCメニューの TITLE と同じ）。負けなら今まで通りリトライ（`RestartGame()`）。
+
+### 37-6. 確認と調整
+- Debug ビルドでポーズ中のパネルに「Boss Defeat (bossHP = 0)」ボタンがある。押してからポーズを解除すると演出が始まる。
+- 調整する定数（GameScene.h）：`kBossDefeatSlowScale` / `kBossDefeatSlowDuration` / `kBossDefeatCollapseDuration`（スローと長さ）、`kBossDefeatWedgeSpeed` / `kBossDefeatWedgeGravity` / `kBossDefeatWedgeDrag` / `kBossDefeatWedgeMinY`（くさびの飛び方）、`kBossDefeatFlashIntensity` / `kBossDefeatCoreBlinkIntensity`（光）、`kBossDefeatSpark*Count` / `kBossDefeatBurst*Count`（パーティクルの量）、`kBossDefeatFinishShake*` / `kBossDefeatBurstShake*`（揺れ）、`kBossDefeatDissolveTopY` / `kBossDefeatDissolveBottomY`（ディゾルブの範囲。くさびがこれより高く飛ぶと、消えるのが遅れる）。
+- 撃破のSE `kSeBossDefeat = "boss_defeat"` は名前だけ決めてあり、まだ鳴らしていない。`PlaySe()` は読み込んでいない名前だと assert で止まるため。WAV を用意して `LoadSounds()` に追加したら、`StartBossDefeat()` と `BurstBossCore()` の TODO の所で鳴らす。
+
+## 38. ポータルを置けなかった理由の表示と、P3の2組目の廃止（2026/11/18）
+
+### 38-1. 何が問題だったか
+- ポータルを「たまに置けない」。特に、片方を置いた後に置けないことが多い。
+- `PlacePortal()` には何もせずに終わる経路がいくつもあった。どれもレティクルが0.25秒灰色になるだけか、何の合図も無かった。
+  - 照準の先に何も無い（空など）
+  - 照準の先にボスがいる（ボスは視線を止めるが、ポータルを置く面にはしない）
+  - もう一方のポータルから `kPortalMaxPairDistance`（25m）より遠い。片方を置いた後だけ起きるのはこれ。
+- 距離の上限はそのまま残し、置けない理由を分かりやすく知らせることにした。
+
+### 38-2. 関数の役割
+- `EvaluatePortalPlacement(portal, outHit, outAABB, outObject)`：`PlacePortal()` の前半（レイキャスト・ボスの判定・距離の判定）を切り出したもの。結果を `PortalPlaceResult`（kOk / kNoSurface / kBlockedByBoss / kTooFar）で返す。法線が取れなかったときの代わりの向きと正規化も、ここで済ませてから outHit に入れる。
+- `PlacePortal()`：`EvaluatePortalPlacement()` が kOk のときだけ置く。それ以外は `NotifyPortalRejected()` を呼ぶ。
+- `GetNextPortalToPlace()`：次のクリックで置かれるポータルを返す。片方だけ置いてあれば、もう片方（距離の上限が効く方）を返す。両方空いていれば b を返す（距離の上限は効かないので、ボスや空振りの判定はどちらで調べても同じ）。両方置いてあれば nullptr。
+- `NotifyPortalRejected(result)`：レティクルを灰色にし（`portalRejectTimer`）、シールドで弾かれた音（`kSeShieldBlock`）を鳴らす。kTooFar なら「TOO FAR」、kBlockedByBoss なら「BLOCKED」を、レティクルの40px下に0.8秒かけてフェードアウトさせながら出す（`portalRejectText`）。空振りのときは文字を出さない。
+
+### 38-3. 構えている間の常時判定
+- ポータルガンを構えている間は、毎フレーム `GetNextPortalToPlace()` のポータルについて `EvaluatePortalPlacement()` を呼ぶ。置けなければ `portalAimInvalid = true` にして、レティクルを灰色のままにする。クリックする前に「ここには置けない」と分かる。
+- レティクルの色の優先順位：置けない灰色（クリック直後・照準中）＞ ワープ直後の強化のシアン ＞ 通常の赤。
+- この判定はマウス操作より前に行っているので、色は1フレーム遅れて変わる（見た目ではほぼ分からない）。
+
+### 38-4. P3の2組目の廃止
+- `ActivePortalPairCount()` は常に 1 を返す（元の式 `bossPhase == kP3 ? 2 : 1` はコメントで残した）。使わないことが多く、不具合の元になりそうというユーザーの判断。`portalPairs` の配列と2組目のモデル（緑・ピンク）は残っているが、使われない。

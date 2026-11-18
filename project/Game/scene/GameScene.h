@@ -66,7 +66,9 @@ private:
 	// modelは置くポータルに使うモデル（組・a/bごとに違う）
 	void PlacePortal(Portal& portal, const std::shared_ptr<Model>& model);
 	// いま置ける組の数（P3のみ2組、それ以外は1組）
-	int ActivePortalPairCount() const { return bossPhase == BossPhase::kP3 ? 2 : 1; }
+	// 2026/11/18 ユーザー判断でP3の2組目は廃止（使わないことが多く、不具合の元になりそうなため）。常に1組。
+	// 旧：P3だけ2組 → return bossPhase == BossPhase::kP3 ? 2 : 1;
+	int ActivePortalPairCount() const { return 1; }
 	// 同じ組の相方を返す（portalがどの組にも属さなければnullptr）
 	Portal* FindPartner(const Portal& portal);
 	// 全ポータル（kMaxPortalPairs*2個）を列挙する
@@ -120,6 +122,7 @@ private:
 	}
 	bool IsBossMaterializing() const {
 		return (introPhase == IntroPhase::kReady && introElapsed < kIntroMaterializeStart + kIntroMaterializeDuration)
+			|| (bossDefeatActive && bossDefeatElapsed >= kBossDefeatBurstTime) // 撃破の消滅中もディゾルブが影に効かない
 			|| bossAttackState == BossAttackState::kTeleportOut
 			|| bossAttackState == BossAttackState::kTeleportIn;
 	}
@@ -423,6 +426,7 @@ private:
 	void StartBossShield();                              // シールドを張る（予備動作は打ち切る）
 	void ResetBossShield();                              // 命中記録・クールダウンを初期化（表示は状態kShieldで決まる）
 	void UpdateBossShieldTransform();                    // bossShieldの位置・向き・スケールを設定する
+	bool IsShotBlockedByShield(const Ray& ray, float maxDistance) const; // 弾のレイがmaxDistanceより手前でシールドの板を通るか（kShield中のみ）
 
 	// --- 組み合わせ攻撃（P2以降、低確率でメインの行動にグレネードを重ねる） ---
 	static constexpr float kBossComboChanceP2 = 0.2f;                 // P2で組み合わせ版になる確率
@@ -796,6 +800,84 @@ private:
 	static constexpr float kBossHpBarHeight = 20.0f;
 	static constexpr Vector2 kBossHpBarPosition = { 390.0f, 20.0f }; // 画面上部中央(1280幅基準)
 
+	// ===== ボス撃破演出（データ崩壊）：とどめ→崩壊→消滅→決着(WIN) =====
+	// bossHPが0になったら即WINにせず、約3秒の演出を流してからgameOver/playerWonへ移る。カメラはプレイヤー視点のまま。
+	// 演出中はボスAI・攻撃を止め、プレイヤーは無敵、ボスへのダメージ判定も無効。bossDefeatActiveはリトライ(RestartGame)まで立ったままにする
+	// （決着後のフレームでも、くさび位置・ディゾルブが最終状態のまま描画されるようにするため）
+	bool bossDefeatActive = false;
+	float bossDefeatElapsed = 0.0f;   // 実時間での経過[秒]（各フェーズの時刻はこれで判定）
+	float bossDefeatPartTime = 0.0f;  // スロー倍率を掛けて進む時間[秒]（くさびの運動用）
+	float bossDefeatTimeScale = 1.0f; // 現在の時間倍率（くさび・パーティクルに掛かる）
+	float bossDefeatSparkTimer = 0.0f; // 崩壊中の火花の発生間隔タイマー
+	bool bossDefeatBurstDone = false;  // コアの破裂を済ませたか
+	std::array<Vector3, kBossCore> bossDefeatWedgeStart = {};    // くさびの撃破開始時のワールド位置
+	std::array<Vector3, kBossCore> bossDefeatWedgeVelocity = {}; // くさびの初速[m/s]
+	std::array<Vector3, kBossCore> bossDefeatWedgeSpin = {};     // くさびの角速度[rad/s]
+	Vector3 bossDefeatWedgeBaseRotate = {};                      // 撃破開始時のボスの向き（くさびの回転の基準）
+	// 各フェーズの長さ[秒]（時刻はすべて実時間）
+	static constexpr float kBossDefeatSlowDuration = 0.4f;       // とどめ：スロー＋白い閃光
+	static constexpr float kBossDefeatCollapseDuration = 1.5f;   // 崩壊：くさびが弾け飛ぶ・コアが点滅して火花
+	static constexpr float kBossDefeatCoreShrinkDuration = 0.25f; // 消滅の前半：コアが縮む
+	static constexpr float kBossDefeatDissolveDuration = 0.8f;   // 消滅の後半：破裂後に全パーツが上から消える
+	static constexpr float kBossDefeatEndMargin = 0.2f;          // 全部消えてからWINに移るまでの間
+	static constexpr float kBossDefeatBurstTime = kBossDefeatSlowDuration + kBossDefeatCollapseDuration + kBossDefeatCoreShrinkDuration; // コアが破裂する時刻（ディゾルブ開始も同時）
+	static constexpr float kBossDefeatTotalDuration = kBossDefeatBurstTime + kBossDefeatDissolveDuration + kBossDefeatEndMargin; // 演出全体の長さ
+	// 時間倍率
+	static constexpr float kBossDefeatSlowScale = 0.2f;          // とどめ開始時の時間倍率（終わりに向けて1.0へイージングで戻す）
+	// くさびの弾け飛び
+	static constexpr float kBossDefeatWedgeSpeed = 7.0f;         // 初速[m/s]
+	static constexpr float kBossDefeatWedgeGravity = -14.0f;     // 重力加速度[m/s^2]
+	static constexpr float kBossDefeatWedgeSpinMin = 3.0f;       // 角速度の下限[rad/s]
+	static constexpr float kBossDefeatWedgeSpinMax = 8.0f;       // 角速度の上限[rad/s]
+	static constexpr float kBossDefeatWedgeMinY = 0.6f;          // くさび中心の最低高さ（床にめり込まない・弾まない）
+	static constexpr float kBossDefeatWedgeDrag = 1.5f;          // 水平移動と回転の減衰[1/s]（壁の外まで飛ばず、床で止まって見えるようにする）
+	// 発光
+	static constexpr float kBossDefeatFlashIntensity = 4.0f;     // とどめの白い閃光の強さ（1超えでブルームが効く）
+	static constexpr float kBossDefeatCoreBlinkInterval = 0.06f; // コアの赤↔白の切り替え間隔[秒]
+	static constexpr float kBossDefeatCoreBlinkIntensity = 3.0f; // 崩壊中のコアの発光の強さ
+	static constexpr float kBossDefeatWedgeEmissiveStart = 2.0f; // 崩壊開始時のくさびの発光（赤）。崩壊の終わりにkBossDefeatWedgeEmissiveEndへ
+	static constexpr float kBossDefeatWedgeEmissiveEnd = 0.4f;
+	static constexpr float kBossDefeatCoreShrinkScale = 0.3f;    // 破裂直前のコアの大きさ（元の倍率）
+	// 火花（崩壊中、一定間隔で発生）
+	static constexpr float kBossDefeatSparkInterval = 0.06f;     // 発生間隔[秒]
+	static constexpr int kBossDefeatSparkPointCount = 8;         // 1回あたりの点の数（コアから）
+	static constexpr int kBossDefeatSparkLineCount = 3;          // 1回あたりの線の数（コアから）
+	// 破裂（大きなパーティクルバースト）
+	static constexpr int kBossDefeatBurstPointCount = 150;
+	static constexpr int kBossDefeatBurstLineCount = 60;
+	static constexpr int kBossDefeatBurstTriangleCount = 40;
+	// カメラシェイク
+	static constexpr float kBossDefeatFinishShakeDuration = 0.5f; // とどめ
+	static constexpr float kBossDefeatFinishShakeStrength = 0.06f;
+	static constexpr float kBossDefeatBurstShakeDuration = 0.8f;  // 破裂
+	static constexpr float kBossDefeatBurstShakeStrength = 0.08f;
+	// グリッチ（画面効果）
+	static constexpr float kBossDefeatGlitchFinish = 1.0f;       // とどめ：強。スロー区間で0へ
+	static constexpr float kBossDefeatGlitchWeak = 0.35f;        // 崩壊中：弱めを断続
+	static constexpr float kBossDefeatGlitchInterval = 0.4f;     // 断続の周期[秒]
+	static constexpr float kBossDefeatGlitchPulse = 0.12f;       // 周期のうちグリッチが出ている長さ[秒]
+	static constexpr float kBossDefeatGlitchBurst = 1.0f;        // 破裂：強。減衰して0へ
+	static constexpr float kBossDefeatGlitchBurstDuration = 0.5f;
+	// 消滅のディゾルブ（ワールドY。上端から下端へ下げて全パーツを消す。くさびが高く飛んでも切れないよう上端は高めに取る）
+	static constexpr float kBossDefeatDissolveTopY = 8.0f;
+	static constexpr float kBossDefeatDissolveBottomY = -3.0f;
+	// 撃破SE（TODO: Resources/sounds/boss_defeat.wav を用意したら LoadSounds の一覧へ追加し、StartBossDefeat で PlaySe を鳴らす。未ロード名のPlayはassertで落ちるため今は鳴らさない）
+	static constexpr const char* kSeBossDefeat = "boss_defeat";
+
+	// 撃破演出の関数
+	void StartBossDefeat();                 // bossHPが0になった瞬間に一度だけ呼ぶ。攻撃を止めて演出を開始する
+	void UpdateBossDefeat();                // 毎フレーム：経過・時間倍率・火花・グリッチ・破裂を進める
+	void UpdateBossDefeatParts();           // 撃破中のくさび・コアの位置と発光を設定してUpdateする（UpdateBossPartsから呼ぶ）
+	void UpdateBossDefeatDissolve();        // 消滅のディゾルブ（破裂後に上から消える）
+	void UpdateBossDefeatScreenEffect();    // グリッチ強度を時刻から決める
+	void BurstBossCore();                   // コアの破裂（パーティクルバースト＋シェイク）
+	Vector3 BossWedgeOffset(int part, float openT, float yaw) const; // くさびの開閉オフセット（通常時と撃破開始位置で共用）
+	void GetBossDefeatEmissive(bool isCore, Vector3* color, float* intensity) const; // 撃破中の発光色と強さ
+	void EmitBossDefeatSparks(const Vector3& position, int pointCount, int lineCount, float speedScale); // 全方位の火花
+	float CalcBossDefeatTimeScale() const;  // 時刻から時間倍率を求める（0.2→1.0へイージング）
+	bool IsBossDefeatFinished() const { return bossDefeatActive && bossDefeatElapsed >= kBossDefeatTotalDuration; }
+	void StopAllBossAttacks();              // レーザー・シールド・テレポート・衝撃波・床消去・足場・角崩壊・コンボ・突進などを止める（撃破開始・決着で共用）
+
 	// 勝敗演出（全画面カラーオーバーレイのフェード＋中央にWIN/LOSE文字表示）
 	bool gameOver = false;
 	bool playerWon = false;
@@ -890,9 +972,25 @@ private:
 	static constexpr float kPortalExitLockMargin = 0.2f;
 	// 2つのポータルの間の距離の上限。もう一方が置いてあるとき、これより離れた場所には置けない
 	static constexpr float kPortalMaxPairDistance = 25.0f;
+	// ポータルを置けるかどうかの判定結果（PlacePortalと、照準中の常時表示で共用）
+	enum class PortalPlaceResult { kOk, kNoSurface, kBlockedByBoss, kTooFar };
+	// portalを今の照準の先に置けるか調べる。置ける面に当たったらoutHit/outAABB/outObjectを埋める（kOk以外でも分かった範囲で埋める）
+	PortalPlaceResult EvaluatePortalPlacement(const Portal& portal, RaycastHit* outHit, AABB* outAABB, Object3d** outObject);
+	Portal* GetNextPortalToPlace(); // 次のクリックで置かれるポータル（照準中の判定用）。両方置いてあればnullptr
+	void NotifyPortalRejected(PortalPlaceResult result); // 置けなかったとき：灰色レティクル＋理由の文字＋弾かれた音
 	// 置けなかったときに、レティクルを一瞬この色にして知らせる
 	float portalRejectTimer = 0.0f;
 	static constexpr float kPortalRejectFlashDuration = 0.25f;
+	// 照準の先に置けないとき、ポータルガンを構えている間はずっとレティクルを灰色にする
+	bool portalAimInvalid = false;
+	// 置けなかった理由の文字（"TOO FAR"/"BLOCKED"）。レティクルの少し下に出してフェードアウトする
+	BitmapText portalRejectText;
+	float portalRejectTextTimer = 0.0f;
+	static constexpr int kPortalRejectTextMaxChars = 7;
+	static constexpr float kPortalRejectTextDuration = 0.8f;
+	static constexpr float kPortalRejectTextScale = 2.0f;
+	static constexpr float kPortalRejectTextOffsetY = 40.0f; // 画面中央（レティクル）からの下方向のずれ[px]
+	static constexpr Vector4 kPortalRejectTextColor = { 0.85f, 0.85f, 0.85f, 1.0f };
 	static constexpr Vector4 kReticleColor = { 1.0f, 0.0f, 0.0f, 1.0f };
 	static constexpr Vector4 kReticleRejectColor = { 0.45f, 0.45f, 0.45f, 1.0f };
 	static constexpr float kPortalTeleportCooldown = 0.3f;

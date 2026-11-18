@@ -337,6 +337,25 @@ Matrix4x4 Calculation::MakeLookAtMatrix(const Vector3& eye, const Vector3& targe
 	return result;
 }
 
+bool Calculation::TestRayRect(const Ray& ray, const Vector3& center, const Vector3& axisU, const Vector3& axisV, float halfU, float halfV, float* outDistance) {
+	constexpr float kParallelEpsilon = 1e-6f;
+	// 板の平面との交点を求める：t = dot(center - origin, n) / dot(direction, n)
+	Vector3 normal = Cross(axisU, axisV);
+	float denom = Dot(ray.direction, normal);
+	if (std::abs(denom) < kParallelEpsilon) return false; // 板と平行
+	Vector3 toCenter = { center.x - ray.origin.x, center.y - ray.origin.y, center.z - ray.origin.z };
+	float t = Dot(toCenter, normal) / denom;
+	if (t < 0.0f) return false; // 始点より後ろ
+
+	// 交点を板の2辺の向きに分解し、半分の長さ以内なら板の中
+	Vector3 hitPoint = { ray.origin.x + ray.direction.x * t, ray.origin.y + ray.direction.y * t, ray.origin.z + ray.direction.z * t };
+	Vector3 local = { hitPoint.x - center.x, hitPoint.y - center.y, hitPoint.z - center.z };
+	if (std::abs(Dot(local, axisU)) > halfU || std::abs(Dot(local, axisV)) > halfV) return false;
+
+	if (outDistance) *outDistance = t;
+	return true;
+}
+
 bool Calculation::TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit) {
 	float tmin = 0.0f;
 	float tmax = FLT_MAX;

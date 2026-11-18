@@ -55,6 +55,9 @@ public:
 
 	// 当たり判定
 	static bool TestRayAABB(const Ray& ray, const AABB& aabb, RaycastHit* outHit = nullptr);
+	// レイ vs 向きのある長方形（板）。center＝中心、axisU/axisV＝板の2辺の向き（単位ベクトル・互いに垂直）、halfU/halfV＝各辺の半分の長さ。
+	// 表裏どちらから当たってもtrue。outDistanceに始点から交点までの距離を返す
+	static bool TestRayRect(const Ray& ray, const Vector3& center, const Vector3& axisU, const Vector3& axisV, float halfU, float halfV, float* outDistance = nullptr);
 	// 球 vs AABB（最近接点法）。outPushDirにはAABB内の最近接点から球の中心へ向かう正規化方向（めり込み解消・スライド移動に使う押し出し方向）を返す
 	static bool TestSphereAABB(const Sphere& sphere, const AABB& aabb, Vector3* outPushDir = nullptr);
 	// Transformからaxis-aligned AABBを作る（translateを中心、scaleを各軸の半辺長とみなす。箱型のObject3dのTransformをそのまま渡せる）

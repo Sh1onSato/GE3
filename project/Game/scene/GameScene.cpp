@@ -11,6 +11,7 @@
 #include "MyGame.h"
 #include "Easing.h"
 #include "AudioManager.h"
+#include "GameTime.h"
 #include "externals/imgui/imgui.h"
 #include <algorithm>
 #include <cfloat>
@@ -170,6 +171,10 @@ void GameScene::Initialize() {
     warningText.SetText("WARNING");
     warningText.SetColor(kWarningTextColor);
     warningText.SetPosition({ ((float)WinApp::KclientWidth - warningText.GetWidth()) / 2.0f, kWarningTextPositionY });
+
+    portalRejectText.Initialize(framework->GetSpriteCommon(), kPortalRejectTextMaxChars); // "TOO FAR"/"BLOCKED"の7文字
+    portalRejectText.SetScale(kPortalRejectTextScale);
+    portalRejectText.SetColor(kPortalRejectTextColor);
     introBarTop = std::make_unique<Sprite>();
     introBarTop->Initialize(framework->GetSpriteCommon(), "white");
     introBarTop->SetPosition({ 0.0f, 0.0f });
@@ -556,8 +561,12 @@ void GameScene::Update() {
         gameOverOverlay->Update();
         gameOverText.Update();
 
-        // フェードが終わってから（演出の途中で誤爆しないように）Enterキーでリスタート
+        // フェードが終わってから（演出の途中で誤爆しないように）Enterキーで、勝ちならタイトルへ・負けならリスタート
         if (gameOverFadeTimer >= kGameOverFadeDuration && input->TriggerKey(DIK_RETURN)) {
+            if (playerWon) {
+                MyGame::GetInstance()->RequestTransition("TITLE", SceneTransition::kReturnTitleParams);
+                return;
+            }
             // 結果色を暗くした幕で暗転し、真っ暗な間にリスタートする
             TransitionParams retryParams = SceneTransition::kRetryParams;
             retryParams.color = { resultColor.x * kRetryFadeColorScale, resultColor.y * kRetryFadeColorScale, resultColor.z * kRetryFadeColorScale, 1.0f };
@@ -678,6 +687,14 @@ void GameScene::Update() {
         }
         if (input->TriggerKey(DIK_R)) {
             for (Portal* portal : AllPortals()) ClearPortal(*portal);
+        }
+    }
+
+    // 照準の先に次のポータルを置けるか毎フレーム調べ、置けなければレティクルを灰色のままにする（構えている間だけ）
+    portalAimInvalid = false;
+    if (!isLookPaused && weaponMode == WeaponMode::kPortalGun) {
+        if (const Portal* next = GetNextPortalToPlace()) {
+            portalAimInvalid = EvaluatePortalPlacement(*next, nullptr, nullptr, nullptr) != PortalPlaceResult::kOk;
         }
     }
 
@@ -812,7 +829,8 @@ void GameScene::Update() {
     // kChasing中は既存の追跡・障害物回避ロジックで動き続けながらbossAttackTimerを減算し、
     // 0以下になったらその時点の距離で近接突進／遠距離グレネードを自動選択する
     // （＝クールダウン中もボスは棒立ちにならず、既存の追跡AIをそのまま活かす設計）
-    {
+    // 撃破演出中はAI・攻撃を一切進めない（演出側がくさび・コアの見た目を決める）
+    if (!bossDefeatActive) {
         Vector3 toPlayer = { playerPos.x - bossPos.x, 0.0f, playerPos.z - bossPos.z };
         float distance = Calculation::Length(toPlayer);
         Vector3 dirToPlayer = (distance > 0.0001f) ? Calculation::Normalize(toPlayer) : Vector3{ 0.0f, 0.0f, 1.0f };
@@ -1390,10 +1408,13 @@ void GameScene::Update() {
     }
 
     // --- 衝撃波ギミック（P2以降、カバー箱の予兆→発生） ---
-    UpdateShockwaveGimmick();
+    // 撃破演出中は新しい予兆・崩壊を始めない
+    if (!bossDefeatActive) {
+        UpdateShockwaveGimmick();
 
-    // --- 角のプラットフォーム崩壊（予兆→上から消える→消滅） ---
-    UpdateCornerCollapse();
+        // --- 角のプラットフォーム崩壊（予兆→上から消える→消滅） ---
+        UpdateCornerCollapse();
+    }
 
     // --- 衝撃波リングの更新（広がりながら、ジャンプで避けられる低い輪として当たり判定を持つ。輪ごとに1回だけ当たる） ---
     for (auto& ring : shockwaveRings) {
@@ -1479,39 +1500,35 @@ void GameScene::Update() {
     cameraTransform.rotate.y -= shakeOffsetY;
 
     settingsMenu.Update(input, isLookPaused);
+    // --- ボス撃破演出：HPが0になった瞬間に開始し、演出を進める（UpdateRenderObjectsより前に進めて見た目を当フレームから反映） ---
+    // プレイヤーHP0との同時でも撃破を優先する
+    if (bossHP <= 0.0f && !bossDefeatActive) {
+        StartBossDefeat();
+    }
+    if (bossDefeatActive) {
+        UpdateBossDefeat();
+    }
+
     particleManagerLine->Update();
     particleManagerPoint->Update();
     particleManagerTriangle->Update();
     UpdateRenderObjects();
 
     // --- 勝敗判定：HPが0になった瞬間に一度だけ確定させる ---
-    if (playerHP <= 0.0f) {
+    // 撃破演出中はLOSEにせず、演出が終わってからWINへ移る
+    if (bossDefeatActive) {
+        if (IsBossDefeatFinished()) {
+            gameOver = true;
+            playerWon = true;
+            gameOverText.SetText("WIN");
+        }
+    } else if (playerHP <= 0.0f) {
         gameOver = true;
         playerWon = false;
         gameOverText.SetText("LOSE");
-    } else if (bossHP <= 0.0f) {
-        gameOver = true;
-        playerWon = true;
-        gameOverText.SetText("WIN");
     }
     if (gameOver) {
-        StopBossLaser(); // 決着後はレーザーを消す
-        ResetBossCombo();
-        bossDashRemaining = 0; // 連続突進は止める
-        ResetBossShield();
-        if (bossAttackState == BossAttackState::kShield) bossAttackState = BossAttackState::kChasing; // シールドを消す
-        StopFloorWipe(); // 床の発光・WARNING・グリッチ・閃光を戻す（溜め中判定のため状態を戻す前に呼ぶ）
-        if (bossAttackState == BossAttackState::kFloorWipeWindup) {
-            bossAttackState = BossAttackState::kChasing; // 床全体の消去の溜め中なら打ち切る（ダメージなし）
-            bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
-        }
-        StopBossTeleport();
-        StopShockwaves();
-        CancelShockwaveWarning();
-        shockwaveGimmickTimer = 0.0f;
-        StopArenaRebuild(); // 破損マスと足場も消す（ポータルは足場と一緒に消える）
-        StopCornerCollapse(); // 角の崩壊：予兆は取り消し、崩壊中のものは消滅まで確定
-        ResetBossHiddenState();
+        StopAllBossAttacks();
         phaseTextTimer = 0.0f;
         // 文字数に応じて画面中央に揃える（"WIN"=3文字/"LOSE"=4文字）
         float textWidth = kGameOverTextCharWidth * (playerWon ? 3.0f : 4.0f);
@@ -1568,9 +1585,17 @@ void GameScene::UpdateRenderObjects() {
     if (portalRejectTimer > 0.0f) {
         portalRejectTimer = (std::max)(portalRejectTimer - 1.0f / 60.0f, 0.0f);
     }
-    // 優先順位：置けなかった灰色 ＞ ワープ強化中のシアン ＞ 通常
+    // 置けなかった理由の文字：残り時間の割合でフェードアウト
+    if (portalRejectTextTimer > 0.0f) {
+        portalRejectTextTimer = (std::max)(portalRejectTextTimer - 1.0f / 60.0f, 0.0f);
+        Vector4 textColor = kPortalRejectTextColor;
+        textColor.w *= portalRejectTextTimer / kPortalRejectTextDuration;
+        portalRejectText.SetColor(textColor);
+    }
+    portalRejectText.Update();
+    // 優先順位：置けなかった灰色（直後・照準中）＞ ワープ強化中のシアン ＞ 通常
     Vector4 reticleColor = kReticleColor;
-    if (portalRejectTimer > 0.0f) {
+    if (portalRejectTimer > 0.0f || portalAimInvalid) {
         reticleColor = kReticleRejectColor;
     } else if (warpBoostTimer > 0.0f) {
         reticleColor = kReticleWarpBoostColor;
@@ -1613,6 +1638,10 @@ void GameScene::UpdateDebugGui() {
         ImGui::DragFloat3("Weapon Body Offset", &weaponBodyLocalOffset.x, 0.01f);
         ImGui::DragFloat3("Weapon Barrel Offset", &weaponBarrelLocalOffset.x, 0.01f);
         ImGui::Text("Pos: %.2f, %.2f, %.2f", playerPos.x, playerPos.y, playerPos.z);
+        // 撃破演出の確認用：HPを0にする（ポーズを解除すると次のフレームから撃破演出が始まる）
+        if (ImGui::Button("Boss Defeat (bossHP = 0)")) {
+            bossHP = 0.0f;
+        }
 
         if (ImGui::CollapsingHeader("Point Light")) {
             PointLight& pointLight = framework->GetObject3dCommon()->GetPointLightData();
@@ -1783,6 +1812,11 @@ void GameScene::Draw() {
         warningText.Draw();
     }
 
+    // --- 5.8 UI（ポータルを置けなかった理由の"TOO FAR"/"BLOCKED"文字） ---
+    if (portalRejectTextTimer > 0.0f) {
+        portalRejectText.Draw();
+    }
+
     // --- 6. UI（設定メニュー）の描画：Pキーでのポーズ中のみ表示 ---
     if (isLookPaused) {
         settingsMenu.Draw();
@@ -1805,6 +1839,7 @@ void GameScene::Finalize() {
     // このシーンのカメラを残すと、次に GameScene に入ったときの AddCamera が重複になるため、必ず外す
     CameraManager::GetInstance()->RemoveCamera("MainCamera");
     camera = nullptr;
+    Time::SetTimeScale(1.0f); // ボス撃破演出のスロー中に抜けても、時間倍率を残さない
     // 終了時は必ずマウスを解放する
     Framework::GetInstance()->GetWinApp()->ShowCursor(true);
     Framework::GetInstance()->GetWinApp()->SetClipCursor(false);
@@ -1821,6 +1856,10 @@ void GameScene::TakeDamage(float amount) {
     if (warpInvulnTimer > 0.0f) {
         return;
     }
+    // ボス撃破演出中は無敵（演出中にHPが0になってLOSEにならないようにする）
+    if (bossDefeatActive) {
+        return;
+    }
     playerHP -= amount;
     if (playerHP < 0.0f) {
         playerHP = 0.0f;
@@ -1832,6 +1871,10 @@ void GameScene::TakeDamage(float amount) {
 void GameScene::DamageBoss(float amount) {
     // フェーズ移行・テレポート・アリーナ再構築の溜めの間は無敵（IsBossInvulnerable 参照）
     if (IsBossInvulnerable()) {
+        return;
+    }
+    // 撃破演出中・撃破後はダメージを受けない（bossHPが負に行く・撃破が再開始されるのを防ぐ）
+    if (bossDefeatActive) {
         return;
     }
     bossHP -= amount;
@@ -2052,6 +2095,18 @@ void GameScene::UpdateBossShieldTransform() {
         core.translate.z + std::cos(yaw) * kBossShieldForwardOffset });
     bossShield->SetRotate({ 0.0f, yaw, 0.0f });
     bossShield->SetScale({ kBossShieldHalfSize * scaleRate, kBossShieldHalfSize * scaleRate, 1.0f });
+}
+
+bool GameScene::IsShotBlockedByShield(const Ray& ray, float maxDistance) const {
+    if (bossAttackState != BossAttackState::kShield) return false;
+    // 板の位置・向き・大きさは UpdateBossShieldTransform で設定済みの描画用Transformをそのまま使う（見た目と判定を一致させる）
+    const Transform& shield = bossShield->GetTransform();
+    const float yaw = shield.rotate.y;
+    const Vector3 right = { std::cos(yaw), 0.0f, -std::sin(yaw) }; // 正面(sin yaw, 0, cos yaw)に垂直な水平方向
+    const Vector3 up = { 0.0f, 1.0f, 0.0f };
+    float distance = 0.0f;
+    if (!Calculation::TestRayRect(ray, shield.translate, right, up, shield.scale.x, shield.scale.y, &distance)) return false;
+    return distance <= maxDistance; // ボスの体より手前で板を通ったときだけ弾く
 }
 
 void GameScene::StopBossLaser() {
@@ -2606,6 +2661,17 @@ void GameScene::StopArenaRebuild() {
 void GameScene::RestartGame() {
     playerHP = kPlayerMaxHP;
     bossHP = kBossMaxHP;
+    // ボス撃破演出の状態を初期化（時間倍率・くさび・コア・グリッチも戻す。ディゾルブは下のSetBossDissolveで戻る）
+    bossDefeatActive = false;
+    bossDefeatElapsed = 0.0f;
+    bossDefeatPartTime = 0.0f;
+    bossDefeatTimeScale = 1.0f;
+    bossDefeatSparkTimer = 0.0f;
+    bossDefeatBurstDone = false;
+    Time::SetTimeScale(1.0f);
+    for (auto& part : bossParts) {
+        part->SetEmissive({ 0.0f, 0.0f, 0.0f }, 0.0f); // コアは通常時に発光を設定しないので、撃破中の発光を明示的に消す
+    }
     gameOver = false;
     playerWon = false;
     gameOverFadeTimer = 0.0f;
@@ -2707,6 +2773,8 @@ void GameScene::RestartGame() {
     weaponMode = WeaponMode::kRifle;
     for (Portal* portal : AllPortals()) ClearPortal(*portal);
     portalRejectTimer = 0.0f;
+    portalRejectTextTimer = 0.0f;
+    portalAimInvalid = false;
 
     // リトライ時は短縮版の開始演出を流す（暗転中に呼ばれるため、明転とともにREADYが見える）
     StartIntro(false);
@@ -3158,12 +3226,11 @@ void GameScene::FireShot() {
         sparkDir = Calculation::Normalize(sparkDir);
         std::uniform_real_distribution<float> distAngle(0.0f, 6.28318f);
 
-        // シールド中に正面から当たった弾は弾かれる（ダメージ無効・火花は青）
-        // 弾かれる：シールド中に正面から当たったとき、またはボスが無敵の間（フェーズ移行・テレポート・再構築の溜め）。
+        // 弾かれる：シールド中に弾がボスの体より手前でシールドの板を通ったとき、またはボスが無敵の間（フェーズ移行・テレポート・再構築の溜め）。
+        // シールドは立ち位置（IsFromBossFront）ではなく板との交差で判定する（板の横をすり抜けて側面に当たった弾は通す）。
         // 無敵の間も「弾かれた」表示（青い火花・キン）にして、ダメージが入っていないことを見た目と音で分かるようにする
         const bool isShieldBlocked = (closestObject == boss.get())
-            && ((bossAttackState == BossAttackState::kShield && IsFromBossFront(playerPos))
-                || IsBossInvulnerable());
+            && (IsShotBlockedByShield(ray, closestHit.distance) || IsBossInvulnerable());
         const Vector3& sc = kBossShieldSparkColor;
 
         // 指定した中心方向まわりに、coneAngle の範囲でランダムにばらまいた単位ベクトルを返す。
@@ -3360,7 +3427,8 @@ void GameScene::FireShot() {
                     }
                     DamageBoss(damage);
                     // シールド中でなければ、正面からの命中を記録する。直近kBossShieldTriggerWindow秒以内にkBossShieldTriggerHits回で張る
-                    if (bossAttackState != BossAttackState::kShield && IsFromBossFront(playerPos)) {
+                    // 撃破演出中はシールドを張らせない
+                    if (!bossDefeatActive && bossAttackState != BossAttackState::kShield && IsFromBossFront(playerPos)) {
                         if (bossShieldHitCount == 0) {
                             bossShieldHitWindowTimer = kBossShieldTriggerWindow;
                         }
@@ -3698,12 +3766,30 @@ void GameScene::SetBossDissolve(float height, float edgeWidth, float time, float
     }
 }
 
+Vector3 GameScene::BossWedgeOffset(int part, float openT, float yaw) const {
+    const float cosYaw = std::cos(yaw);
+    const float sinYaw = std::sin(yaw);
+    const float dist = kBossWedgeOpenDistance * openT;
+    Vector3 offset = { 0.0f, 0.0f, 0.0f };
+    switch (part) {
+    case kBossWedgeTop:    offset.y = dist; break;
+    case kBossWedgeBottom: offset.y = -kBossWedgeOpenDistanceBottom * openT; break;
+    case kBossWedgeLeft:   offset.x = -dist * cosYaw; offset.z = dist * sinYaw; break;  // ローカル(-1,0,0)をyaw回転
+    case kBossWedgeRight:  offset.x = dist * cosYaw;  offset.z = -dist * sinYaw; break; // ローカル(+1,0,0)をyaw回転
+    default: break; // コアは動かさない
+    }
+    return offset;
+}
+
 void GameScene::UpdateBossParts() {
+    // 撃破演出中は、くさび・コアの位置と発光を演出側が決める
+    if (bossDefeatActive) {
+        UpdateBossDefeatParts();
+        return;
+    }
     // bossは当たり判定の芯。位置・回転・scaleを5パーツへ写し、くさびだけ開閉オフセットを足す
     const Transform& core = boss->GetTransform();
     const float openT = Easing::OutCubic(Easing::Clamp01(bossOpenAmount));
-    const float cosYaw = std::cos(core.rotate.y);
-    const float sinYaw = std::sin(core.rotate.y);
 
     // 被弾フラッシュ（赤）を警告色より優先する。時間で減衰
     Vector3 emissive = bossWarningEmissive;
@@ -3734,15 +3820,7 @@ void GameScene::UpdateBossParts() {
     }
 
     for (int i = 0; i < kBossPartCount; ++i) {
-        Vector3 offset = { 0.0f, 0.0f, 0.0f };
-        const float dist = kBossWedgeOpenDistance * openT;
-        switch (i) {
-        case kBossWedgeTop:    offset.y = dist; break;
-        case kBossWedgeBottom: offset.y = -kBossWedgeOpenDistanceBottom * openT; break;
-        case kBossWedgeLeft:   offset.x = -dist * cosYaw; offset.z = dist * sinYaw; break;  // ローカル(-1,0,0)をyaw回転
-        case kBossWedgeRight:  offset.x = dist * cosYaw;  offset.z = -dist * sinYaw; break; // ローカル(+1,0,0)をyaw回転
-        default: break; // コアは動かさない
-        }
+        const Vector3 offset = BossWedgeOffset(i, openT, core.rotate.y);
 
         bossParts[i]->SetScale(core.scale);
         bossParts[i]->SetRotate(core.rotate);
@@ -3751,6 +3829,305 @@ void GameScene::UpdateBossParts() {
             bossParts[i]->SetEmissive(emissive, intensity);
         }
         bossParts[i]->Update(); // 呼び忘れると単位行列のまま巨大に描画される
+    }
+}
+
+// ===== ボス撃破演出（データ崩壊） =====
+
+void GameScene::StopAllBossAttacks() {
+    StopBossLaser(); // レーザーを消す
+    ResetBossCombo();
+    bossDashRemaining = 0; // 連続突進は止める
+    ResetBossShield();
+    if (bossAttackState == BossAttackState::kShield) bossAttackState = BossAttackState::kChasing; // シールドを消す
+    StopFloorWipe(); // 床の発光・WARNING・グリッチ・閃光を戻す（溜め中判定のため状態を戻す前に呼ぶ）
+    if (bossAttackState == BossAttackState::kFloorWipeWindup) {
+        bossAttackState = BossAttackState::kChasing; // 床全体の消去の溜め中なら打ち切る（ダメージなし）
+        bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+    }
+    StopBossTeleport();
+    StopShockwaves();
+    CancelShockwaveWarning();
+    shockwaveGimmickTimer = 0.0f;
+    StopArenaRebuild(); // 破損マスと足場も消す（ポータルは足場と一緒に消える）
+    StopCornerCollapse(); // 角の崩壊：予兆は取り消し、崩壊中のものは消滅まで確定
+    ResetBossHiddenState();
+}
+
+void GameScene::StartBossDefeat() {
+    bossDefeatActive = true;
+    bossDefeatElapsed = 0.0f;
+    bossDefeatPartTime = 0.0f;
+    bossDefeatTimeScale = kBossDefeatSlowScale;
+    bossDefeatSparkTimer = 0.0f;
+    bossDefeatBurstDone = false;
+    bossHP = 0.0f;
+    Time::SetTimeScale(bossDefeatTimeScale); // パーティクルもスローにする（ParticleManagerはTime::GetDeltaTimeで進む）
+
+    StopAllBossAttacks();
+    // 飛んでいるグレネードは爆発させず（被弾・足場破壊を起こさない）そのまま消す
+    for (auto& grenade : grenades) {
+        grenade.active = false;
+        grenade.object->SetTranslate({ 0.0f, -1000.0f, 0.0f });
+    }
+    bossHitFlashTimer = 0.0f;
+    bossHealFlashTimer = 0.0f;
+    bossWarningEmissive = { 0.0f, 0.0f, 0.0f };
+
+    // くさびの開始位置・向き・初速・角速度を決める（以降は閉じた式で位置を求めるので状態の積分は不要）
+    const Transform& core = boss->GetTransform();
+    const float openT = Easing::OutCubic(Easing::Clamp01(bossOpenAmount));
+    const float cosYaw = std::cos(core.rotate.y);
+    const float sinYaw = std::sin(core.rotate.y);
+    bossDefeatWedgeBaseRotate = core.rotate;
+    // ローカル座標(右,上,前)での弾け飛ぶ方向。くさびごとに外側へ向ける
+    const std::array<Vector3, kBossCore> kLocalDirs = { {
+        { 0.2f, 1.0f, 0.3f },   // 上：上へ
+        { -0.3f, 0.3f, -1.0f }, // 下：手前（プレイヤー側とは限らないがボスの後方）へ
+        { -1.0f, 0.6f, 0.2f },  // 左
+        { 1.0f, 0.6f, -0.2f },  // 右
+    } };
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::uniform_real_distribution<float> distSpin(kBossDefeatWedgeSpinMin, kBossDefeatWedgeSpinMax);
+    std::uniform_int_distribution<int> distSign(0, 1);
+    auto randomSpin = [&]() { return distSpin(randomEngine) * (distSign(randomEngine) == 0 ? -1.0f : 1.0f); };
+    for (int i = 0; i < kBossCore; ++i) {
+        const Vector3 offset = BossWedgeOffset(i, openT, core.rotate.y);
+        bossDefeatWedgeStart[i] = { core.translate.x + offset.x, core.translate.y + offset.y, core.translate.z + offset.z };
+        const Vector3 local = Calculation::Normalize(kLocalDirs[i]);
+        // ローカル(x,z)をyaw回転（UpdateBossPartsのくさびオフセットと同じ向き規約）
+        const Vector3 world = { local.x * cosYaw + local.z * sinYaw, local.y, -local.x * sinYaw + local.z * cosYaw };
+        bossDefeatWedgeVelocity[i] = { world.x * kBossDefeatWedgeSpeed, world.y * kBossDefeatWedgeSpeed, world.z * kBossDefeatWedgeSpeed };
+        bossDefeatWedgeSpin[i] = { randomSpin(), randomSpin(), randomSpin() };
+    }
+
+    // とどめの演出：大きなシェイクと、コアからの火花の閃光
+    TriggerCameraShake(kBossDefeatFinishShakeDuration, kBossDefeatFinishShakeStrength);
+    EmitBossDefeatSparks(core.translate, kBossDefeatBurstPointCount / 3, kBossDefeatBurstLineCount / 3, 1.5f);
+    // TODO: 撃破SE。boss_defeat.wav を用意して LoadSounds に追加したら PlaySe(kSeBossDefeat, ...) をここで鳴らす
+}
+
+float GameScene::CalcBossDefeatTimeScale() const {
+    // とどめ区間で kBossDefeatSlowScale から始め、終わりに向けて1.0へイージングで戻す（InCubicで序盤は低いまま保つ）
+    const float t = Easing::Clamp01(bossDefeatElapsed / kBossDefeatSlowDuration);
+    return Easing::Lerp(kBossDefeatSlowScale, 1.0f, Easing::InCubic(t));
+}
+
+void GameScene::UpdateBossDefeat() {
+    if (IsBossDefeatFinished()) return; // 終わった後は最終状態のまま（WINへの移行は判定側）
+
+    const float deltaTime = 1.0f / 60.0f;
+    bossDefeatElapsed = (std::min)(bossDefeatElapsed + deltaTime, kBossDefeatTotalDuration);
+    bossDefeatTimeScale = CalcBossDefeatTimeScale();
+    Time::SetTimeScale(bossDefeatTimeScale);
+    bossDefeatPartTime += deltaTime * bossDefeatTimeScale;
+
+    // 崩壊中：一定間隔でコアから火花を出し続ける
+    const float collapseStart = kBossDefeatSlowDuration;
+    const float collapseEnd = kBossDefeatSlowDuration + kBossDefeatCollapseDuration;
+    if (bossDefeatElapsed >= collapseStart && bossDefeatElapsed < collapseEnd) {
+        bossDefeatSparkTimer -= deltaTime;
+        if (bossDefeatSparkTimer <= 0.0f) {
+            bossDefeatSparkTimer += kBossDefeatSparkInterval;
+            EmitBossDefeatSparks(boss->GetTransform().translate, kBossDefeatSparkPointCount, kBossDefeatSparkLineCount, 1.0f);
+        }
+    }
+
+    if (!bossDefeatBurstDone && bossDefeatElapsed >= kBossDefeatBurstTime) {
+        BurstBossCore();
+    }
+    UpdateBossDefeatDissolve();
+    UpdateBossDefeatScreenEffect();
+
+    // 演出が終わったら時間倍率・グリッチを元に戻す（以降は金の幕のgameOver演出）
+    if (IsBossDefeatFinished()) {
+        Time::SetTimeScale(1.0f);
+        screenEffect->SetTransitionGlitch(0.0f, 0.0f);
+    }
+}
+
+void GameScene::UpdateBossDefeatDissolve() {
+    // イントロの実体化の逆再生：破裂後、上端から下端へ境界を下げて全パーツを消す
+    if (bossDefeatElapsed < kBossDefeatBurstTime) return;
+    const float t = Easing::Clamp01((bossDefeatElapsed - kBossDefeatBurstTime) / kBossDefeatDissolveDuration);
+    const float height = Easing::Lerp(kBossDefeatDissolveTopY, kBossDefeatDissolveBottomY, t);
+    SetBossDissolve(height, kIntroMaterializeEdgeWidth, bossDefeatElapsed, 1.0f);
+}
+
+void GameScene::UpdateBossDefeatScreenEffect() {
+    const float e = bossDefeatElapsed;
+    const float collapseEnd = kBossDefeatSlowDuration + kBossDefeatCollapseDuration;
+    float glitch = 0.0f;
+    if (e < kBossDefeatSlowDuration) {
+        // とどめ：強いグリッチから消えていく
+        glitch = kBossDefeatGlitchFinish * (1.0f - Easing::OutCubic(Easing::Clamp01(e / kBossDefeatSlowDuration)));
+    } else if (e < collapseEnd) {
+        // 崩壊：弱めのグリッチを断続的に
+        glitch = (std::fmod(e - kBossDefeatSlowDuration, kBossDefeatGlitchInterval) < kBossDefeatGlitchPulse) ? kBossDefeatGlitchWeak : 0.0f;
+    } else if (e < kBossDefeatBurstTime) {
+        // コアが縮む間は弱いグリッチが徐々に強まる
+        glitch = kBossDefeatGlitchWeak * Easing::Clamp01((e - collapseEnd) / kBossDefeatCoreShrinkDuration);
+    }
+    if (e >= kBossDefeatBurstTime) {
+        // 破裂：強いグリッチが減衰していく
+        const float burstT = Easing::Clamp01((e - kBossDefeatBurstTime) / kBossDefeatGlitchBurstDuration);
+        glitch = kBossDefeatGlitchBurst * (1.0f - Easing::OutCubic(burstT));
+    }
+    screenEffect->SetTransitionGlitch(glitch, e);
+}
+
+void GameScene::GetBossDefeatEmissive(bool isCore, Vector3* color, float* intensity) const {
+    const float e = bossDefeatElapsed;
+    const float collapseEnd = kBossDefeatSlowDuration + kBossDefeatCollapseDuration;
+    if (e < kBossDefeatSlowDuration) {
+        // とどめ：白い閃光（強い発光から少しずつ落ちる）
+        const float t = Easing::Clamp01(e / kBossDefeatSlowDuration);
+        *color = { 1.0f, 1.0f, 1.0f };
+        *intensity = Easing::Lerp(kBossDefeatFlashIntensity, kBossDefeatCoreBlinkIntensity, t);
+        return;
+    }
+    if (isCore) {
+        // コアは赤と白で激しく点滅。縮む間は白へ寄せて強くしていく
+        const int blinkStep = static_cast<int>(e / kBossDefeatCoreBlinkInterval);
+        const bool isRed = (blinkStep % 2 == 0) && e < collapseEnd;
+        *color = isRed ? Vector3{ 1.0f, 0.1f, 0.1f } : Vector3{ 1.0f, 1.0f, 1.0f };
+        const float shrinkT = Easing::Clamp01((e - collapseEnd) / kBossDefeatCoreShrinkDuration);
+        *intensity = Easing::Lerp(kBossDefeatCoreBlinkIntensity, kBossDefeatFlashIntensity, shrinkT);
+        return;
+    }
+    // くさびは赤く光りながら徐々に弱まる
+    const float t = Easing::Clamp01((e - kBossDefeatSlowDuration) / kBossDefeatCollapseDuration);
+    *color = { 1.0f, 0.2f, 0.1f };
+    *intensity = Easing::Lerp(kBossDefeatWedgeEmissiveStart, kBossDefeatWedgeEmissiveEnd, t);
+}
+
+void GameScene::UpdateBossDefeatParts() {
+    const Transform& core = boss->GetTransform();
+    const float partTime = bossDefeatPartTime;
+    // 水平移動・回転は指数減衰、鉛直は重力のみ（閉じた式なので時間倍率がそのまま運動の速さに効く）
+    const float drag = kBossDefeatWedgeDrag;
+    const float travel = (1.0f - std::exp(-drag * partTime)) / drag;
+
+    for (int i = 0; i < kBossCore; ++i) {
+        const Vector3& start = bossDefeatWedgeStart[i];
+        const Vector3& velocity = bossDefeatWedgeVelocity[i];
+        const Vector3& spin = bossDefeatWedgeSpin[i];
+        const float y = start.y + velocity.y * partTime + 0.5f * kBossDefeatWedgeGravity * partTime * partTime;
+        bossParts[i]->SetScale(core.scale);
+        bossParts[i]->SetTranslate({ start.x + velocity.x * travel, (std::max)(y, kBossDefeatWedgeMinY), start.z + velocity.z * travel });
+        bossParts[i]->SetRotate({ bossDefeatWedgeBaseRotate.x + spin.x * travel, bossDefeatWedgeBaseRotate.y + spin.y * travel, bossDefeatWedgeBaseRotate.z + spin.z * travel });
+        Vector3 emissive;
+        float intensity = 0.0f;
+        GetBossDefeatEmissive(false, &emissive, &intensity);
+        bossParts[i]->SetEmissive(emissive, intensity);
+        bossParts[i]->Update(); // 呼び忘れると単位行列のまま巨大に描画される
+    }
+
+    // コア：その場で点滅→縮む→破裂後は消える（scale 0）
+    float coreScaleRatio = 1.0f;
+    const float shrinkStart = kBossDefeatSlowDuration + kBossDefeatCollapseDuration;
+    if (bossDefeatElapsed >= kBossDefeatBurstTime) {
+        coreScaleRatio = 0.0f;
+    } else if (bossDefeatElapsed >= shrinkStart) {
+        const float t = Easing::Clamp01((bossDefeatElapsed - shrinkStart) / kBossDefeatCoreShrinkDuration);
+        coreScaleRatio = Easing::Lerp(1.0f, kBossDefeatCoreShrinkScale, Easing::InQuad(t));
+    }
+    Vector3 coreEmissive;
+    float coreIntensity = 0.0f;
+    GetBossDefeatEmissive(true, &coreEmissive, &coreIntensity);
+    bossParts[kBossCore]->SetScale({ core.scale.x * coreScaleRatio, core.scale.y * coreScaleRatio, core.scale.z * coreScaleRatio });
+    bossParts[kBossCore]->SetRotate(core.rotate);
+    bossParts[kBossCore]->SetTranslate(core.translate);
+    bossParts[kBossCore]->SetEmissive(coreEmissive, coreIntensity);
+    bossParts[kBossCore]->Update();
+}
+
+void GameScene::BurstBossCore() {
+    bossDefeatBurstDone = true;
+    const Vector3 corePos = boss->GetTransform().translate;
+    EmitBossDefeatSparks(corePos, kBossDefeatBurstPointCount, kBossDefeatBurstLineCount, 2.0f);
+
+    // 大きめの破片（面パーティクル）。ExplodeGrenadeの面と同じ作りで、数と大きさを増やす
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::uniform_real_distribution<float> distTheta(0.0f, 6.28318f);
+    std::uniform_real_distribution<float> distCosPhi(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> distSpeed(2.0f, 7.0f);
+    std::uniform_real_distribution<float> distLife(0.5f, 1.0f);
+    std::uniform_real_distribution<float> distSize(0.2f, 0.6f);
+    for (int i = 0; i < kBossDefeatBurstTriangleCount; ++i) {
+        const float theta = distTheta(randomEngine);
+        const float cosPhi = distCosPhi(randomEngine);
+        const float sinPhi = std::sqrt((std::max)(0.0f, 1.0f - cosPhi * cosPhi));
+        const float speed = distSpeed(randomEngine);
+        const float size = distSize(randomEngine);
+
+        ParticleEmitParams params;
+        params.position = corePos;
+        params.velocity = { sinPhi * std::cos(theta) * speed, cosPhi * speed, sinPhi * std::sin(theta) * speed };
+        params.lifeTime = distLife(randomEngine);
+        params.useColorGradient = true;
+        params.startColor = { 1.0f, 0.95f, 0.8f, 0.9f };
+        params.endColor = { 1.0f, 0.1f, 0.05f, 0.0f };
+        params.gravity = { 0.0f, -0.01f, 0.0f };
+        params.drag = 0.15f;
+        params.startScale = { size, size, size };
+        params.endScale = { size * 0.2f, size * 0.2f, size * 0.2f };
+        particleManagerTriangle->Emit(params);
+    }
+
+    TriggerCameraShake(kBossDefeatBurstShakeDuration, kBossDefeatBurstShakeStrength);
+    // TODO: 破裂SEもここで鳴らす
+}
+
+void GameScene::EmitBossDefeatSparks(const Vector3& position, int pointCount, int lineCount, float speedScale) {
+    std::random_device seedGen;
+    std::mt19937 randomEngine(seedGen());
+    std::uniform_real_distribution<float> distTheta(0.0f, 6.28318f);
+    std::uniform_real_distribution<float> distCosPhi(-1.0f, 1.0f); // 球面上に均一分布させるための余弦
+    std::uniform_real_distribution<float> distSpeed(2.0f, 6.0f);
+    std::uniform_real_distribution<float> distLife(0.3f, 0.7f);
+
+    auto sphereDir = [&]() {
+        const float theta = distTheta(randomEngine);
+        const float cosPhi = distCosPhi(randomEngine);
+        const float sinPhi = std::sqrt((std::max)(0.0f, 1.0f - cosPhi * cosPhi));
+        return Vector3{ sinPhi * std::cos(theta), cosPhi, sinPhi * std::sin(theta) };
+    };
+
+    // 点：白熱→赤。重力で少し落ちる
+    for (int i = 0; i < pointCount; ++i) {
+        const Vector3 dir = sphereDir();
+        const float speed = distSpeed(randomEngine) * speedScale;
+        ParticleEmitParams params;
+        params.position = position;
+        params.velocity = { dir.x * speed, dir.y * speed, dir.z * speed };
+        params.lifeTime = distLife(randomEngine);
+        params.useColorGradient = true;
+        params.startColor = { 1.0f, 0.95f, 0.75f, 1.0f };
+        params.endColor = { 1.0f, 0.15f, 0.0f, 0.0f };
+        params.gravity = { 0.0f, -0.015f, 0.0f };
+        params.drag = 0.1f;
+        particleManagerPoint->Emit(params);
+    }
+    // 線：速く飛ぶ火花（FireShotの着弾火花と同じ線パラメータ。長さに上限をかける）
+    for (int i = 0; i < lineCount; ++i) {
+        const Vector3 dir = sphereDir();
+        const float speed = distSpeed(randomEngine) * speedScale;
+        ParticleEmitParams params;
+        params.position = position;
+        params.velocity = { dir.x * speed, dir.y * speed, dir.z * speed };
+        params.lifeTime = distLife(randomEngine);
+        params.useColorGradient = true;
+        params.startColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        params.endColor = { 1.0f, 0.2f, 0.1f, 0.0f };
+        params.gravity = { 0.0f, -0.015f, 0.0f };
+        params.drag = 0.08f;
+        params.lineWidth = 0.05f;
+        params.lineLengthMultiplier = 4.0f;
+        params.maxLineLength = 0.6f;
+        particleManagerLine->Emit(params);
     }
 }
 
@@ -3837,7 +4214,32 @@ void GameScene::ClearPortal(Portal& portal) {
     if (portal.visual) portal.visual->SetScale({ 0.0f, 0.0f, 0.0f });
 }
 
-void GameScene::PlacePortal(Portal& portal, const std::shared_ptr<Model>& model) {
+GameScene::Portal* GameScene::GetNextPortalToPlace() {
+    // 左クリックは a、右クリックは b に置く。片方だけ置いてあるときは、もう片方（距離の上限が効く方）を調べる
+    PortalPair& pair = portalPairs[0];
+    if (!pair.a.isPlaced && pair.b.isPlaced) return &pair.a;
+    if (!pair.b.isPlaced) return &pair.b; // 両方空き：距離の上限は効かないので、ボス・空振りの判定はどちらで調べても同じ
+    return nullptr;
+}
+
+void GameScene::NotifyPortalRejected(PortalPlaceResult result) {
+    portalRejectTimer = kPortalRejectFlashDuration;
+    PlaySe(kSeShieldBlock, kSeHitVolume); // シールドで弾かれた音を流用
+
+    // 理由の文字は距離オーバーとボスのときだけ（空振りは灰色レティクルと音で十分）
+    const char* text = nullptr;
+    if (result == PortalPlaceResult::kTooFar) text = "TOO FAR";
+    if (result == PortalPlaceResult::kBlockedByBoss) text = "BLOCKED";
+    if (!text) return;
+    portalRejectText.SetText(text);
+    portalRejectText.SetColor(kPortalRejectTextColor);
+    portalRejectText.SetPosition({
+        ((float)WinApp::KclientWidth - portalRejectText.GetWidth()) / 2.0f,
+        (float)WinApp::KclientHeight / 2.0f + kPortalRejectTextOffsetY });
+    portalRejectTextTimer = kPortalRejectTextDuration;
+}
+
+GameScene::PortalPlaceResult GameScene::EvaluatePortalPlacement(const Portal& portal, RaycastHit* outHit, AABB* outAABB, Object3d** outObject) {
     Transform camTrans = camera->GetTransform();
 
     // カメラの回転から前方ベクトルを計算（FireShot()と同じ計算式）
@@ -3863,18 +4265,42 @@ void GameScene::PlacePortal(Portal& portal, const std::shared_ptr<Model>& model)
     AABB hitAABB{};
     Object3d* hitObject = nullptr;
     if (!RaycastClosest(ray, targets, &hit, &hitAABB, &hitObject)) {
-        return; // 何もヒットしなければ設置しない
+        return PortalPlaceResult::kNoSurface; // 何もヒットしなければ設置しない
     }
     if (hitObject == boss.get()) {
-        return; // ボスは遮蔽物としてレイを止めるだけで、設置面にはしない
+        return PortalPlaceResult::kBlockedByBoss; // ボスは遮蔽物としてレイを止めるだけで、設置面にはしない
     }
 
-    Vector3 normal = hit.normal;
-    if (normal.x == 0.0f && normal.y == 0.0f && normal.z == 0.0f) {
+    if (hit.normal.x == 0.0f && hit.normal.y == 0.0f && hit.normal.z == 0.0f) {
         // 法線が取れていない場合は入射方向の逆向きで代用（FireShot()と同じフォールバック）
-        normal = { -direction.x, -direction.y, -direction.z };
+        hit.normal = { -direction.x, -direction.y, -direction.z };
     }
-    normal = Calculation::Normalize(normal);
+    hit.normal = Calculation::Normalize(hit.normal);
+    if (outHit) *outHit = hit;
+    if (outAABB) *outAABB = hitAABB;
+    if (outObject) *outObject = hitObject;
+
+    // 同じ組の相方が置いてあるときは、離れすぎた場所には置かない
+    const Portal* other = FindPartner(portal);
+    if (other && other->isPlaced) {
+        Vector3 diff = { hit.hitPoint.x - other->position.x, hit.hitPoint.y - other->position.y, hit.hitPoint.z - other->position.z };
+        if (Calculation::Length(diff) > kPortalMaxPairDistance) {
+            return PortalPlaceResult::kTooFar;
+        }
+    }
+    return PortalPlaceResult::kOk;
+}
+
+void GameScene::PlacePortal(Portal& portal, const std::shared_ptr<Model>& model) {
+    RaycastHit hit;
+    AABB hitAABB{};
+    Object3d* hitObject = nullptr;
+    const PortalPlaceResult result = EvaluatePortalPlacement(portal, &hit, &hitAABB, &hitObject);
+    if (result != PortalPlaceResult::kOk) {
+        NotifyPortalRejected(result);
+        return;
+    }
+    const Vector3& normal = hit.normal;
 
     // Zファイティング回避のため法線方向に少しオフセット（SpawnBulletDecalと同じ手法）
     Vector3 candidate = {
@@ -3882,16 +4308,6 @@ void GameScene::PlacePortal(Portal& portal, const std::shared_ptr<Model>& model)
         hit.hitPoint.y + normal.y * 0.02f,
         hit.hitPoint.z + normal.z * 0.02f,
     };
-
-    // 同じ組の相方が置いてあるときは、離れすぎた場所には置かない（レティクルの色で知らせる）
-    const Portal* other = FindPartner(portal);
-    if (other && other->isPlaced) {
-        Vector3 diff = { candidate.x - other->position.x, candidate.y - other->position.y, candidate.z - other->position.z };
-        if (Calculation::Length(diff) > kPortalMaxPairDistance) {
-            portalRejectTimer = kPortalRejectFlashDuration;
-            return;
-        }
-    }
 
     portal.position = candidate;
     portal.normal = normal;
